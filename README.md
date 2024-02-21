@@ -18,11 +18,19 @@ npm i
 
 ## Re-routing DNS
 
+There are changes in newer firmware! Check your DNS logs and search for `xlink.cn`, if you see DNS requests then you have some older devices. If you dont see any devices for `xlink.cn` search for `cm.gelighting.com`, if you see devices, thats newer firmware.
+
+### For older firmware devices
+
 You need to point the domain `cm-ge.xlink.cn` to a local IP on your network. This server masquerades as the `cm-ge.xlink.cn` TCP server, and the `cm-ge.xlink.cn` domain is hardcoded into the device firmware, so we need to re-route the traffic manually. I was able to do this by modifying the local DNS setting of my Pi-hole to map `cm-ge.xlink.cn` to `192.168.1.1`, but YMMV depending on your network setup.
+
+### For newer firmware devices
+
+You need to point the domain `cm.gelighting.com` to a local IP on your network. This server masquerades as the `cm.gelighting.com` TCP server, and the `cm.gelighting.com` domain is hardcoded into the device firmware, so we need to re-route the traffic manually. I was able to do this by modifying the local DNS setting of my Pi-hole to map `cm.gelighting.com` to `192.168.1.1`, but YMMV depending on your network setup.
 
 ## Launching the server
 
-I found it easiest to first start the server, then turn on or plug in the device. 
+I found it easiest to first start the server, then turn on or plug in the device.
 
 To start the server, just run:
 
@@ -36,8 +44,8 @@ If you're correctly routing the DNS traffic, you should see a new connection app
 
 Devices are controlled by sending a POST request with a JSON body to the API server with a path parameter of the IP of the device you want to control. For example, if I have a device on `192.168.1.2`, and the API server's IP is `192.168.1.1`, to turn that device on, you can run:
 
-```sh
-curl -X POST 'http://192.168.1.1:8080/192.168.1.2' -H 'Content-Type: application/json' -d '{"status":1}'
+```bash
+curl -X POST 'http://192.168.1.1:8080/api/devices/192.168.1.2' -H 'Content-Type: application/json' -d '{"status":1}'
 ```
 
 `status` is a required body property, and to turn the device on you can set it's value as
@@ -46,7 +54,7 @@ curl -X POST 'http://192.168.1.1:8080/192.168.1.2' -H 'Content-Type: application
 - "1"
 - "on"
 
-To turn the device off, you can set `status` to 
+To turn the device off, you can set `status` to
 
 - 0
 - "0"
@@ -62,16 +70,34 @@ Other body options include:
 
 If the commands do not seem to be working, it's likely that the TCP communication on your device is different than mine. You can inspect the traffic of the device communicating with the `cm-ge.xlink.cn` server in real-time by running:
 
-```sh
+### Older firmware devices
+
+```bash
 socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:34.73.130.191:23779,verify=0
+```
+
+### Newer firmware devices
+
+*IP changed to the cm-iot-ge.xlink.cloud IP*
+
+```bash
+sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:35.196.85.236:23779,verify=0
 ```
 
 The TCP data will be streamed to `dump.txt` where you can observe the back-and-forth messaging. You may need to modify the different `Buffer` values in the code to better suit your needs.
 
 Also make sure to check that your DNS re-route is actually routing to your local network. You can check by using `dig`:
 
-```sh
+### Older firmware
+
+```bash
 dig cm-ge.xlink.cn
+```
+
+### Newer firmware
+
+```bash
+dig cm.gelighting.com
 ```
 
 You should see an A record for your local network. If not, your DNS is not set up correctly.

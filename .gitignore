@@ -1,3 +1,2 @@
-*.txt
 certs
-node_modules
+/cync_data.json
