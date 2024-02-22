@@ -8,98 +8,41 @@ The bulb is connected to the server and in the app (using mobile data)
 I am controlling the same bulb I am connected to.
 
 ### Turn Off
+```
+OFF: (131, 0, 0, 0, 37, 57, 135, 166, 214, 0, *59, 0, 126, 0, 0, 0, 0, 250, 219, 19, 0, 100, 34, 17, 8, 0, 8, 0, 219, 17, 2, 1, *!0, 99, 100, 255, 98, 0, 0, 0, *172, 126, 67, 0, 0, 0, 26, 57, 135, 166, 214, 1, 1, 6, 5, 0, 16, 8, *!0, **0, 100, 255, 98, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0)
+```
+
+### Turn On
+```log
+ ON: (131, 0, 0, 0, 37, 57, 135, 166, 214, 0, *58, 0, 126, 0, 0, 0, 0, 250, 219, 19, 0, *99?dec, 34, 17, 8, 0, 8, 0, 219, 17, 2, 1, 1, 99, 100, 255, 98, 0, 0, 0, 172, 126, 67, 0, 0, 0, 26, 57, 135, 166, 214, 1, 1, 6, 5, 0, 16, 8, 1, 99, 100, 255, 98, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0)
+```
+
+### Compare Off/On
+```log
         1  2  3  4   5   6    7    8   9  10  11  12  13  14  15 16 17  18   19  20  21  22  23  24  25 26 27 28  29  30  31 32  33  34   35   36  37 38  39 40   41  42   43 44 45  46 47  48   49  50    51  52 53 54 55 56 57  58  59   60   61   62  63  64 65 66 67 68 69 70 71 72 73
 OFF: (131, 0, 0, 0, 37, 57, 135, 166, 214, 0, *59, 0, 126, 0, 0, 0, 0, 250, 219, 19, 0, 100, 34, 17, 8, 0, 8, 0, 219, 17, 2, 1, *!0, 99, 100, 255, 98, 0, 0, 0, *172, 126, 67, 0, 0, 0, 26, 57, 135, 166, 214, 1, 1, 6, 5, 0, 16, 8, *!0, **0, 100, 255, 98, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0)
  ON: (131, 0, 0, 0, 37, 57, 135, 166, 214, 0, *58, 0, 126, 0, 0, 0, 0, 250, 219, 19, 0, *99, 34, 17, 8, 0, 8, 0, 219, 17, 2, 1, *!1, 99, 100, 255, 98, 0, 0, 0, *172, 126, 67, 0, 0, 0, 26, 57, 135, 166, 214, 1, 1, 6, 5, 0, 16, 8, *!1, *99, 100, 255, 98, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0)
 OFF: (131, 0, 0, 0, 37, 57, 135, 166, 214, 0, *55, 0, 126, 0, 0, 0, 0, 250, 219, 19, 0, *98, 34, 17, 8, 0, 8, 0, 219, 17, 2, 1, *!0, 99, 100, 255, 98, 0, 0, 0, *170, 126, 67, 0, 0, 0, 26, 57, 135, 166, 214, 1, 1, 6, 5, 0, 16, 8, *!0, **0, 100, 255, 98, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0)
-# App sending turn off to lamp
-OFF: (131  0  0  0  37  55  150  19   47   3  49   0  126 23  0  0  0  250  219  19  0  186  36  17  1  0  1  0  219  17  2  1  *1   44  254  224   0  0  0  0  217   126                  
-OFF: (131, 0, 0, 0, 37, 57, 135, 166, 214, 0, *55, 0, 126, 0, 0, 0, 0, 250, 219, 19, 0, *98, 34, 17, 8, 0, 8, 0, 219, 17, 2, 1, *!0, 99, 100, 255, 98, 0, 0, 0, *170, 126, 67, 0, 0, 0, 26, 57, 135, 166, 214, 1, 1, 6, 5, 0, 16, 8, *!0, **0, 100, 255, 98, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0)
+```
 
----
+# Control Packets
 
-Create a table for the above 73 bytes in the device status packet.
+From an issue on the cync-lan repo, I was able to get the following information:
 
-| Byte | Value | Description                   |
-| ---- | ----- |-------------------------------|
-| 1    | 131   | Unknown                       |
-| 2    | 0     | Unknown                       |
-| 3    | 0     | Unknown                       |
-| 4    | 0     | Unknown                       |
-| 5    | 37    | Unknown                       |
-| 6    | 57    | Unknown                       |
-| 7    | 135   | Unknown                       |
-| 8    | 166   | Unknown                       |
-| 9    | 214   | Unknown                       |
-| 10   | 0     | Unknown                       |
-| 11   | *59   | Decremented by unknown amount |
-| 12   | 0     | Unknown                       |
-| 13   | 126   | Unknown                       |
-| 14   | 0     | Unknown                       |
-| 15   | 0     | Unknown                       |
-| 16   | 0     | Unknown                       |
-| 17   | 0     | Unknown                       |
-| 18   | 250   | Unknown                       |
-| 19   | 219   | Unknown                       |
-| 20   | 19    | Unknown                       |
-| 21   | 0     | Unknown                       |
-| 22   | 100   | Decremented by 1 every report |
-| 23   | 34    | Unknown                       |
-| 24   | 17    | Unknown                       |
-| 25   | 8     | Unknown                       |
-| 26   | 0     | Unknown                       |
-| 27   | 8     | Unknown                       |
-| 28   | 0     | Unknown                       |
-| 29   | 219   | Unknown                       |
-| 30   | 17    | Unknown                       |
-| 31   | 2     | Unknown                       |
-| 32   | 1     | Unknown                       |
-| 33   | *!0   | Device On/Off                 |
-| 34   | 99    | Unknown                       |
-| 35   | 100   | Unknown                       |
-| 36   | 255   | Unknown                       |
-| 37   | 98    | Unknown                       |
-| 38   | 0     | Unknown                       |
-| 39   | 0     | Unknown                       |
-| 40   | 0     | Unknown                       |
-| 41   | *172  | RSSI ?                        |
-| 42   | 126   | Unknown                       |
-| 43   | 67    | Unknown                       |
-| 44   | 0     | Unknown                       |
-| 45   | 0     | Unknown                       |
-| 46   | 0     | Unknown                       |
-| 47   | 26    | Unknown                       |
-| 48   | 57    | Unknown                       |
-| 49   | 135   | Unknown                       |
-| 50   | 166   | Unknown                       |
-| 51   | 214   | Unknown                       |
-| 52   | 1     | Unknown                       |
-| 53   | 1     | Unknown                       |
-| 54   | 6     | Unknown                       |
-| 55   | 5     | Unknown                       |
-| 56   | 0     | Unknown                       |
-| 57   | 16    | Unknown                       |
-| 58   | 8     | Unknown                       |
-| 59   | *!0   | Device On/Off                 |
-| 60   | **0   | off=0, on=99 ??               |
-| 61   | 100   | Unknown                       |
-| 62   | 255   | Unknown                       |
-| 63   | 98    | Unknown                       |
-| 64   | 0     | Unknown                       |
-| 65   | 1     | Unknown                       |
-| 66   | 0     | Unknown                       |
-| 67   | 8     | Unknown                       |
-| 68   | 0     | Unknown                       |
-| 69   | 0     | Unknown                       |
-| 70   | 0     | Unknown                       |
-| 71   | 0     | Unknown                       |
-| 72   | 0     | Unknown                       |
-| 73   | 0     | Unknown                       |
+```
+For turning the lights on.:
 
+115, 0, 0, 0, 31, 0, 0, 0, 0, 0, 0, 0, 126, 134 (this number is incremented by the server for each command but it does not need to change), 0, 0, 0, 248, 208, 13, 0, 134 (duplicate of the incremental number), 0, 0, 0, 0, 3 (This is the light ID), 0, 208, 17, 2, 0 (off), 0, 0, 73 (checksum = incremental number - 64 (not sure why) + ID), 126
 
+To turn on, the 0 changes to a 1 and the checksum increases by 1
 
-### Turn On
+To change color:
 
-```log
- ON: (131, 0, 0, 0, 37, 57, 135, 166, 214, 0, *58, 0, 126, 0, 0, 0, 0, 250, 219, 19, 0, *99?dec, 34, 17, 8, 0, 8, 0, 219, 17, 2, 1, 1, 99, 100, 255, 98, 0, 0, 0, 172, 126, 67, 0, 0, 0, 26, 57, 135, 166, 214, 1, 1, 6, 5, 0, 16, 8, 1, 99, 100, 255, 98, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0)
+115, 0, 0, 0, 34, 0, 0, 0, 0, 0, 0, 0, 126, 65 (incremental number), 0, 0, 0, 248, 240, 16, 0, 65, 0, 0, 0, 0, 1 (ID), 0, 240, 17, 2, 1, 255, 254, 255 (R), 4 (G), 0 (B), 70 (Checksum = incremental + ID + RGB, 126
+
+To change brightness 48%
+
+115, 0, 0, 0, 34, 0, 0, 0, 0, 0, 0, 0, 126, 136 (incremental number), 0, 0, 0, 248, 240, 16, 0, 136, 0, 0, 0, 0, 1 (ID), 0, 240, 17, 2, 1, 48 (Brightness), 255, 255, 255, 255, 185 (Checksum = incremental + ID + Brightness), 126
+
+I have also seen the device ID set to 0 and a 128 or 255 in the next place which can be used to control groups. Managing each light independently is a good start for me. I'm not super familiar with JavaScript but I will try to integrate my changes and get this server to work with this protocol.
 ```
