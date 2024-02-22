@@ -31,8 +31,7 @@ TLS_PORT = 23779
 TLS_HOST = "0.0.0.0"
 CYNC_CERT = os.environ.get("CYNC_CERT", "certs/cert.pem")
 CYNC_KEY = os.environ.get("CYNC_KEY", "certs/key.pem")
-DEBUG = os.environ.get("CYNC_DEBUG", "").casefold() in ("true", "1", "yes", "y", "t", 1)
-DEBUG = True
+DEBUG = os.environ.get("CYNC_DEBUG", "1").casefold() in ("true", "1", "yes", "y", "t", 1)
 
 if DEBUG is True:
     logger.setLevel(logging.DEBUG)
