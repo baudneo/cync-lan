@@ -2,6 +2,8 @@
 
 Async MQTT LAN controller for CYNC devices. **DNS redirection required**
 
+Forked from [cync-lan](https://github.com/iburistu/cync-lan) All credit to [iburistu](https://github.com/iburistu)
+
 ## Prerequisites:
 
 Because this works by re-routing DNS traffic to your local network, you'll need some 
@@ -108,8 +110,7 @@ socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=ce
 
 ### Newer firmware devices
 
-*IP changed to the cm-iot-ge.xlink.cloud IP*
-
+*Notice the last IP change*
 ```bash
 sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:35.196.85.236:23779,verify=0
 ```
