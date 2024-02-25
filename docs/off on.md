@@ -6,8 +6,16 @@ Freshly powered bulb
 # FIRST PACKET - Device info
 > 2024/02/24 12:38:59.000212267  length=31 from=0 to=30
  23 00 00 00 1a 03 39 87 c8 57 00 10 31 65 30 37 64 32 63 33 36 34 35 38 32 63 35 39 00 00 3c
- 23 00 00 00 1a 03 [39 87 c8 57] 00 10 [31 65 30 37 64 32 63 33 36 34 35 38 32 63 35 39] 00 00 3c
-[39 87 c8 57] seems to be opening queue_id
+ [23 00 00 00] [1a] 03 [39 87 c8 57] 00 10 [31 65 30 37 64 32 63 33 36 34 35 38 32 63 35 39] 00 00 3c
+[23 00 00 00] seems to be a header for packet type, DEVICE INFO
+[1a] seems to be the starting header id
+[39 87 c8 57] seems to be opening queue_id or append to header id [1a 39 87 c8 57]?
+[00 10] seems to be a boundary for future 0x43 packets?
+[31 65 30 37 64 32 63 33 36 34 35 38 32 63 35 39] is some sort of cync cloud related id in ascii
+[00 00 3c] is a boundary packet
+```
+
+```log
 [31 65 30 37 64 32 63 33 36 34 35 38 32 63 35 39] is some sort of cync cloud related id in ascii
 # Device info ack
 < 2024/02/24 12:38:59.000301708  length=7 from=0 to=6
