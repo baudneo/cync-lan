@@ -7,7 +7,7 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) All credit to [ibur
 ## Prerequisites:
 
 Because this works by re-routing DNS traffic to your local network, you'll need some 
-way to route DNS - a local DNS server, Pi-Hole, or `/etc/hosts` file on your router 
+way to route DNS - a local DNS server (OPNsense, pfSense running unbound), Pi-Hole, or `/etc/hosts` file on your router 
 will work. You'll also need `openssl` on your system. You may also need `dig` and `socat` for **debugging**.
 
 See the [Re-routing DNS](#re-routing-dns) section for more information.
@@ -45,6 +45,8 @@ python3 ./cync-lan.py
 | `CYNC_DEBUG` | Enable debug logging | `True`           |
 | `CYNC_CERT` | Path to cert file | `certs/server.pem` |
 | `CYNC_KEY` | Path to key file | `certs/server.key` |
+| `CYNC_PORT` | Port to listen on | `23779` |
+| `CYNC_HOST` | Host to listen on | `0.0.0.0` |
 
 
 ## Re-routing DNS
@@ -58,6 +60,26 @@ Older firmware:
 
 Newer firmware:
  - `cm.gelighting.com`
+
+### Selective DNS routing based on requesting device using Unbound DNS
+If you run bind9 or unbound, you can use 'views' to selectively route DNS requests based on the requesting device. This is useful if you have a mix of older and newer firmware devices, or you only want certain devices to be rerouted.
+
+
+The following example will reroute DNS requests for `cm.gelighting.com` to `10.0.1.9` for the device `10.0.1.167`.
+`local-zone` is your DNS domain (.local, .lan, .whatever).
+
+I use OPNsense and this config is placed in `Services`>`Unbound DNS`>`Advanced Options`.
+
+```
+server:
+access-control-view: 10.0.1.167/32 cync-override
+
+view:
+name: "cync-override"
+local-zone: "homelab" static
+local-data: "cm.gelighting.com. 90 IN A 10.0.1.9"
+```
+
 
 
 ## Launching the server
@@ -89,19 +111,6 @@ If the commands do not seem to be working, it's likely that the TCP communicatio
 device is different than mine. You can inspect the traffic of the device communicating 
 with the cloud server in real-time by running:
 
-```bash
-# You can change the cert and key path to an absolute path if you want
-# otherwise run from the same directory as the certs dir (~/cync-lan).
-
-# To log the traffic to a file
-sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:35.196.85.236:23779,verify=0
-
-# To log the traffic to stdout
-sudo socat -d -d -x -v ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:35.196.85.236:23779,verify=0
-```
-
-in `dump.txt` you will see the back-and-forth communication between the device and the cloud server. ">" is device to server, "<" is server to device.
-
 ### Older firmware devices
 
 ```bash
@@ -115,7 +124,7 @@ socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=ce
 sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:35.196.85.236:23779,verify=0
 ```
 
-The TCP data will be streamed to `dump.txt` where you can observe the back-and-forth messaging. You may need to modify the different CONSTS in the `cync-lan.py` file to match the device's communication.
+in `dump.txt` you will see the back-and-forth communication between the device and the cloud server. ">" is device to server, "<" is server to device.
 
 Also make sure to check that your DNS re-route is actually routing to your local network. You can check by using `dig`:
 
@@ -134,4 +143,4 @@ dig cm.gelighting.com
 You should see an A record for your local network. If not, your DNS is not set up correctly.
 
 # Power cycle devices after starting server
-The devices make the DNS query on startup - you need to cycle power for all devices on the network for them to use your local server.
+The devices make the DNS query on first startup - you need to cycle power for all devices on the network for them to use your local server.
