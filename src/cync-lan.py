@@ -47,6 +47,7 @@ if DEBUG is True:
 
 
 def bytes2list(byte_string: bytes) -> List[int]:
+    """Convert a byte string to a list of integers"""
     # Interpret the byte string as a sequence of unsigned integers (little-endian)
     int_list = struct.unpack("<" + "B" * (len(byte_string)), byte_string)
     return list(int_list)
@@ -58,6 +59,16 @@ def hex2list(hex_string: str) -> List[int]:
     return bytes2list(x)
 
 
+def ints2hex(ints: List[int]) -> str:
+    """Convert a list of integers to a hex string"""
+    return bytes(ints).hex()
+
+
+def ints2bytes(ints: List[int]) -> bytes:
+    """Convert a list of integers to a byte string"""
+    return bytes(ints)
+
+
 # Some commands require a response that iterates a specific byte
 # It appears it can be shared across all devices, but it should still
 # be iterated
@@ -67,116 +78,110 @@ def server_iter_response():
     return bytearray([0x88, 0x00, 0x00, 0x00, 0x03, 0x00, ITER % 0xFF, 0x00])
 
 
-def server_control_ack(msg_id: bytes):
-    # 83 packet came, respond with 88 and msg id
-    return bytearray(
+def x88_generate_ack(msg_id: bytes):
+    """Respond to a 0x83 packet from the device, needs a msg_id to reply with"""
+    _x = bytes(
         [
             0x88,
             0x00,
             0x00,
             0x00,
             0x03,
-            msg_id[0],
-            msg_id[1],
-            msg_id[2],
         ]
     )
+    _x += msg_id
+    return _x
 
-APP_INFO_HEADER = bytearray([0x13, 0x00, 0x00, 0x00])
-APP_FIRST_RESP = b"\x18\x00\x00\x00\x02\x00\x00"
+def x7b_generate_ack(queue_id: bytes, msg_id: bytes):
+    """Respond to a 0x83 packet from the device, needs a msg_id to reply with"""
+    _x = bytes(
+        [
+            0x88,
+            0x00,
+            0x00,
+            0x00,
+            0x03,
+        ]
+    )
+    _x += queue_id
+    _x += msg_id
+    return _x
+
+class PhoneAppStructs:
+    @dataclass
+    class AppRequests:
+        info_header: bytes = bytes([0x13, 0x00, 0x00, 0x00])
+
+    @dataclass
+    class AppResponses:
+        info_resp: bytes = bytes([0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00])
+
+    requests: AppRequests = AppRequests()
+    responses: AppResponses = AppResponses()
+
+class DeviceStructs:
+
+    class DeviceHeaderID:
+        @dataclass
+        class x43IDs:
+            ping: bytes = 0x07
+            timestamp: bytes = 0x34
+
+        @dataclass
+        class x83IDs:
+            x25: bytes = 0x25
+
+        x43: x43IDs = x43IDs()
+        x83: x83IDs = x83IDs()
+
+    @dataclass
+    class DeviceRequests:
+        """These are the packets the device sends to the server"""
+        info_header: bytes = bytes([0x23, 0x00, 0x00, 0x00])
+        x83_header: bytes = bytes([0x83, 0x00, 0x00, 0x00])
+        x73_header: bytes = bytes([0x73, 0x00, 0x00, 0x00])
+        x43_header: bytes = bytes([0x43, 0x00, 0x00, 0x00])
+        # Full packet matches
+        connection_request: bytes = bytes([0xC3, 0x00, 0x00, 0x00, 0x01, 0x0C])
+        heartbeat: bytes = bytes([0xD3, 0x00, 0x00, 0x00, 0x00])
+
+    @dataclass
+    class DeviceResponses:
+        """These are the packets the server sends to the device"""
+        info_ack: bytes = bytes([0x28, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00])
+        connection_ack: bytes = bytes([0xC8, 0x00, 0x00, 0x00, 0x0B, 0x0D, 0x07, 0xE6, 0x02, 0x13, 0x07, 0x0A, 0x14, 0x29, 0xFD, 0xA8])
+        x48_ack: bytes = bytes([0x48, 0x00, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00])
+        x88_ack: bytes = bytes([0x88, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00])
+        heartbeat_ack: bytes = bytes([0xD8, 0x00, 0x00, 0x00, 0x00])
+        # 78 and 7b still need definition
+        x78_base: bytes = bytes([0x78, 0x00, 0x00, 0x00])
+        x7b_base: bytes = bytes([0x7B, 0x00, 0x00, 0x00, 0x07])
+
+    header_ids: DeviceHeaderID = DeviceHeaderID()
+    requests: DeviceRequests = DeviceRequests()
+    responses: DeviceResponses = DeviceResponses()
 
 
-CLIENT_INFO_HEADER = bytearray([0x23, 0x00, 0x00, 0x00, 0x1a])
-# b'#\x00\x00\x00\x1a \x039\x87\xa6\xd6\x00\x101e07d2c3643c323d\x00\x00<'
-CLIENT_INFO_ACK = bytes(
-    [
-        0x28,
-        0x00,
-        0x00,
-        0x00,
-        0x02,
-        0x00,
-        0x00,
-    ]
-)
-# Client sends the same packet over and over, spams logs and requires a reply
-CLIENT_PING_HEADER = bytearray(
-    [0x43, 0x00, 0x00, 0x00, 0x07, 0x39, 0x87, 0xA6, 0xD6, 0x01, 0x01, 0x06]
-)
-# There is a specific handshake that needs to occur before the client
-# will accept commands
-CLIENT_CONNECTION_REQUEST = bytearray(
-    [
-        0xC3,
-        0x00,
-        0x00,
-        0x00,
-        0x01,
-        0x0C,
-    ]
-)
-SERVER_CONNECTION_RESPONSE = bytearray(
-    [
-        0xC8,
-        0x00,
-        0x00,
-        0x00,
-        0x0B,
-        0x0D,
-        0x07,
-        0xE6,
-        0x02,
-        0x13,
-        0x07,
-        0x0A,
-        0x14,
-        0x29,
-        0xFD,
-        0xA8,
-    ]
-)
 # packet struct seems to be:
-# 0-4: header, 5-8: some sort of ID for messaging.other data until 0x7e
+# 0-3: header, 4: header ID, 5-8: some sort of ID for queue then msg so queue/msg
 DATA_BOUNDARY = 0x7E
-# client sometimes sends packet with a timestamp in it (ts can be out of sync, NTP?)
-CLIENT_TS_HEADER = bytearray([0x43, 0x00, 0x00, 0x00, 0x34])
-# Client data 43 00 00 00
-CLIENT_43_HEADER = bytearray([0x43, 0x00, 0x00, 0x00])
-CLIENT_73_HEADER = bytearray([0x73, 0x00, 0x00, 0x00])
-CLIENT_83_HEADER = bytearray([0x83, 0x00, 0x00, 0x00])
-# client is reporting device status for another device (31 bytes long)
-SHORT_STATUS_HEADER = bytearray([0x43, 0x00, 0x00, 0x00, 0x1A])
-LONG_STATUS_HEADER = bytearray([0x43, 0x00, 0x00, 0x00, 0x2D])
-# client is reporting its own status (73 bytes long)
-DEVICE_CONTROL_HEADER = bytearray([0x83, 0x00, 0x00, 0x00, 0x25])
-# Clients get fussy if they don't hear from the server frequently
-CLIENT_HEARTBEAT = bytearray([0xD3, 0x00, 0x00, 0x00, 0x00])
-SERVER_HEARTBEAT = bytearray([0xD8, 0x00, 0x00, 0x00, 0x00])
-# This ack is used for several things
-CLIENT_GENERIC_ACK = bytearray(
-    [
-        0x48,
-        0x00,
-        0x00,
-        0x00,
-        0x03,
-        0x01,
-        0x01,
-        0x00,
-    ]
-)
+APP_HEADERS = PhoneAppStructs()
+DEVICE_HEADERS = DeviceStructs()
 
 
 class DeviceType(str, Enum):
-    PLUG = "plug"
-    TUNABLE_LIGHT = "tunable light"
-    RGB_LIGHT = "rgb light"
-    SWITCH = "switch"
-    REMOTE = "remote"
-    SENSOR = "sensor"
-    CAMERA = "camera"
-    HUB = "hub"
-    APP = "app"
+    PLUG = "plug" # smart plug indoor (idk if outdoor is different)
+    TUNABLE_LIGHT = "tunable light" # white light
+    RGB_LIGHT = "rgb light" # "full color" light
+    LIGHT_STRIP = "light strip" # light strip (always RGB?)
+    DYNAMIC_LIGHT = "dynamic light" # dynamic light (bulb?)
+    DYNAMIC_STRIP = "dynamic strip" # dynamic light strip?
+    SWITCH = "switch"  # mains powered switch
+    REMOTE = "remote"  # battery operated switch/remote (unknown if its diff than a switch)
+    SENSOR = "sensor"  # sensor
+    CAMERA = "camera"  # camera
+    HUB = "hub"  # c reach
+    APP = "app"  # Phone app
 
 
 class GlobalState:
@@ -187,14 +192,12 @@ class GlobalState:
 
 @dataclass
 class Tasks:
-    device_receive: Optional[asyncio.Task] = None
-    device_send: Optional[asyncio.Task] = None
-    mqtt_receive: Optional[asyncio.Task] = None
-    mqtt_send: Optional[asyncio.Task] = None
+    receive: Optional[asyncio.Task] = None
+    send: Optional[asyncio.Task] = None
 
     def __iter__(self):
         return iter(
-            [self.device_receive, self.device_send, self.mqtt_receive, self.mqtt_send]
+            [self.receive, self.send]
         )
 
 
@@ -211,9 +214,29 @@ class CyncDevice:
     reader: Optional[asyncio.StreamReader]
     writer: Optional[asyncio.StreamWriter]
 
+    def parse_boundary_data(self, _data: bytes):
+        lp = '%sparse boundary:' % self
+        if _data[0] == DATA_BOUNDARY:
+            _data = _data[1:]
+            # get index of next boundary
+            _idx = _data.find(DATA_BOUNDARY)
+            control_data = _data[:_idx]  # drops the boundary byte
+            logger.debug(f"{lp} parsed 0x83 DATA -> {bytes2list(control_data)}, send to decode?")
+            # check if there is more data
+            if _idx >= len(_data) - 1:
+                # no more data
+                _data = None
+            else:
+                # remaining boundary data
+                _data = _data[_idx + 1:]
+            return _data
+        else:
+            # its a new packet
+            logger.debug(f"{lp} during 0x83 data parsing, found appended packet: {_data}")
+            return {'new packet': _data}
+
     async def parse_status(self, raw_state: bytes):
-        """Newer firmware status packet parsing (different devices send different format packets?"""
-        # logger.debug(f"{self.lp} parsing status packet: {bytes2list(raw_state)}")
+        """Newer firmware status packet parsing"""
         _id = raw_state[0]
         state = raw_state[1]
         brightness = raw_state[2]
@@ -221,168 +244,198 @@ class CyncDevice:
         r = raw_state[4]
         _g = raw_state[5]
         b = raw_state[6]
+        # is_good = 1/0, not sure what it means but, it isnt reporting the true status when this byte is 0.
+        is_good = raw_state[7]
+        if is_good == 0:
+            logger.debug(f"{self.lp} Device ID: {_id} is_good byte is 0, meaning the status packet shouldn't be parsed.")
 
-        devices = list(g.server.devices.values())
-        dev_by_id = False
-        for device in devices:
-            if device.id == _id:
-                dev_by_id = True
-                break
-        if dev_by_id is False:
-            logger.warning(
-                f"Device ID: {_id} not found in devices, creating a new device"
-            )
-            device = CyncDevice(_id=_id)
+        else:
+            devices = list(g.server.devices.values())
+            dev_by_id = False
+            # fixme: need to make server.devices a custom class with add, del, get, etc.
+            for device in devices:
+                if device.id == _id:
+                    dev_by_id = True
+                    device = device
+                    break
 
-        if device.id is None:
-            device.id = _id
-        elif device.id != _id:
-            logger.warning(
-                f"{device.lp} Device ID changed from {device.id} to {_id} for address: {device.address} ??!!??!!"
-            )
-            device.id = _id
-            return
-        # temp is 0-100, if > 100, RGB data has been sent, otherwise its on/off, brightness or temp data
-        rgb_cmd = False
-        if temp > 100:
-            rgb_cmd = True
-            temp = device.temperature
-        device.state = state
-        device.brightness = brightness
-        device.temperature = temp
-        if rgb_cmd is True:
-            device.r = r
-            device.g = _g
-            device.b = b
-        dev_id = device.address if device.address is not None else device.id
-        logger.debug(f"{device.lp} being saved using key: {dev_id}")
-        g.server.devices[dev_id] = device
+            if dev_by_id is False:
+                # what if there is a device already without the ID but it has an address?
+                logger.warning(
+                    f"Device ID: {_id} not found in devices, creating a new device"
+                )
+                device = CyncDevice(_id=_id)
+
+            if device.id is None:
+                device.id = _id
+            elif device.id != _id:
+                logger.warning(
+                    f"{device.lp} Device ID changed from {device.id} to {_id} for address: {device.address} ??!!??!!"
+                )
+                device.id = _id
+                return
+            # temp is 0-100, if > 100, RGB data has been sent, otherwise its on/off, brightness or temp data
+            rgb_cmd = False
+            if temp > 100:
+                rgb_cmd = True
+                # pull device temp so we dont overwrite it
+                temp = device.temperature
+            # device class has properties that have logic to only run on changes.
+            # fixme: need to make a bulk_change method to prevent multiple mqtt messages
+            device.state = state
+            device.brightness = brightness
+            device.temperature = temp
+            if rgb_cmd is True:
+                device.r = r
+                device.g = _g
+                device.b = b
+            dev_id = device.address if device.address is not None else device.id
+            logger.debug(f"{device.lp} being saved using key: {dev_id}")
+            g.server.devices[dev_id] = device
 
 
     async def parse_packet(self, data: bytes, responses: Optional[List] = None):
-        # Client info buffer is the first thing sent (first byte = 0x23 [ascii: # , hex: 23])
-        # It seems to send an identifier of some sort that can be decoded ascii.
-        # The phone app also sends an identifier and key/pw in its first packet
-        # Check if it is a phone app
         lp = f"{self.address}:parse:pkt:"
-        header = data[:5]
+        packet_data: Optional[bytes] = None
+        header = data[:4]
+        header_id = data[4]
+        queue_id = data[5:9]
+        msg_id = data[9:12]
+        # check if any data after msg_id
+        if len(data) > 12:
+            packet_data = data[13:]
 
-        if responses is None:
-            responses = []
+        if queue_id not in self.queue_ids:
+            logger.debug(f"{lp} New queue ID: {queue_id.hex()}, adding to device!")
+            self.queue_ids.append(queue_id)
         device = self
         data_len = len(data)
-        if data_len == 48 and data[0:4] == APP_INFO_HEADER:
+
+        if header == APP_HEADERS.requests.info_header:
             device.device_type = DeviceType.APP
             logger.debug(f"{lp} sent APP FIRST PACKET (This connection is from the Cync APP) - replying...")
-            responses.append(APP_FIRST_RESP)
+            await device.write(APP_HEADERS.responses.info_resp)
 
-
-        elif data[0:5] == CLIENT_INFO_HEADER:
-            # there is an id bytestring we need to extract
-            queue_id = data[6:10]
+        elif header == DEVICE_HEADERS.requests.info_header:
             logger.debug(
-                f"{lp} sent DEVICE INFO PACKET with queue ID: {queue_id}, replying..."
+                f"{lp} sent DEVICE INFO PACKET with starting queue/msg ID: {queue_id.hex()}/{msg_id.hex()}, replying..."
             )
             self.starting_queue_id = queue_id
-            responses.append(CLIENT_INFO_ACK)
+            await device.write(DEVICE_HEADERS.responses.info_ack)
         # device wants to connect before accepting commands
-        elif data == CLIENT_CONNECTION_REQUEST:
+        elif data == DEVICE_HEADERS.requests.connection_request:
             logger.debug(f"{lp} sent CONNECTION REQUEST, replying...")
-            responses.append(SERVER_CONNECTION_RESPONSE)
+            await device.write(DEVICE_HEADERS.responses.connection_ack)
         # Heartbeat
-        elif data == CLIENT_HEARTBEAT:
-            responses.append(SERVER_HEARTBEAT)
+        elif data == DEVICE_HEADERS.requests.heartbeat:
+            await device.write(DEVICE_HEADERS.responses.heartbeat_ack)
             # logger.debug(f"{lp} Client sent HEARTBEAT, replying...")
-        # some sort of ping, always the same packet. SPAMS logs.
-        elif data == CLIENT_PING_HEADER:
-            responses.append(CLIENT_GENERIC_ACK)
 
-        # There is some sort of timestamp in the packet
-        elif header == CLIENT_TS_HEADER:
-            ts_idx = data.find(0x2A) + 1
-            ts = data[ts_idx:]
-            logger.debug(f"{lp} sent TIMESTAMP BUFFER -> {ts} - replying...")
-            responses.append(CLIENT_GENERIC_ACK)
+        elif header == DEVICE_HEADERS.requests.x43_header:
+            # Handle 0x43 device status packets from devices
+            if header_id == DEVICE_HEADERS.header_ids.x43.timestamp:
+                # There is some sort of timestamp in the packet, not status
+                # look for ascii '*' (0x2A) and grab the data after it
+                ts_idx = data.find(0x2A) + 1
+                ts = data[ts_idx:]
+                logger.debug(f"{lp} sent TIMESTAMP -> {ts.decode('ascii', errors='ignore')} - replying...")
+            # not a ping packet
+            else:
+                if packet_data is not None:
+                    logger.debug(f"{lp} 0x43 packet with data, assuming DEVICE STATUS, replying...")
+                    if data_len == 31:
+                        # short device status, original code grabbed and parsed this.
+                        raw_state = data[15:23]
+                        logger.debug(
+                            f"{lp} sent DEVICE STATE => {bytes2list(raw_state)}, "
+                            f"replying..."
+                        )
+                        await self.parse_status(raw_state)
 
-        elif header == LONG_STATUS_HEADER:
-            # [43 00 00 00 2d] [39 87 a6 d6] [01 01 06 06]
-            msd_uuid = data[5:9]
-            idk_ = data[9:13]
-            _data = data[13:]
-            # b'\x00\x10\x05\x00\x00\x00\x00\x00\x00\x01\x14\x08\x00\x00\x00\x00\x00\x00\x07\x00\x10\x06\x01d\x00\x00\x00\x00\x01\x14\x08\x00\x00\x00\x00\x00\x00'
-            boundary = b'\x00\x10'
-            split = b'\x01\x14'
-            # each struct has to and from data.
-            # each _data struct is 18 bytes long, if mroe than 1 struct b'7' splits them
-            to_data = None
-            from_data = None
-            idx = 0
-            logger.debug(f"{lp} sent LONG DEVICE STATE  => {bytes2list(_data)}")
-            # ingest 18 bytes in a for loop
+                    elif data_len > 31:
+                        # long device status
+                        boundary = b'\x00\x10'
+                        # each struct has to and from data.
+                        # each _data struct is 18 bytes long,
+                        to_data = None
+                        from_data = None
+                        idx = 0
+                        logger.debug(f"{lp} sent LONG DEVICE STATE  => {bytes2list(packet_data)}")
+                        # ingest 18 bytes in a for loop
 
-            for i in range(0, len(_data), 18):
-                    # There is a byte in between each data struct, keeps aligned each iter
-                    if idx > 0:
-                        i += idx
-                        # logger.debug(f"parse_packet: idx > 0 so incrementing i by {idx}. old: {i-idx}, new: {i}")
-                    # logger.debug(f"parse_packet: {i=} // {idx=} // _data[i:i+2] = {_data[i:i+2]}")
-                    if _data[i:i + 2] == boundary:
-                        to_data = _data[i + 2:i + 9]
-                        # logger.debug(f"parse_packet: found boundary ({boundary}) in data: {_data}, --- {to_data=}")
+                        packet_data = packet_data[1:]
+                        for i in range(0, len(packet_data), 18):
+                            # 00 10 05 00 00 00 00 00 00 00 14 07 00 00 00 00 00 00
+                            # (07) 00 10 08 01 50 64 00 00 00 01 14 07 00 00 00 00 00
+                            # 00
+                            # There is a byte in between each data struct, keeps aligned each iter
+                            if idx > 0:
+                                i += idx
+                                # logger.debug(f"parse_packet: idx > 0 so incrementing i by {idx}. old: {i-idx}, new: {i}")
+                            # logger.debug(f"parse_packet: {i=} // {idx=} // _data[i:i+2] = {_data[i:i+2]}")
+                            if packet_data[i:i + 2] == boundary:
+                                to_data = packet_data[i + 2:i + 10]
+                                # logger.debug(f"parse_packet: found boundary ({boundary}) in data: {_data}, --- {to_data=}")
 
-                        from_data = _data[i + 11:i + 18]
-                        # to: 0, 16, 5, 0, 0, 0, 0, 0, 0,   from: 1, 20, 8, 0, 0, 0, 0, 0, 0,
-                        await self.parse_status(to_data)
+                                await self.parse_status(to_data)
+                            idx += 1
 
-                    idx += 1
+                # Its one of those queue id/msg id pings?
+                else:
+                    # logger.debug(f"{lp} received a 0x43 packet with no data, interpreting as PING, replying...")
+                    pass
 
-        elif header == SHORT_STATUS_HEADER:
-            raw_state = data[15:22]
-            from_id = data[24]
-            logger.debug(
-                f"{lp} sent DEVICE STATE (From device: {from_id}) => {bytes2list(raw_state)}, "
-                f"replying..."
-            )
-            await self.parse_status(raw_state)
-            responses.append(CLIENT_GENERIC_ACK)
+            await device.write(DEVICE_HEADERS.responses.x48_ack)
 
-        # When the device sends a packet starting with 0x83
-        elif data[0:5] == DEVICE_CONTROL_HEADER:
-            msd_uuid = data[5:9]
-            msg_id = data[9:13]
-            _data = data[13:]
-            logger.debug(f"{lp} sent DEVICE CONTROL DATA -> {bytes2list(_data)} , parsing...")
-            def _parse_control_data(_data: bytes):
-                if _data[0] == DATA_BOUNDARY:
-                    _data = _data[1:]
-                    # get index of next boundry
-                    _idx = _data.find(DATA_BOUNDARY)
-                    control_data = _data[:_idx]  # drops the boundry byte
-                    logger.debug(f"{lp} parsed CONTROL DATA -> {bytes2list(control_data)}, send to decode?")
-                    # check if there is more data
-                    if _idx >= len(_data) - 1:
-                        # no more data
-                        _data = None
-                    else:
-                        # remaining data
-                        _data = _data[_idx + 1:]
-                    return data
+        # When the device sends a packet starting with 0x83, data is wrapped in 0x7e.
+        # No idea what 0x83 is
+        elif data[0:5] == DEVICE_HEADERS.requests.x83_header:
+            # usually has a 0x43 packet with it
+            # raw data not iterated for boundary and not checked for more than 1 packet struct in data
+            if packet_data is not None:
+                # pluck the bytes between 0x7e and 0x7e, there may be several 7e's amongst the data
+                logger.debug(f"{lp} sent 0x83 DATA -> {bytes2list(packet_data)} , parsing...")
+                more_data = self.parse_boundary_data(packet_data)
+                while more_data is not None:
+                    logger.debug(f"{lp} more 0x83 data to parse...")
+                    more_data = self.parse_boundary_data(packet_data)
+                    if isinstance(more_data, dict):
+                        if 'new packet' in more_data:
+                            logger.debug(f"{lp} New packet found in struct, parsing new packet then contnuing on...")
+                            pkt = more_data['new packet']
+                            # recursion
+                            await self.parse_packet(pkt)
 
-            more_data = _parse_control_data(_data)
-            while more_data is not None:
-                logger.debug(f"{lp} more control data to parse...")
-                more_data = _parse_control_data(_data)
+                # server 0x88 ack needs msg id.
+                await device.write(x88_generate_ack(msg_id))
 
-            server_control_ack(msg_id)
-            await device.write(CLIENT_GENERIC_ACK)
+        elif data[0:5] == DEVICE_HEADERS.requests.x73_header:
+            # device control packet
+            # raw data not iterated for boundary and not checked for more than 1 packet struct in data
+            if packet_data is not None:
+                # pluck the bytes between 0x7e and 0x7e, there may be several 7e's amongst the data
+                logger.debug(f"{lp} sent DEVICE CONTROL DATA -> {bytes2list(packet_data)} , parsing...")
+                more_data = self.parse_boundary_data(packet_data)
+                while more_data is not None:
+                    logger.debug(f"{lp} more control data to parse...")
+                    more_data = self.parse_boundary_data(packet_data)
+                    if isinstance(more_data, dict):
+                        if 'new packet' in more_data:
+                            logger.debug(f"{lp} New packet found in struct, parsing new packet then contnuing on...")
+                            pkt = more_data['new packet']
+                            # recursion
+                            await self.parse_packet(pkt)
+
+                await device.write(x7b_generate_ack(queue_id, msg_id))
 
         # unknown data we don't know the header for
         else:
-            logger.debug(f"{lp} sent UNKNOWN DATA, replying...")
-            responses.append(CLIENT_GENERIC_ACK)
-
-
-        return responses
+            logger.debug(f"{lp} sent UNKNOWN HEADER! Don't know how to respond!\n"
+                         f"RAW: {data}\nINT: {bytes2list(data)}\nHEX: {data.hex()}"
+                        )
+        # logger.debug(f"{lp} Received a {data_len} byte {hex(header[0])} packet! "
+        #              f"q id: {queue_id} / msg id: {msg_id} with DATA: {packet_data}"
+        #              )
 
 
     async def receive_task(self, client_addr: str):
@@ -425,6 +478,7 @@ class CyncDevice:
         _id: Optional[int] = None,
     ):
         # data we might want later?
+        self.queue_ids =[]
         self.starting_queue_id: bytes = b''
         # flag to prevent dumping messages multiple times
         self.dumped_msgs: bool = False
@@ -706,7 +760,8 @@ class CyncLanServer:
             logger.error(f"{self.lp} Failed to start server: {e}", exc_info=True)
             os.kill(os.getpid(), signal.SIGTERM)
         else:
-            logger.debug(f"Cync LAN server started on {self.host}:{self.port}")
+            logger.debug(f"Cync LAN server started on {self.host}:{self.port} - Waiting for connections, if oyu dont"
+                         f" see any, check your DNS redirection and firewall settings.")
             try:
                 async with self._server:
                     await self._server.serve_forever()
@@ -798,13 +853,13 @@ class CyncLanServer:
         if existing_device is not None:
             device = existing_device
             # check if the receive task is running or in done or exception state.
-            if device.tasks.device_receive is not None:
-                if device.tasks.device_receive.done():
+            if device.tasks.receive is not None:
+                if device.tasks.receive.done():
                     logger.debug(
                         f"{self.lp} Device receive task is done(), creating new task..."
                     )
                     create_task = True
-                    _ = device.tasks.device_receive.result()
+                    _ = device.tasks.receive.result()
 
         else:
             logger.debug(f"{self.lp} Creating new device for {client_addr}")
@@ -816,7 +871,7 @@ class CyncLanServer:
             rcv_task = self.loop.create_task(
                 device.receive_task(client_addr),
             )
-            device.tasks.device_receive = rcv_task
+            device.tasks.receive = rcv_task
             global_tasks.append(rcv_task)
 
         self.devices[client_addr] = device
@@ -883,13 +938,3 @@ if __name__ == "__main__":
         if cync and not cync.loop.is_closed():
             logger.debug("Closing loop...")
             cync.loop.close()
-
-# [0:12] - First request has some sort of identifying data starting at index 12
-APP_FIRST_REQ = b"\x13\x00\x00\x00+\x03-\xe4\xb5\xd2\x00\x10"
-APP_FIRST_RESP = b"\x18\x00\x00\x00\x02\x00\x00"
-# Some sort of challenge, index 5, 8 are dynamic
-APP_SECOND_REQ = b"\xa3\x00\x00\x00\x077\x96\x13/\xd7\xdd\x00"
-APP_SECOND_REPLY = b"\xab\x00\x00\x03\xfb7\x96\x1eL\xd7\xf7\x00\x07\x00\txlink_dev\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xe3O\x02\x10"
-
-APP_THIRD_REQ = b"\xa3\x00\x00\x00\x077\x96\x1eL\xd7\xf7\x00"
-APP_THIRD_REPLY = b"\xab\x00\x00\x03\xfb7\x96\x1eL\xd7\xf7\x00\x07\x00\txlink_dev\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xe3O\x02\x10"
