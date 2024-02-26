@@ -1,3 +1,5 @@
+"""Create the proper self signed certificate and private key for *.xlink.cn Common Name (CN)."""
+
 import os
 from pathlib import Path
 from typing import Union, Tuple
