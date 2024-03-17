@@ -1,4 +1,4 @@
-"""Create the proper self signed certificate and private key for *.xlink.cn Common Name (CN)."""
+"""Create the proper self-signed certificate and private key for *.xlink.cn Common Name (CN)."""
 
 import os
 from pathlib import Path
@@ -16,16 +16,15 @@ from datetime import datetime, timedelta
 def generate_certs(
     key_out: Union[str, os.PathLike, None] = None,
     cert_out: Union[str, os.PathLike] = None,
-    write_to_file: bool = False,
 ) -> Tuple[rsa.RSAPrivateKey, x509.Certificate]:
     """Generate a self-signed certificate and private key using *.xlink.cn for Common Name (CN).
+    You can write the key and/or cert by specifying the key_out and/or cert_out parameters.
+    If no arguments are supplied, the key and cert are kept in memory, the user will need to write them to a file.
 
 
     :param key_out: The path to write the private key to. If None, the private key will not be written to a file.
     :param cert_out: The path to write the certificate to. If None, the certificate will not be written to a file.
-    :param write_to_file: If True, the private key and certificate will be written to the paths specified by
-    key_out and cert_out.
-    :return: A tuple containing the private key and certificate.
+    :return: A tuple containing the private key and certificate data.
     """
     # Generate a new private key
     private_key: rsa.RSAPrivateKey = rsa.generate_private_key(
@@ -55,28 +54,32 @@ def generate_certs(
         .sign(private_key, hashes.SHA256())
     )
 
-    if write_to_file:
+    if any([key_out, cert_out]):
         cert_out = Path(cert_out)
         key_out = Path(key_out)
-        chain_out = cert_out.parent / "server.pem"
+        chain_out = Path()
 
-        # Write private key to file
-        with open(key_out, "wb") as key_file:
-            key_file.write(
-                private_key.private_bytes(
-                    Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()
+        if key_out is not None:
+            # Write private key to file
+            with key_out.open("wb") as key_file:
+                key_file.write(
+                    private_key.private_bytes(
+                        Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()
+                    )
                 )
-            )
 
-        # Write certificate to file
-        with open(cert_out, "wb") as cert_file:
-            cert_file.write(cert.public_bytes(Encoding.PEM))
+        if cert_out is not None:
+            # Write certificate to file
+            with cert_out.open("wb") as cert_file:
+                cert_file.write(cert.public_bytes(Encoding.PEM))
+            chain_out = cert_out.parent / "server.pem"
 
-        # Concatenate key.pem and cert.pem into server.pem
-        with open(chain_out, "wb") as server_pem:
-            with open(key_out, "rb") as key_pem:
-                server_pem.write(key_pem.read())
-            with open(cert_out, "rb") as cert_pem:
-                server_pem.write(cert_pem.read())
+        if key_out is not None and cert_out is not None:
+            # Concatenate key.pem and cert.pem into server.pem
+            with chain_out.open("wb") as server_pem:
+                with key_out.open("rb") as key_pem:
+                    server_pem.write(key_pem.read())
+                with cert_out.open("rb") as cert_pem:
+                    server_pem.write(cert_pem.read())
 
     return private_key, cert

@@ -1,8 +1,11 @@
-# pycync_lan
+# pycync_lan (cync_lan)
 
-Async MQTT LAN controller for CYNC devices. **DNS redirection required**
+Async MQTT LAN controller for CYNC devices. 
 
-Forked from [cync-lan](https://github.com/iburistu/cync-lan) All credit to [iburistu](https://github.com/iburistu)
+:warning: **DNS redirection required** :warning:
+
+Forked from [cync-lan](https://github.com/iburistu/cync-lan) and [cync2mqtt](https://github.com/juanboro/cync2mqtt) 
+All credit to [iburistu](https://github.com/iburistu) and [juanboro](https://github.com/juanboro)
 
 ## Prerequisites:
 
@@ -14,7 +17,7 @@ See the [Re-routing DNS](#re-routing-dns) section for more information.
 
 ## Installation:
 
-Make sure you have `openssl` system package installed first.
+Make sure you have `openssl` and `git` system package installed first.
 
 ```bash
 
@@ -29,7 +32,9 @@ https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
 bash ./create_certs.sh
 
 # install deps
+pip install pyyaml requests cryptography pydotenv
 pip install uvloop
+pip install git+https://github.com/Yakifo/amqtt.git
 # wget file
 wget https://raw.githubusercontent.com/baudneo/cync-lan/python/src/cync-lan.py
 
