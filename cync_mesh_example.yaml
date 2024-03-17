@@ -1,0 +1,83 @@
+# MQTT broker URL
+# auth: "mqtt://user:password@address:port/
+# no auth: "mqtt://address:port/"
+mqtt_url: "mqtt://homeassistant.local:1883/"
+#cert: "certs/cert.pem"
+#key: "certs/key.pem"
+#host: "0.0.0.0"
+#port: 23779
+
+account data:
+  Home:
+    id: 123456789
+    access_key: 123456
+    mac: ABCDEF1234567890
+
+    devices:
+      1:
+        mac: 78:6D:EB:28:EA:A4
+        name: Office Lamp
+        supports_rgb: true
+        supports_temperature: true
+        type: rgb light
+        bt_only: true
+      2:
+        mac: 78:6D:EB:28:EA:40
+        name: Overhead Right
+        supports_rgb: true
+        supports_temperature: true
+        type: rgb light
+        bt_only: true
+      3:
+        mac: 78:6D:EB:28:D6:D1
+        name: Overhead Left
+        supports_rgb: true
+        supports_temperature: true
+        type: rgb light
+        bt_only: true
+      4:
+        is_plug: true
+        mac: 34:13:43:70:D7:5E
+        name: Living Room Plug
+        type: plug
+        ip: 10.0.2.213
+      5:
+        is_plug: true
+        mac: 34:13:43:70:D8:A4
+        name: Office Plug
+        type: plug
+        ip: 10.0.2.211
+      6:
+        is_plug: true
+        mac: 34:13:43:70:CF:AD
+        name: Basement Plug
+        type: plug
+        ip: 10.0.2.212
+      7:
+        mac: 78:6D:EB:E0:1B:73
+        name: Bathroom Light 4 (Test bulb 1)
+        supports_rgb: true
+        supports_temperature: true
+        type: rgb light
+        ip: 10.0.2.215
+      8:
+        mac: 78:6D:EB:A8:47:24
+        name: Bathroom Light 1 (Test bulb 2)
+        supports_rgb: true
+        supports_temperature: true
+        type: rgb light
+        ip: 10.0.2.214
+      9:
+        mac: 78:6D:EB:DE:67:3F
+        name: Bathroom Light 2
+        supports_rgb: true
+        supports_temperature: true
+        type: rgb light
+        ip: 10.0.2.216
+      10:
+        mac: 78:6D:EB:DE:F3:13
+        name: Bathroom Light 3
+        supports_rgb: true
+        supports_temperature: true
+        type: rgb light
+        ip: 10.0.2.217
