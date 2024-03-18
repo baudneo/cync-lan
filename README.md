@@ -11,7 +11,7 @@ All credit to [iburistu](https://github.com/iburistu) and [juanboro](https://git
 
 Because this works by re-routing DNS traffic to your local network, you'll need some 
 way to route DNS - a local DNS server (OPNsense, pfSense running unbound), Pi-Hole, or `/etc/hosts` file on your router 
-will work. You'll also need `openssl` on your system. You may also need `dig` and `socat` for **debugging**.
+will work. You'll also need `openssl` and `git` on your system. You may also need `dig` and `socat` for **debugging**.
 
 See the [Re-routing DNS](#re-routing-dns) section for more information.
 
@@ -25,15 +25,14 @@ Make sure you have `openssl` and `git` system package installed first.
 mkdir ~/cync-lan && cd ~/cync-lan
 python3 -m venv venv
 # activate the venv
-source ./venv/bin/activate
+source ~/cync-lan/venv/bin/activate
 
 # create self signed cert
 https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
 bash ./create_certs.sh
 
 # install deps
-pip install pyyaml requests cryptography pydotenv
-pip install uvloop
+pip install pyyaml requests cryptography pydotenv uvloop
 pip install git+https://github.com/Yakifo/amqtt.git
 
 # wget file
@@ -41,60 +40,33 @@ wget https://raw.githubusercontent.com/baudneo/cync-lan/python/src/cync-lan.py
 
 # Run script to export cloud device config to ./cync_mesh.yaml
 # It will ask you for email, password and the OTP emailed to you.
-python3 ~/cync-lan/cync-lan.py export ~/cync-lan/cync_mesh.yaml
+# --save-auth will save the auth data to its own file that you can supply to the export command using --auth <auth file>
+python3 ~/cync-lan/cync-lan.py export ~/cync-lan/cync_mesh.yaml --save-auth
 
 # edit cync_mesh.yaml to put it values for your MQTT broker
 
 # Run the script to start the server, provide it with the path to the config file
+# You can add --debug to enable debug logging
 python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 ```
 
 ## Env Vars
-You can also supply a .env file to `pydotenv` using the `run <config file> --env <env file>` command line parameter.
-This is handy for docker environments.
 
-| Variable | Description | Default            |
-|----------|-------------|--------------------|
-| `CYNC_DEBUG` | Enable debug logging | `True`           |
-| `CYNC_CERT` | Path to cert file | `certs/server.pem` |
-| `CYNC_KEY` | Path to key file | `certs/server.key` |
-| `CYNC_PORT` | Port to listen on | `23779` |
-| `CYNC_HOST` | Host to listen on | `0.0.0.0` |
+| Variable     | Description          | Default                            |
+|--------------|----------------------|------------------------------------|
+| `MQTT_URL`   | URL of MQTT broker   | `mqtt://homeassistant.local:1883/` |
+| `CYNC_DEBUG` | Enable debug logging | `True`                             |
+| `CYNC_CERT`  | Path to cert file    | `certs/server.pem`                 |
+| `CYNC_KEY`   | Path to key file     | `certs/server.key`                 |
+| `CYNC_PORT`  | Port to listen on    | `23779`                            |
+| `CYNC_HOST`  | Host to listen on    | `0.0.0.0`                          |
 
 
 ## Re-routing DNS
-
-There are changes in newer firmware! Check your DNS logs and search for `xlink.cn`, if you see DNS requests then you have some older devices. If you dont see any devices for `xlink.cn` search for `cm.gelighting.com`, if you see devices, thats newer firmware.
-
-You need to point the cloud server domain to a local IP on your network. This server masquerades as the cloud TCP server.
-
-Older firmware:
- - `cm-ge.xlink.cn`
-
-Newer firmware:
- - `cm.gelighting.com`
+See [DNS docs](docs/DNS.md) for more information.
 
 ### Selective DNS routing based on requesting device using Unbound DNS
-If you run bind9 or unbound, you can use 'views' to selectively route DNS requests based on the requesting device. This is useful if you have a mix of older and newer firmware devices, or you only want certain devices to be rerouted.
-
-
-The following example will reroute DNS requests for `cm.gelighting.com` to `10.0.1.9` for the device `10.0.1.167`.
-`local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no `.`!!.
-
-I use OPNsense and this config is placed in `Services`>`Unbound DNS`>`Advanced Options`.
-
-:warning: NOTICE the trailing . after `cm.gelighting.com.` in `local-data:`. :warning:
-
-```
-server:
-access-control-view: 10.0.1.167/32 cync-override
-
-view:
-name: "cync-override"
-local-zone: "homelab" static
-local-data: "cm.gelighting.com. 90 IN A 10.0.1.9"
-```
-
+See [DNS docs](docs/DNS.md) for more information.
 
 
 ## Launching the server
@@ -109,23 +81,29 @@ To start the server, make sure the venv is active:
 
 ```bash
 cd ~/cync-lan
-source ./venv/bin/activate
-python3 ./cync-lan.py
+source ~/cync-lan/venv/bin/activate
+python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 ```
 
-If you're correctly routing the DNS traffic, you should see a new connection appearing in the logs.
+If you're correctly routing the DNS traffic, you should see connections appearing in the logs.
 
 ## Controlling devices:
 
-**CURRENTLY NOT IMPLEMENTED**
+Devices are controlled by MQTT messages. This was designed to be used with home assistant, but you can use any MQTT client to send messages to the server.
+Look up home assistant MQTT documentation for more information on how to control devices.
 
-Devices are controlled by MQTT.
+## Home Assistant
 
+This script uses the MQTT discovery mechanism in Home Assistant to automatically add devices to the UI.
+You can control the home assistant topic in the config file.
 
 ## Debugging / socat
 
-If the commands do not seem to be working, it's likely that the TCP communication on your
-device is different than mine. You can inspect the traffic of the device communicating 
+If the devices dont seem to responding to commands, it's likely that the TCP communication on your
+device is different than mine. Please open an issue and I can walk you through getting me good debug logs so 
+I can add support.
+
+You can inspect the traffic of the device communicating 
 with the cloud server in real-time by running:
 
 ### Older firmware devices
