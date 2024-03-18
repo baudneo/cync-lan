@@ -35,15 +35,23 @@ bash ./create_certs.sh
 pip install pyyaml requests cryptography pydotenv
 pip install uvloop
 pip install git+https://github.com/Yakifo/amqtt.git
+
 # wget file
 wget https://raw.githubusercontent.com/baudneo/cync-lan/python/src/cync-lan.py
 
-# Run script
-python3 ./cync-lan.py
-# ctrl+C to stop
+# Run script to export cloud device config to ./cync_mesh.yaml
+# It will ask you for email, password and the OTP emailed to you.
+python3 ~/cync-lan/cync-lan.py export ~/cync-lan/cync_mesh.yaml
+
+# edit cync_mesh.yaml to put it values for your MQTT broker
+
+# Run the script to start the server, provide it with the path to the config file
+python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 ```
 
 ## Env Vars
+You can also supply a .env file to `pydotenv` using the `run <config file> --env <env file>` command line parameter.
+This is handy for docker environments.
 
 | Variable | Description | Default            |
 |----------|-------------|--------------------|
@@ -71,9 +79,11 @@ If you run bind9 or unbound, you can use 'views' to selectively route DNS reques
 
 
 The following example will reroute DNS requests for `cm.gelighting.com` to `10.0.1.9` for the device `10.0.1.167`.
-`local-zone` is your DNS domain (.local, .lan, .whatever).
+`local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no `.`!!.
 
 I use OPNsense and this config is placed in `Services`>`Unbound DNS`>`Advanced Options`.
+
+:warning: NOTICE the trailing . after `cm.gelighting.com.` in `local-data:`. :warning:
 
 ```
 server:
@@ -92,6 +102,8 @@ local-data: "cm.gelighting.com. 90 IN A 10.0.1.9"
 I found it easiest to first start the server, then turn on/plug in/power cycle the devices.
 
 :warning: **Devices need to be power cycled before they will connect to the LAN server**
+
+Devices that are powered on and currently talking to the Cync cloud will need to be power cycled. 
 
 To start the server, make sure the venv is active:
 
