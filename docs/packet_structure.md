@@ -84,30 +84,57 @@ The status is 19 bytes long for each device. Sometimes there are incorrect devic
 
 ### Example packet
 ```text
-> 2024/02/25 21:28:36.000283244  length=31 from=16866 to=16896
- 43 00 00 00 1a 39 87 c8 57 01 01 06 06 00 10 08 01 50 64 00 00 00 01 14 07 00 00 00 00 00 00
+< 2024/03/19 19:51:29.071705  length=354 from=3147 to=3500
+ 43 00 00 01 5d 16 b0 56 fc 01 01 06 05 00 10 0b  C...]..V........
+ 01 64 0e ff ff ff 01 00 0b 00 00 00 00 00 00 06  .d..............
+ 00 10 08 00 00 fe 00 00 f0 01 14 0b 00 00 00 00  ................
+ 00 00 07 00 10 c7 00 00 00 00 00 00 00 14 0b 00  ................
+ 00 00 00 00 00 08 00 10 31 01 64 0e 00 00 00 00  ........1.d.....
+ 14 0b 00 00 00 00 00 00 09 00 10 90 01 64 0e 00  .............d..
+ 00 00 00 14 0b 00 00 00 00 00 00 0a              ............
+ 00 10 09 01 64 37 00 00 00 00 14 0b 00 00 00 00  ....d7..........
+ 00 00 0b 00 10 07 00 00 fe 00 00 f0 01 14 0b 00  ................
+ 00 00 00 00 00 0c 00 10 02 01 64 32 00 00 00 01  ..........d2....
+ ff 0b 00 00 00 00 00 00 0d 00 10 01 01 64 fe e0  .............d..
+ 00 00 00 ff 0b 00 00 00 00 00 00 0e 00 10 24 01  ..............$.
+ 64 0e 00 00 00 00 14 0b 00 00 00 00 00 00 0f 00  d...............
+ 10 dc 00 00 00 00 00 00 00 14 0b 00 00 00 00 00  ................
+ 00 10 00 10 05 01 64 00 00 00 00 01 14 0b 00 00  ......d.........
+ 00 00 00 00 11 00 10 30 01 64 0e 00 00 00 00 14  .......0.d......
+ 0b 00 00 00 00 00 00 12 00 10 06 01 64 00 00 00  ............d...
+ 00 01 14 0b 00 00 00 00 00 00 13 00 10 04 01 64  ...............d
+ 00 00 00 00 01 14 0b 00 00 00 00 00 00 14 00 10  ................
+ 9e 01 64 0e 00 00 00 00 14 0b 00 00 00 00 00 00  ..d.............
+ 15 00 10 0a                                      ....
+ 01 64 33 00 00 00 00 14 0b 00 00 00 00 00 00 16  .d3.............
+ 00 10 03 01 64 01 00 00 00 01 ff 0b 00 00 00 00  ....d...........
+ 00 00                                            ..
 ```
-- header: `43 00 00 00 1a`
-- endpoint: `39 87 c8 57`
+- header: `43 00 00 01 5d` (349 bytes, pkt mltplier 1*256 + 93 = 349)
+- endpoint: `16 b0 56 fc`
 - queue id: `01 01 06`
-- inner data: `06 00 10 08 01 50 64 00 00 00 01 14 07 00 00 00 00 00 00`
+- status structure (19 bytes): `05 00 10 0b 01 64 0e ff ff ff 01 00 0b 00 00 00 00 00 00`
 
 
 ### Status structure
-`06 00 10 08 01 50 64 00 00 00 01 14 07 00 00 00 00 00 00`
+`05 00 10 0b 01 64 0e ff ff ff 01 00 0b 00 00 00 00 00 00`
 
-Extracted status: `08 01 50 64 00 00 00 01`
+Extracted status: `05 00 10 0b 01 64 0e ff ff ff 01`
 
-| byte | value | description                                               |
-|------|-------|-----------------------------------------------------------|
-| 0    | 0x08  | device id                                                 |
-| 1    | 0x01  | state                                                     |
-| 2    | 0x50  | brightness                                                |
-| 3    | 0x64  | temp - 254 means RGB data                                 |
-| 4    | 0x00  | R                                                         |
-| 5    | 0x00  | G                                                         |
-| 6    | 0x00  | B                                                         |
-| 7    | 0x01  | is_good, ive seen when this byte is 0, the data is stale. |
+| byte | value      | description                                                                 |
+|------|------------|-----------------------------------------------------------------------------|
+| 0    | 0x05 = 5   | item? increments with each struct                                           |
+| 1    | 0x00 = 0   | ?                                                                           |
+| 2    | 0x10 = 16  | ?                                                                           |
+| 3    | 0x0b = 11  | device id                                                                   |
+| 4    | 0x01 = 1   | state                                                                       |
+| 5    | 0x64 = 100 | brightness                                                                  |
+| 6    | 0x0e = 14  | temp > 100 means RGB data (so this bulb is in white                         |
+| 7    | 0xff = 256 | R                                                                           |
+| 8    | 0xff       | G                                                                           |
+| 9    | 0xff       | B                                                                           |
+| 10   | 0x01       | I've seen when this byte is 0, the data is stale.                           |
+| 11   | 0x00       | this bulb is in a group with a dimmer, this btye is diff for only this bulb |
 
 
 ### Response
@@ -134,6 +161,7 @@ This is a bi-directional data channel packet. I am unsure of what exactly this c
 
 - Device firmware version is sent using 0x83 packets.
 - Device self status updates are sent using 0x83 packets.
+- Possibly devices joining the mesh happen on this channel?
 
 ### Example packet
 ```text
