@@ -15,6 +15,8 @@ Parse the config file, connect to MQTT broker and start the TCP server.
 Export a cync-lan YAML config file from the Cync cloud API. 
 If no credentials are supplied via flags, the user will be prompted for them.
 
+**Also creates a `./raw_mesh.yaml` file which has all exported data from the cloud for the curious**
+
 ## Required Arguments
 - Output file path: path to export file.
     - `cync-lan.py export ./cync_mesh.yaml`
