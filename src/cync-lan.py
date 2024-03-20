@@ -285,6 +285,10 @@ class DeviceStructs:
 
 @dataclass
 class DeviceStatus:
+    """
+    A class that represents a Cync devices status.
+    This may need to be changed as new devices are bought and added.
+    """
     state: Optional[int] = None
     brightness: Optional[int] = None
     temperature: Optional[int] = None
@@ -294,6 +298,7 @@ class DeviceStatus:
 
 
 class GlobalState:
+    # We need access to each object. Might as well centralize them.
     server: "CyncLanServer"
     cync_lan: "CyncLAN"
     mqtt: "MQTTClient"
@@ -834,6 +839,9 @@ class CyncDevice:
         ],
         "PLUG": [64, 65, 66, 67, 68],  # 86, 51?
         "FAN": [81],
+        "BATTERY_SWITCH": [113],
+        "SWITCH": [113],
+        "DIMMER": [113],
         "MULTIELEMENT": {"67": 2},
     }
 
@@ -2972,6 +2980,7 @@ def parse_cli():
     sub_export.add_argument(
         "--code" "--otp",
         "-o",
+        "-c",
         help="One Time Password from email",
         dest="code",
     )
@@ -2984,6 +2993,7 @@ def parse_cli():
     )
     sub_export.add_argument(
         "--auth-output",
+        "-a",
         dest="auth_output",
         help="Path to save the authentication data",
         type=Path,
@@ -3000,17 +3010,18 @@ def parse_cli():
         help="Generate self-signed certificates for the server",
     )
     sub_certs.add_argument(
+        "common_name",
+        help="Common Name for the server certificate",
+        default="*.xlink.cn",
+    )
+    sub_certs.add_argument(
         "--output_dir",
         "-o",
         type=Path,
         help="Path to the output directory",
         default=Path("./certs"),
     )
-    sub_certs.add_argument(
-        "common_name",
-        help="Common Name for the server certificate",
-        default="*.xlink.cn",
-    )
+
     args = parser.parse_args()
     logger.debug(f"CLI args: {args}")
     return args
