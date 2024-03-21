@@ -3000,7 +3000,6 @@ def parse_cli():
     )
     sub_export.add_argument(
         "--auth",
-        "-a",
         help="Path to the auth token file",
         type=Path,
         dest="auth_file",
