@@ -925,7 +925,7 @@ class CyncDevice:
     def get_incremental_number(self):
         """Control packets need a number that gets incremented, it is used as a type of msg ID and is used in calculating the checksum"""
         self.control_number += 1
-        return self.control_number
+        return self.control_number % 256
 
     async def set_power(self, state: int):
         """Send raw data to control device state"""
