@@ -1,8 +1,11 @@
-There are changes in newer firmware! Check your DNS logs and search for `xlink.cn`, if you see DNS requests 
-then you have some older devices. If you don't see any devices for `xlink.cn` search for `cm.gelighting.com`, 
-if you see devices, that's newer firmware. You may need to redirect both if you have a mix of newer and older firmware.
+# Firmware differences
+:warning: There are changes in newer firmware! :warning: 
 
-You need to point the cloud server domain to a local IP on your network. This server masquerades as the cloud TCP server.
+Check your DNS logs and search for `xlink.cn`, if you see DNS requests 
+then you have some older devices. If you don't see any devices for `xlink.cn` search for `cm.gelighting.com`, 
+if you see devices, that's newer firmware (or the Cync app). You may need to redirect both if you have a mix of newer and older firmware.
+
+You need to override the cloud server domain to a local IP on your network. This server masquerades as the cloud TCP server.
 
 Older firmware:
  - `cm-ge.xlink.cn`
@@ -13,7 +16,7 @@ Newer firmware:
 
 # OPNsense
 There are a few different methods using OPNsense depending on your setup. Unbound allows for fine-tuned per 
-requesting device IP DNS redirection.
+requesting device IP, DNS redirection.
 
 ## Unbound DNS
 To perform domain level DNS redirection (all devices that request `cm.gelighting.com` will be redirected)
