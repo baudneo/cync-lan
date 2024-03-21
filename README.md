@@ -42,7 +42,7 @@ https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
 bash ./create_certs.sh
 
 # install deps
-pip install pyyaml requests cryptography pydotenv uvloop
+pip install pyyaml requests cryptography pydotenv uvloop wheel
 pip install git+https://github.com/Yakifo/amqtt.git
 
 # wget file
@@ -50,12 +50,13 @@ wget https://raw.githubusercontent.com/baudneo/cync-lan/python/src/cync-lan.py
 
 # Run script to export cloud device config to ./cync_mesh.yaml
 # It will ask you for email, password and the OTP emailed to you.
-# --save-auth will save the auth data to its own file that you can supply to the export command using --auth <auth file>
+# --save-auth will save the auth data to its own file
+# You can supply the auth file in future export commands using -> export cync_mesh.yaml --auth ./auth.yaml
 python3 ~/cync-lan/cync-lan.py export ~/cync-lan/cync_mesh.yaml --save-auth
 
-# edit cync_mesh.yaml to put it values for your MQTT broker
+# edit cync_mesh.yaml to put in values for your MQTT broker
 
-# Run the script to start the server, provide it with the path to the config file
+# Run the script to start the server, provide the path to the config file
 # You can add --debug to enable debug logging
 python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 ```
@@ -81,6 +82,7 @@ See [DNS docs](docs/DNS.md) for more information.
 
 As long as your DNS is correctly re-routed, you should be able to start the server and see devices connecting to it.
 If you do not see any cync devices connecting after power cycling, you may need to check your DNS re-routing.
+
 ```bash
 source ~/cync-lan/venv/bin/activate
 python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
