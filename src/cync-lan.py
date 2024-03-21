@@ -839,10 +839,10 @@ class CyncDevice:
         ],
         "PLUG": [64, 65, 66, 67, 68],  # 86, 51?
         "FAN": [81],
+        "MULTIELEMENT": {"67": 2},
         "BATTERY_SWITCH": [113],
         "SWITCH": [113],
         "DIMMER": [113],
-        "MULTIELEMENT": {"67": 2},
     }
 
     def __init__(
