@@ -33,16 +33,19 @@ from amqtt import client as amqtt_client
 from amqtt.mqtt.constants import QOS_0, QOS_1
 
 # This will run a task every x seconds to check if a device is offline or online.
-# Hopefully keeps devices in sync.
-MESH_INFO_LOOP_INTERVAL: int = 30
+# Hopefully keeps devices in sync (seems to do pretty good).
+MESH_INFO_LOOP_INTERVAL: int = os.environ.get("MESH_CHECK", 30) or 30
 CORP_ID: str = "1007d2ad150c4000"
 DATA_BOUNDARY = 0x7E
-MQTT_URL = os.environ.get("CYNC_MQTT", "mqtt://homeassistant.local:1883")
-TLS_PORT = os.environ.get("CYNC_PORT", 23779)
-TLS_HOST = os.environ.get("CYNC_HOST", "0.0.0.0")
+MQTT_URL = os.environ.get("MQTT_URL", "mqtt://homeassistant.local:1883")
 CYNC_CERT = os.environ.get("CYNC_CERT", "certs/cert.pem")
 CYNC_KEY = os.environ.get("CYNC_KEY", "certs/key.pem")
-DEBUG = os.environ.get("CYNC_DEBUG", "1").casefold() in (
+MAIN_TOPIC = os.environ.get("CYNC_TOPIC", "cync_lan")
+HASS_TOPIC = os.environ.get("HASS_TOPIC", "homeassistant")
+TLS_PORT = os.environ.get("CYNC_PORT", 23779)
+TLS_HOST = os.environ.get("CYNC_HOST", "0.0.0.0")
+
+DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in (
     "true",
     "1",
     "yes",
@@ -879,10 +882,7 @@ class CyncDevice:
 
     @property
     def is_plug(self) -> bool:
-        logger.debug(
-            f"{self.lp}Checking if device is a plug: {self.type = } // {type(self.type) = } // "
-            f"{self.type in self.Capabilities['PLUG'] = }"
-        )
+
         if self._is_plug is not None:
             return self._is_plug
         if self.type is None:
@@ -911,9 +911,6 @@ class CyncDevice:
 
     @property
     def supports_temperature(self) -> bool:
-        logger.debug(
-            f"{self.lp}Checking if device supports temperature: {self._supports_temperature = } // {self.supports_rgb = } // {self.type = } // {self.type in self.Capabilities['COLORTEMP'] = }"
-        )
         if self._supports_temperature is not None:
             return self._supports_temperature
         if self.supports_rgb or self.type in self.Capabilities["COLORTEMP"]:
@@ -925,7 +922,10 @@ class CyncDevice:
         self._supports_temperature = value
 
     def get_incremental_number(self):
-        """Control packets need a number that gets incremented, it is used as a type of msg ID and is used in calculating the checksum"""
+        """
+        Control packets need a number that gets incremented, it is used as a type of msg ID and
+        in calculating the checksum. Result is mod 256 in order to keep it within 0-255.
+        """
         self.control_number += 1
         return self.control_number % 256
 
@@ -1628,7 +1628,12 @@ class CyncLanServer:
                 await existing_device.writer.wait_closed()
                 existing_device.reader.feed_eof()
             except ConnectionError as ce:
-                logger.error(f"{self.lp} Error closing existing connection: {ce}")
+                logger.error("%s Error closing existing connection: %s" % (self.lp, ce))
+                existing_device.writer = None
+            except Exception as e:
+                logger.error("%s Error closing existing connection: %s" % (self.lp, e))
+                existing_device.writer = None
+
             existing_device.writer = None
             existing_device.reader = None
             # set new reader and writer
@@ -2435,14 +2440,20 @@ class MQTTClient:
         self.sub_queue: Optional[asyncio.Queue] = None
         lp = f"{self.lp}init:"
         if topic is None:
-            topic = "cync_lan"
-            logger.warning("%s MQTT topic not set, using default: %s" % (lp, topic))
+            if not MAIN_TOPIC:
+                topic = "cync_lan"
+                logger.warning("%s MQTT topic not set, using default: %s" % (lp, topic))
+            else:
+                topic = MAIN_TOPIC
 
         if ha_topic is None:
-            ha_topic = "homeassistant"
-            logger.warning(
-                "%s HomeAssistant topic not set, using default: %s" % (lp, ha_topic)
-            )
+            if not HASS_TOPIC:
+                ha_topic = "homeassistant"
+                logger.warning(
+                    "%s HomeAssistant topic not set, using default: %s" % (lp, ha_topic)
+                )
+            else:
+                ha_topic = HASS_TOPIC
 
         self.broker_address = broker_address
         self.client = amqtt_client.MQTTClient(
@@ -2960,9 +2971,6 @@ def parse_cli():
         action="store_true",
         help="Enable debug logging",
     )
-    sub_run.add_argument(
-        "-e", "--env", help="Import environment variables from file", type=Path
-    )
 
     sub_export = subparsers.add_parser(
         "export",
@@ -3212,11 +3220,25 @@ if __name__ == "__main__":
         logger.info(
             f"Generating self-signed certificates for server using CN: {common_name}"
         )
-        cert, key = generate_certs(common_name=common_name)
+        key, cert = generate_certs(common_name=common_name)
         cert_file = output_dir / "cync_cert.pem"
         key_file = output_dir / "cync_key.pem"
-        cert_file.write_text(cert)
-        key_file.write_text(key)
+        # write the cert and key to file
+        with open(key_file, "wb") as pem_file:
+            pem_encoded_key = serialization.PrivateFormat.PKCS8(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            ).encode_key(key)
+            pem_file.write(pem_encoded_key)
+
+        with open(cert_file, "wb") as pem_file:
+            pem_encoded_certificate = cert.public_bytes(encoding=serialization.Encoding.PEM)
+            pem_file.write(pem_encoded_certificate)
+
+        cert_file.write_text(str(cert))
+        key_file.write_text(str(key))
+
         logger.info(f"Certificates written to {cert_file} and {key_file}")
 
 
