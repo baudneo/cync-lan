@@ -6,6 +6,8 @@ name: Docker - publish multi-arch packages
 # documentation.
 
 on:
+  release:
+    types: [ published ]
   push:
 #    branches: [ "python" ]
     # Publish semver tags as releases.
