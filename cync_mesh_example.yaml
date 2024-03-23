@@ -1,13 +1,17 @@
+# The config file will overwrite environment variables. Be aware!
+
 # MQTT broker URL
 # auth: "mqtt://user:password@address:port/
 # no auth: "mqtt://address:port/"
-mqtt_url: "mqtt://homeassistant.local:1883/"
+
+#mqtt_url: "mqtt://homeassistant.local:1883/"
 #cert: "certs/cert.pem"
 #key: "certs/key.pem"
 #host: "0.0.0.0"
 #port: 23779
 
 account data:
+  # each of these are a "home" in the app. This one is named "Home"
   Home:
     id: 123456789
     access_key: 123456
@@ -15,6 +19,7 @@ account data:
 
     devices:
       1:
+        # mac is the BT MAC
         mac: 78:6D:EB:28:EA:A4
         name: Office Lamp
         supports_rgb: true

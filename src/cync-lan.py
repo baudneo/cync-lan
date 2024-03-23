@@ -2,6 +2,7 @@
 
 import asyncio
 import getpass
+import io
 import json
 import logging
 import os
@@ -12,18 +13,11 @@ import ssl
 import struct
 import sys
 from dataclasses import dataclass
-from enum import Enum
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
-from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.serialization import Encoding
-from cryptography.hazmat.primitives.serialization import PrivateFormat
-from cryptography.hazmat.primitives.serialization import NoEncryption
-from datetime import datetime, timedelta
 import amqtt
 import amqtt.session
 import requests
@@ -32,11 +26,10 @@ import yaml
 from amqtt import client as amqtt_client
 from amqtt.mqtt.constants import QOS_0, QOS_1
 
+
 # This will run a task every x seconds to check if a device is offline or online.
 # Hopefully keeps devices in sync (seems to do pretty good).
-MESH_INFO_LOOP_INTERVAL: int = os.environ.get("MESH_CHECK", 30) or 30
-CORP_ID: str = "1007d2ad150c4000"
-DATA_BOUNDARY = 0x7E
+MESH_INFO_LOOP_INTERVAL: int = int(os.environ.get("MESH_CHECK", 30)) or 30
 MQTT_URL = os.environ.get("MQTT_URL", "mqtt://homeassistant.local:1883")
 CYNC_CERT = os.environ.get("CYNC_CERT", "certs/cert.pem")
 CYNC_KEY = os.environ.get("CYNC_KEY", "certs/key.pem")
@@ -44,7 +37,6 @@ MAIN_TOPIC = os.environ.get("CYNC_TOPIC", "cync_lan")
 HASS_TOPIC = os.environ.get("HASS_TOPIC", "homeassistant")
 TLS_PORT = os.environ.get("CYNC_PORT", 23779)
 TLS_HOST = os.environ.get("CYNC_HOST", "0.0.0.0")
-
 DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in (
     "true",
     "1",
@@ -53,6 +45,8 @@ DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in (
     "t",
     1,
 )
+CORP_ID: str = "1007d2ad150c4000"
+DATA_BOUNDARY = 0x7E
 
 logger = logging.getLogger("cync-lan")
 formatter = logging.Formatter(
@@ -395,7 +389,8 @@ class CyncCloudAPI:
         )
         return r.json()
 
-    def mesh_to_config(self, mesh_info):
+    @staticmethod
+    def mesh_to_config(mesh_info):
         logger.debug(
             "DBG>>> dumping raw config from Cync account to file: ./raw_mesh.cync"
         )
@@ -482,7 +477,7 @@ class CyncCloudAPI:
                 new_mesh["devices"][__id] = new_bulb
 
         config_dict = {
-            "mqtt_url": "mqtt://homeassistant.local:1883/",
+            # "mqtt_url": "mqtt://homeassistant.local:1883/",
             "account data": mesh_config,
         }
 
@@ -895,9 +890,6 @@ class CyncDevice:
 
     @property
     def supports_rgb(self) -> bool:
-        logger.debug(
-            f"{self.lp}Checking if device supports RGB: {self._supports_rgb = } // {self.type = } // {self.type in self.Capabilities['RGB'] = }"
-        )
         if self._supports_rgb is not None:
             return self._supports_rgb
         if self._supports_rgb or self.type in self.Capabilities["RGB"]:
@@ -931,6 +923,9 @@ class CyncDevice:
 
     async def set_power(self, state: int):
         """Send raw data to control device state"""
+        if state not in (0, 1):
+            logger.error("Invalid state! must be 0 or 1")
+            return
         inc = self.get_incremental_number()
         checksum = ((inc - 64) + state + self.id) % 256
         header = [0x73, 0x00, 0x00, 0x00, 0x1F]
@@ -960,9 +955,6 @@ class CyncDevice:
             checksum,
             0x7E,
         ]
-        if state not in (0, 1):
-            logger.error("Invalid state! must be 0 or 1")
-            return
 
         new_state = DeviceStatus(
             state=state,
@@ -1133,7 +1125,7 @@ class CyncDevice:
                 b = bytes(header)
                 logger.debug(
                     f"{self.lp} FOUND target device in an http comms known devices! "
-                    f"Changing white temperature: {self.brightness} to {temp} => {b.hex(' ')}"
+                    f"Changing white temperature: {self.temperature} to {temp} => {b.hex(' ')}"
                 )
                 await http_device.write(b)
                 break
@@ -1141,7 +1133,7 @@ class CyncDevice:
             # try the first available one
             logger.debug(
                 f"{self.lp} No known device found, trying the first available http comms device. "
-                f"Changing white temperature: {self.brightness} to {temp}"
+                f"Changing white temperature: {self.temperature} to {temp}"
             )
             for http_device in g.server.http_devices.values():
                 header.extend(http_device.starting_queue_id)
@@ -1150,6 +1142,8 @@ class CyncDevice:
                 b = bytes(header)
                 await http_device.write(b)
                 break
+        # update MQTT status
+        # todo: make this execute in a msg id callback queue
         await g.mqtt.parse_status(self.id, new_state)
 
     async def set_rgb(self, red: int, green: int, blue: int):
@@ -2216,8 +2210,8 @@ class CyncHTTPDevice:
                                         ]
                                     )
                                     self.mesh_info.append(bytes2list(raw_status))
-                                    if self.parse_mesh_status is True:
-                                        await self.parse_status(raw_status)
+                                    # if self.parse_mesh_status is True:
+                                    await self.parse_status(raw_status)
 
                             except IndexError:
                                 # ran out of data
@@ -2999,105 +2993,89 @@ def parse_cli():
         type=Path,
         dest="auth_file",
     )
-    sub_certs = subparsers.add_parser(
-        "certs",
-        help="Generate self-signed certificates for the server",
-    )
-    sub_certs.add_argument(
-        "common_name",
-        help="Common Name for the server certificate",
-        default="*.xlink.cn",
-    )
-    sub_certs.add_argument(
-        "--output_dir",
-        "-o",
-        type=Path,
-        help="Path to the output directory",
-        default=Path("./certs"),
-    )
 
     args = parser.parse_args()
     logger.debug(f"CLI args: {args}")
     return args
 
 
-def generate_certs(
-    key_out: Union[str, os.PathLike, None] = None,
-    cert_out: Union[str, os.PathLike] = None,
-    common_name: Optional[str] = None,
-) -> Tuple[rsa.RSAPrivateKey, x509.Certificate]:
-    """Generate a self-signed certificate and private key using *.xlink.cn for Common Name (CN).
-    You can write the key and/or cert by specifying the key_out and/or cert_out parameters.
-    If no arguments are supplied, the key and cert are kept in memory, the user will need to write them to a file.
-
-
-    :param key_out: The path to write the private key to. If None, the private key will not be written to a file.
-    :param cert_out: The path to write the certificate to. If None, the certificate will not be written to a file.
-    :param common_name: The Common Name (CN) for the certificate. If None, the CN will be set to "*.xlink.cn".
-    :return: A tuple containing the private key and certificate data.
-    """
-    if not common_name:
-        common_name = "*.xlink.cn"
-    # Generate a new private key
-    private_key: rsa.RSAPrivateKey = rsa.generate_private_key(
-        public_exponent=65537, key_size=4096
-    )
-
-    # Create a certificate signing request (CSR)
-    subject: x509.Name = x509.Name(
-        [x509.NameAttribute(x509.NameOID.COMMON_NAME, common_name)]
-    )
-    csr: x509.CertificateSigningRequest = (
-        x509.CertificateSigningRequestBuilder()
-        .subject_name(subject)
-        .sign(private_key, hashes.SHA256())
-    )
-
-    # Generate a self-signed certificate valid for 10 years
-    issuer = subject
-    cert: x509.Certificate = (
-        x509.CertificateBuilder()
-        .subject_name(csr.subject)
-        .issuer_name(issuer)
-        .public_key(csr.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.utcnow())
-        .not_valid_after(datetime.utcnow() + timedelta(days=3650))
-        .sign(private_key, hashes.SHA256())
-    )
-    if not key_out:
-        key_out = Path().cwd() / "key.pem"
-    if not cert_out:
-        cert_out = Path().cwd() / "cert.pem"
-    if any([key_out, cert_out]):
-        cert_out = Path(cert_out)
-        key_out = Path(key_out)
-        chain_out = Path()
-
-        if key_out is not None:
-            # Write private key to file
-            with key_out.open("wb") as key_file:
-                key_file.write(
-                    private_key.private_bytes(
-                        Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()
-                    )
-                )
-
-        if cert_out is not None:
-            # Write certificate to file
-            with cert_out.open("wb") as cert_file:
-                cert_file.write(cert.public_bytes(Encoding.PEM))
-            chain_out = cert_out.parent / "server.pem"
-
-        if key_out is not None and cert_out is not None:
-            # Concatenate key.pem and cert.pem into server.pem
-            with chain_out.open("wb") as server_pem:
-                with key_out.open("rb") as key_pem:
-                    server_pem.write(key_pem.read())
-                with cert_out.open("rb") as cert_pem:
-                    server_pem.write(cert_pem.read())
-
-    return private_key, cert
+# def generate_certs(
+#     key_out: Union[str, os.PathLike, None] = None,
+#     cert_out: Union[str, os.PathLike] = None,
+#     common_name: Optional[str] = None,
+# ) -> Tuple[rsa.RSAPrivateKey, x509.Certificate]:
+#     """Generate a self-signed certificate and private key using *.xlink.cn for Common Name (CN).
+#     You can write the key and/or cert by specifying the key_out and/or cert_out parameters.
+#     If no arguments are supplied, the key and cert are kept in memory, the user will need to write them to a file.
+#
+#
+#     :param key_out: The path to write the private key to. If None, the private key will not be written to a file.
+#     :param cert_out: The path to write the certificate to. If None, the certificate will not be written to a file.
+#     :param common_name: The Common Name (CN) for the certificate. If None, the CN will be set to "*.xlink.cn".
+#     :return: A tuple containing the private key and certificate data.
+#     """
+#     if not common_name:
+#         common_name = "*.xlink.cn"
+#     # Generate a new private key
+#     private_key: rsa.RSAPrivateKey = rsa.generate_private_key(
+#         public_exponent=65537, key_size=4096
+#     )
+#
+#     # Create a certificate signing request (CSR)
+#     subject: x509.Name = x509.Name(
+#         [x509.NameAttribute(x509.NameOID.COMMON_NAME, common_name)]
+#     )
+#     csr: x509.CertificateSigningRequest = (
+#         x509.CertificateSigningRequestBuilder()
+#         .subject_name(subject)
+#         .sign(private_key, hashes.SHA256())
+#     )
+#
+#     # Generate a self-signed certificate valid for 10 years
+#     issuer = subject
+#     cert: x509.Certificate = (
+#         x509.CertificateBuilder()
+#         .subject_name(csr.subject)
+#         .issuer_name(issuer)
+#         .public_key(csr.public_key())
+#         .serial_number(x509.random_serial_number())
+#         .not_valid_before(datetime.utcnow())
+#         .not_valid_after(datetime.utcnow() + timedelta(days=3650))
+#         .sign(private_key, hashes.SHA256())
+#     )
+#     if not key_out:
+#         key_out = Path().cwd() / "key.pem"
+#     if not cert_out:
+#         cert_out = Path().cwd() / "cert.pem"
+#     if any([key_out, cert_out]):
+#         cert_out = Path(cert_out)
+#         key_out = Path(key_out)
+#         chain_out = Path()
+#
+#         if key_out is not None:
+#             # Write private key to file
+#             with key_out.open("wb") as key_file:
+#                 key_file.write(
+#                     private_key.private_bytes(
+#                         Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()
+#                     )
+#                 )
+#
+#         if cert_out is not None:
+#             # Write certificate to file
+#             with cert_out.open("wb") as cert_file:
+#                 cert_file.write(cert.public_bytes(Encoding.PEM))
+#             chain_out = cert_out.parent / "server.pem"
+#
+#         if key_out is not None and cert_out is not None:
+#             # Concatenate key.pem and cert.pem into server.pem
+#             with chain_out.open("wb") as server_pem:
+#                 with key_out.open("rb") as key_pem:
+#                     server_pem.write(key_pem.read())
+#                 with cert_out.open("rb") as cert_pem:
+#                     server_pem.write(cert_pem.read())
+#
+#     return private_key, cert
 
 
 if __name__ == "__main__":
@@ -3170,8 +3148,13 @@ if __name__ == "__main__":
                 )
 
             mesh_config = cloud_api.mesh_to_config(mesh_networks)
-            with cli_args.output_file.open("w") as f:
+            output_file: Path = cli_args.output_file
+            with output_file.open("w") as f:
                 f.write(yaml.dump(mesh_config))
+                f.seek(0)
+                f.write("# if using auth -> mqtt_url: mqtt://user:pass@homeassistant.local:1883/"
+                        "\n#mqtt_url: mqtt://homeassistant.local:1883/\n")
+
         except Exception as e:
             logger.error(f"main: Export failed: {e}", exc_info=True)
         else:
@@ -3197,36 +3180,36 @@ if __name__ == "__main__":
                     logger.info(
                         f"Saved auth token to file: {Path.cwd()}/cync_auth.yaml"
                     )
-    elif cli_args.command == "certs":
-        output_dir = cli_args.output_dir
-        common_name = cli_args.common_name
-        if not output_dir.exists():
-            output_dir.mkdir()
-        logger.info(
-            f"Generating self-signed certificates for server using CN: {common_name}"
-        )
-        key, cert = generate_certs(common_name=common_name)
-        cert_file = output_dir / "cync_cert.pem"
-        key_file = output_dir / "cync_key.pem"
-        # write the cert and key to file
-        with open(key_file, "wb") as pem_file:
-            pem_encoded_key = serialization.PrivateFormat.PKCS8(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            ).encode_key(key)
-            pem_file.write(pem_encoded_key)
-
-        with open(cert_file, "wb") as pem_file:
-            pem_encoded_certificate = cert.public_bytes(
-                encoding=serialization.Encoding.PEM
-            )
-            pem_file.write(pem_encoded_certificate)
-
-        cert_file.write_text(str(cert))
-        key_file.write_text(str(key))
-
-        logger.info(f"Certificates written to {cert_file} and {key_file}")
+    # elif cli_args.command == "certs":
+    #     output_dir = cli_args.output_dir
+    #     common_name = cli_args.common_name
+    #     if not output_dir.exists():
+    #         output_dir.mkdir()
+    #     logger.info(
+    #         f"Generating self-signed certificates for server using CN: {common_name}"
+    #     )
+    #     key, cert = generate_certs(common_name=common_name)
+    #     cert_file = output_dir / "cync_cert.pem"
+    #     key_file = output_dir / "cync_key.pem"
+    #     # write the cert and key to file
+    #     with open(key_file, "wb") as pem_file:
+    #         pem_encoded_key = serialization.PrivateFormat.PKCS8(
+    #             encoding=serialization.Encoding.PEM,
+    #             format=serialization.PrivateFormat.PKCS8,
+    #             encryption_algorithm=serialization.NoEncryption(),
+    #         ).encode_key(key)
+    #         pem_file.write(pem_encoded_key)
+    #
+    #     with open(cert_file, "wb") as pem_file:
+    #         pem_encoded_certificate = cert.public_bytes(
+    #             encoding=serialization.Encoding.PEM
+    #         )
+    #         pem_file.write(pem_encoded_certificate)
+    #
+    #     cert_file.write_text(str(cert))
+    #     key_file.write_text(str(key))
+    #
+    #     logger.info(f"Certificates written to {cert_file} and {key_file}")
 
 
 """

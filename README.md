@@ -1,26 +1,45 @@
 # pycync_lan (cync_lan)
 
-Async MQTT LAN controller for CYNC/C by GE devices. **Local** only control of **most** of your cync devices via Home Assistant.
+Async MQTT LAN controller for Cync/C by GE devices. **Local** only control of **most** Cync devices via Home Assistant.
 
-**This is a work in progress, and may not work for all devices.** See [known devices](docs/known_devices.md) for more information.
-
+**This is a work in progress, and may not work for all devices.** See [known devices](docs/known_devices.md) for more information. 
 :warning: **DNS redirection required** :warning:
 
 Forked from [cync-lan](https://github.com/iburistu/cync-lan) and [cync2mqtt](https://github.com/juanboro/cync2mqtt) - All credit to [iburistu](https://github.com/iburistu) and [juanboro](https://github.com/juanboro)
 
 ## Prerequisites:
 
-- Create self-signed SSL certs using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script or the `cync-lan.py certs` sub-command to do so.
+- Create self-signed SSL certs using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
 - 1+ non battery powered Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug or always powered wifi bulb (wired switch not tested yet) - *The wifi device can control BT only bulbs*
+- DNS override/redirection for `cm.gelighting.com` or `cm-ge.xlink.cn` to your local server.
 
-As this works by re-routing DNS traffic from the Cync cloud server to your local network, you'll need some 
+The only way local control will work is by re-routing DNS traffic from the Cync cloud server to your local network, you'll need some 
 way to override DNS - a local DNS server; OPNsense/pfSense running unbound, Pi-Hole, or a `/etc/hosts` file on your router 
 will work.
 
 See the [DNS docs](docs/DNS.md) for more information.
 
 ## Installation:
+### Docker
 
+`docker pull baudneo/cync_lan:latest`
+
+There is a multi-arch image available based on `python:3.12.2-slim-bookworm` (< 60 MB). 
+
+Supported Architectures:
+- `linux/arm/v7`
+- `linux/arm64`
+- `linux/amd64`
+
+:warning: You will need to first export a config from the cloud and then bind mount the config into the volume. 
+Please see the [docker-compose.yaml](./docker-compose.yaml) file for an example and the 
+[export config](#export-config-from-cync-cloud-api) section for export instructions. :warning:
+
+If your architecture is not supported, you can build the image yourself using the provided [Dockerfile](./Dockerfile).
+
+`docker build -t cync_lan:custom .`
+
+### Virtualenv
 System packages you will need:
 - `openssl`
 - `git`
@@ -38,7 +57,7 @@ python3 -m venv venv
 source ~/cync-lan/venv/bin/activate
 
 # create self-signed cert
-https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
+wget https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
 bash ./create_certs.sh
 
 # install deps
@@ -62,51 +81,61 @@ python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 ```
 
 ## Env Vars
-These are for the future docker image.
 
-| Variable     | Description          | Default                            |
-|--------------|----------------------|------------------------------------|
-| `MQTT_URL`   | URL of MQTT broker   | `mqtt://homeassistant.local:1883/` |
-| `CYNC_DEBUG` | Enable debug logging | `True`                             |
-| `CYNC_CERT`  | Path to cert file    | `certs/server.pem`                 |
-| `CYNC_KEY`   | Path to key file     | `certs/server.key`                 |
-| `CYNC_PORT`  | Port to listen on    | `23779`                            |
-| `CYNC_HOST`  | Host to listen on    | `0.0.0.0`                          |
+| Variable     | Description                                  | Default                            |
+|--------------|----------------------------------------------|------------------------------------|
+| `MQTT_URL`   | URL of MQTT broker                           | `mqtt://homeassistant.local:1883/` |
+| `CYNC_DEBUG` | Enable debug logging                         | `0`                                |
+| `CYNC_CERT`  | Path to cert file                            | `certs/server.pem`                 |
+| `CYNC_KEY`   | Path to key file                             | `certs/server.key`                 |
+| `CYNC_PORT`  | Port to listen on                            | `23779`                            |
+| `CYNC_HOST`  | Host to listen on                            | `0.0.0.0`                          |
+| `CYNC_TOPIC` | MQTT topic                                   | `cync-lan`                         |
+| `HASS_TOPIC` | Home Assistant topic                         | `homeassistant`                    |
+| `MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
 
 
 ## Re-routing / Overriding DNS
 See [DNS docs](docs/DNS.md) for more information.
 
-## Launching the server / MQTT client
-:warning: **If you just redirected DNS: Devices that are currently talking to Cync cloud will need to be power cycled before they make a DNS request.** :warning:
+:warning: **After freshly redirecting DNS: Devices that are currently talking to Cync cloud will need to be power cycled before they make a DNS request and connect to the local server.** :warning:
 
 As long as your DNS is correctly re-routed, you should be able to start the server and see devices connecting to it.
 If you do not see any cync devices connecting after power cycling, you may need to check your DNS re-routing.
 
-```bash
-source ~/cync-lan/venv/bin/activate
-python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
-```
-
 ## Config file
-For the best user experiance, query the Cync cloud API to export all your homes and the devices in each home. 
+For the best user experience, query the Cync cloud API to export all your homes and the devices in each home. 
 This requires your email, password and the code that will be emailed to you during export.
 
 If you add or remove devices, you can re-export the config file and restart the server.
 
 See the example [config file](./cync_mesh_example.yaml)
 
+### Export config from Cync cloud API
+There is an `export` sub command that will query the Cync cloud API and export the devices to a YAML file.
+
+```bash
+python3 cync-lan.py export ./cync_mesh.yaml
+```
+
+### Manually adding devices
+To manually add devices to the config file, look at the example and follow the template. 
+From what I have seen the device ID starts at 1 and increments by 1 for each device added to the "home" (it follows the order you added the bulbs).
+
+*It is unknown how removing a device and adding a device may effect the ID number, YMMV. Be careful when manually adding devices.*
 
 ## Controlling devices
 
 Devices are controlled by MQTT messages. This was designed to be used with home assistant, but you can use any MQTT client to send messages to the server.
 
-**Please see Home Assistant MQTT documentation for more information on topics and payloads.**
+**Please see [Home Assistant MQTT documentation](https://www.home-assistant.io/integrations/light.mqtt/#json-schema) for more information on topics and payloads.**
 
 ## Home Assistant
 
 This script uses the MQTT discovery mechanism in Home Assistant to automatically add devices to the UI.
 You can control the home assistant topic in the config file.
+
+:warning: This requires MQTT discovery is enabled in your Home Assistant configuration. :warning:
 
 ## Debugging / socat
 
@@ -154,5 +183,5 @@ your dig command will still return the cync cloud IP. This is normal.**
 
 # Power cycle devices after DNS re-route
 The devices make 1 DNS query on first startup (or after a network loss, like AP reboot) - 
-you need to cycle power all devices that are currently connected to the cync cloud servers 
+you need to power cycle all devices that are currently connected to the cync cloud servers 
 before they request a new DNS record.

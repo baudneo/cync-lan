@@ -1,0 +1,39 @@
+version: '3'
+# Remember, you need to:
+# - Login and configure your Cync devices in the Cync app.
+# - downloaded cync-lan.py and run `cync-lan.py export` to generate cync_mesh.yaml
+services:
+  cync-lan:
+    container_name: cync-lan
+    image: baudneo/cync_lan:latest
+    restart: unless-stopped
+#    build:
+#      dockerfile: ./Dockerfile
+#      context: .
+    ports:
+      - "23779:23779"
+    volumes:
+      # Create a ./config dir and place the exported config file in this directory
+      # to bind mount into the container.
+      - ./config:/root/cync-lan/config
+    environment:
+      TZ: "America/Chicago"
+      # If you don't use auth you can remove user:pass@ from the MQTT_URL
+      MQTT_URL: "mqtt://user:pass@ip:port/"
+#      CYNC_CERT: "/root/cync-lan/certs/cert.pem"
+#      CYNC_KEY: "/root/cync-lan/certs/key.pem"
+#      CYNC_TOPIC: "cync_lan"
+#      HASS_TOPIC: "homeassistant"
+#      CYNC_HOST: "0.0.0.0"
+#      CYNC_PORT: 23779
+#      CYNC_DEBUG: 1
+#      MESH_CHECK: 30
+    networks:
+      - cync-lan
+    # - For debug logging
+    #command: [ "python3", "/root/cync-lan/cync-lan.py", "run", "/home/cync-lan/config/cync_mesh.yaml", "--debug"]
+
+
+networks:
+    cync-lan:
+        driver: bridge
