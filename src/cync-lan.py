@@ -294,6 +294,7 @@ class DeviceStatus:
     A class that represents a Cync devices status.
     This may need to be changed as new devices are bought and added.
     """
+
     state: Optional[int] = None
     brightness: Optional[int] = None
     temperature: Optional[int] = None
@@ -882,7 +883,6 @@ class CyncDevice:
 
     @property
     def is_plug(self) -> bool:
-
         if self._is_plug is not None:
             return self._is_plug
         if self.type is None:
@@ -1538,8 +1538,8 @@ class CyncLanServer:
             logger.error(f"{self.lp} Failed to start server: {e}", exc_info=True)
             os.kill(os.getpid(), signal.SIGTERM)
         else:
-            logger.debug(
-                f"Cync LAN server started, bound to {self.host}:{self.port} - Waiting for connections, if you dont"
+            logger.info(
+                f"{self.lp} Started, bound to {self.host}:{self.port} - Waiting for connections, if you dont"
                 f" see any, check your DNS redirection and firewall settings."
             )
             # Start mesh info loop for each device:
@@ -1614,7 +1614,7 @@ class CyncLanServer:
             )
             return
         else:
-            logger.debug(f"{self.lp} New connection from: {client_addr}")
+            logger.info(f"{self.lp} New connection from: {client_addr}")
 
         # Check if the device is already registered, if so, close the connection and replace
         existing_device: Optional[CyncHTTPDevice] = None
@@ -1627,9 +1627,6 @@ class CyncLanServer:
                 existing_device.writer.close()
                 await existing_device.writer.wait_closed()
                 existing_device.reader.feed_eof()
-            except ConnectionError as ce:
-                logger.error("%s Error closing existing connection: %s" % (self.lp, ce))
-                existing_device.writer = None
             except Exception as e:
                 logger.error("%s Error closing existing connection: %s" % (self.lp, e))
                 existing_device.writer = None
@@ -1797,7 +1794,6 @@ class CyncLAN:
     def signal_handler(self, sig: int):
         logger.info("Caught signal %d, trying a clean shutdown" % sig)
         self.stop()
-        logger.debug("END OF SIGNAL HANDLER")
 
 
 class CyncHTTPDevice:
@@ -1842,7 +1838,7 @@ class CyncHTTPDevice:
         logger.debug(f"{self.lp} CyncHTTPConnection created for {self.address}")
 
     async def parse_status(self, raw_state: bytes):
-        """Newer firmware status packet parsing"""
+        """Extracted status packet parsing"""
         _id = raw_state[0]
         state = raw_state[1]
         brightness = raw_state[2]
@@ -1853,7 +1849,8 @@ class CyncHTTPDevice:
         is_good = 1
         # check if len is enough for good byte, it is optional
         if len(raw_state) > 7:
-            # is_good = 1/0, not sure what it means but, SOMETIMES it isnt reporting the true status when this byte is 0.
+            # is_good = 1/0, not sure what it means but, SOMETIMES it isnt reporting the true status
+            # when this byte is 0.
             is_good = raw_state[7]
         if is_good == 0:
             logger.debug(
@@ -1870,7 +1867,7 @@ class CyncHTTPDevice:
                 )
                 device = CyncDevice(cync_id=_id)
 
-            if device.online is False:
+            if not device.online:
                 device.online = True
 
             # create a status with existing data, change along the way for publishing over mqtt
@@ -1940,7 +1937,7 @@ class CyncHTTPDevice:
         # logger.debug(f"{lp} Extracting packets from {data_len} bytes of raw data\n{data.hex(' ')}")
         if data_len < 5:
             logger.debug(
-                f"{lp} Data is less than 5 bytes, not enough to parse (header: 4 bytes, data len: 1 byte)"
+                f"{lp} Data is less than 5 bytes, not enough to parse (header: 5 bytes)"
             )
         else:
             while True:
@@ -1948,19 +1945,7 @@ class CyncHTTPDevice:
                 lp = f"{self.address}:extract:x{pkt_type:02x}:"
                 packet_length = data[4]
                 pkt_len_multiplier = data[3]
-                if pkt_len_multiplier > 0:
-                    old_pl = int(packet_length)
-                    # packet_length = extract_length = (packet_length + 5) * (
-                    #     pkt_len_multiplier + 1
-                    # )
-                    # logger.debug(
-                    #     f"{lp} Packet length multiplier: {pkt_len_multiplier} => "
-                    #     f"(({pkt_len_multiplier} * 256) + {old_pl}) + 5 = {packet_length}"
-                    # )
-
-                extract_length = packet_length = (
-                    (pkt_len_multiplier * 256) + packet_length
-                ) + 5
+                extract_length = ((pkt_len_multiplier * 256) + packet_length) + 5
                 extracted_packet = data[:extract_length]
                 if data_len > 5:
                     data = data[extract_length:]
@@ -3228,12 +3213,14 @@ if __name__ == "__main__":
             pem_encoded_key = serialization.PrivateFormat.PKCS8(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption()
+                encryption_algorithm=serialization.NoEncryption(),
             ).encode_key(key)
             pem_file.write(pem_encoded_key)
 
         with open(cert_file, "wb") as pem_file:
-            pem_encoded_certificate = cert.public_bytes(encoding=serialization.Encoding.PEM)
+            pem_encoded_certificate = cert.public_bytes(
+                encoding=serialization.Encoding.PEM
+            )
             pem_file.write(pem_encoded_certificate)
 
         cert_file.write_text(str(cert))
