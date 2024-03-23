@@ -392,10 +392,10 @@ class CyncCloudAPI:
     @staticmethod
     def mesh_to_config(mesh_info):
         logger.debug(
-            "DBG>>> dumping raw config from Cync account to file: ./raw_mesh.cync"
+            "Dumping raw config from Cync account to file: ./raw_mesh.cync"
         )
         try:
-            with open("./raw_mesh.yaml", "w") as f:
+            with open("./raw_mesh.cync", "w") as f:
                 f.write(yaml.dump(mesh_info))
         except Exception as e:
             logger.error("Failed to write raw mesh info to file: %s" % e)
@@ -418,7 +418,7 @@ class CyncCloudAPI:
             mesh_config[mesh["name"]] = new_mesh
 
             logger.debug(
-                "DBG>>> properties and bulbs array found for mesh, processing..."
+                "properties and bulbsArray found for mesh, processing..."
             )
             new_mesh["devices"] = {}
             for cfg_bulb in mesh["properties"]["bulbsArray"]:
@@ -451,10 +451,6 @@ class CyncCloudAPI:
                     mac=_mac,
                     wifi_mac=wifi_mac,
                 )
-                logger.debug(
-                    f"{bulb_device.type = } // {bulb_device.is_plug = } "
-                    f"// {bulb_device.supports_temperature = } // {bulb_device.supports_rgb = }"
-                )
                 new_bulb = {}
                 for attr_set in (
                     "name",
@@ -477,7 +473,6 @@ class CyncCloudAPI:
                 new_mesh["devices"][__id] = new_bulb
 
         config_dict = {
-            # "mqtt_url": "mqtt://homeassistant.local:1883/",
             "account data": mesh_config,
         }
 
@@ -3115,11 +3110,11 @@ if __name__ == "__main__":
     elif cli_args.command == "export":
         logger.debug("main: Exporting Cync devices from cloud service...")
         cloud_api = CyncCloudAPI()
-        email = cli_args.email
-        code = cli_args.code
-        save_auth = cli_args.save_auth
-        auth_output = cli_args.auth_file
-        auth_file = cli_args.auth_file
+        email: Optional[str] = cli_args.email
+        code: Optional[str] = cli_args.code
+        save_auth: bool = cli_args.save_auth
+        auth_output: Optional[Path] = cli_args.auth_file
+        auth_file: Optional[Path] = cli_args.auth_file
         access_token = None
         token_user = None
 
@@ -3149,11 +3144,15 @@ if __name__ == "__main__":
 
             mesh_config = cloud_api.mesh_to_config(mesh_networks)
             output_file: Path = cli_args.output_file
+            logger.info(f"about to dump cloud export to file: {mesh_config = }")
             with output_file.open("w") as f:
+                f.write(
+                    "# BE AWARE - the config file will overwrite any env vars set!\n"
+                    "# If your MQTT broker is using auth -> mqtt_url: mqtt://user:pass@homeassistant.local:1883/\n"
+                    "#mqtt_url: mqtt://homeassistant.local:1883/\n\n"
+                )
                 f.write(yaml.dump(mesh_config))
-                f.seek(0)
-                f.write("# if using auth -> mqtt_url: mqtt://user:pass@homeassistant.local:1883/"
-                        "\n#mqtt_url: mqtt://homeassistant.local:1883/\n")
+
 
         except Exception as e:
             logger.error(f"main: Export failed: {e}", exc_info=True)
@@ -3162,15 +3161,14 @@ if __name__ == "__main__":
 
         if save_auth:
             if auth_output is None:
-                logger.warning(
-                    "main: No output file specified for saving Cync Cloud Auth, skipping saving auth data to file..."
-                )
+                auth_output = Path.cwd() / "cync_auth.yaml"
+
             else:
                 logger.info(
                     "main: Attempting to save Cync Cloud Auth to file, PLEASE SECURE THIS FILE!"
                 )
                 try:
-                    with open("./cync_auth.yaml", "w") as f:
+                    with auth_output.open("w") as f:
                         f.write(yaml.dump({"token": access_token, "user": token_user}))
                 except Exception as e:
                     logger.error(
@@ -3210,21 +3208,3 @@ if __name__ == "__main__":
     #     key_file.write_text(str(key))
     #
     #     logger.info(f"Certificates written to {cert_file} and {key_file}")
-
-
-"""
-# 2 devices joi the mesh. ID 2 and 3
-03/16/24 21:45:48.0033 DEBUG - cync-lan cync-lan:533 -> 10.0.2.215:extract: Extracting packets from 43 bytes of raw data
-83 00 00 00 26 39 87 c8 57 00 5e 00 7e 11 00 00 00 fa d0 14 00 fe 03 00 05 00 ff ff ea 11 02 05 a1 00 00 00 00 00 00 00 00 8b 7e
-
-11 00 00 00 fa d0   14 00   fe  03 00 05 00  ff  ff   ea  11 02 05  a1 00 00 00 00 00 00 00 00  8b
-17  0  0  0 [ctrl]  20  0  255   3  0  5  0 256 256  234  17 ID id 161  0  0  0  0  0  0  0  0 139
-17  0  0  0 [ctrl]  20  0  25   28 51  0  0 256 256  234  17 ID id 161  1  3  1  0  0  0  0  0
-
-03/16/24 21:45:54.0995 DEBUG - cync-lan cync-lan:533 -> 10.0.2.215:extract: Extracting packets from 43 bytes of raw data
-83 00 00 00 26 39 87 c8 57 00 5f 00 7e 11 00 00 00 fa d0 14 00 19 22 33 07 00 ff ff ea 11 02 07 a1 01 03 01 00 00 00 00 00 01 7e
-
-11 00 00 00 fa d0   14 00  19  22 33 07 00  ff  ff   ea  11 02 07  a1 01 03 01 00 00 00 00 00 01
-17  0  0  0 [ctrl]  20  0  25  28 51  0  0 256 256  234  17 ID id 161  1  3  1  0  0  0  0  0
-
-"""

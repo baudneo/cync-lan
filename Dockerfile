@@ -1,13 +1,10 @@
-FROM python:3.12.2-slim-bookworm
-
-LABEL com.baudneo.authors="baudneo <86508179+baudneo@users.noreply.github.com>"
+FROM python:3.12.2-slim-bookworm as final
 
 #ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV CYNC_VERSION=0.0.1
 
 WORKDIR /root/cync-lan
-
-COPY ./src/cync-lan.py /root/cync-lan
 
 RUN set -x \
     && apt update \
@@ -28,6 +25,9 @@ RUN set -x \
         -keyout '/root/cync-lan/certs/key.pem' -out '/root/cync-lan/certs/cert.pem' \
         -subj '/CN=*.xlink.cn' -sha256 -days 3650 -nodes
 
+COPY ./src/cync-lan.py /root/cync-lan
+
+
 VOLUME /root/cync-lan/config
 EXPOSE 23779
 
@@ -40,5 +40,11 @@ ENV MQTT_URL = "mqtt://homeassistant.local:1883" \
     CYNC_TOPIC = "cync_lan" \
     HASS_TOPIC = "homeassistant" \
     MESH_CHECK = 30
+
+LABEL com.baudneo.authors="baudneo <86508179+baudneo@users.noreply.github.com>"
+LABEL com.baudneo.version="${CYNC_VERSION}"
+LABEL com.baudneo.description="Cync LAN Control for Home Assistant"
+LABEL com.baudneo.url="https://github.com/baudneo/cync-lan"
+LABEL com.baudneo.source="https://github.com/baudneo/cync-lan"
 
 CMD ["python3", "/root/cync-lan/cync-lan.py", "run", "/root/cync-lan/config/cync_mesh.yaml"]
