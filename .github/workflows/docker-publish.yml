@@ -7,12 +7,12 @@ name: Docker
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '44 1 * * *'
+#  schedule:
+#    - cron: '44 1 * * *'
   push:
-    # branches: [ "python" ]
+    branches: [ "python" ]
     # Publish semver tags as releases.
-    tags: [ 'v*.*.**' ]
+    tags: [ 'v**.**.**' ]
   # pull_request:
     # branches: [ "python" ]
 
