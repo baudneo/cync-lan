@@ -1,4 +1,4 @@
-name: Docker
+name: Docker - publish multi-arch packages
 
 # This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
@@ -14,8 +14,6 @@ on:
 
 
 env:
-  # Use docker.io for Docker Hub if empty
-  REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
 
@@ -27,21 +25,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-      # This is used to complete the identity challenge
-      # with sigstore/fulcio when running outside of PRs.
-#      id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Install the cosign tool except on PR
-      # https://github.com/sigstore/cosign-installer
-#      - name: Install cosign
-#        if: github.event_name != 'pull_request'
-#        uses: sigstore/cosign-installer@6e04d228eb30da1757ee4e1dd75a0ec73a653e06 #v3.1.1
-#        with:
-#          cosign-release: 'v2.1.1'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -54,11 +41,11 @@ jobs:
 
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
-      - name: Log into registry ${{ env.REGISTRY }}
+      - name: Log into registry ghcr.io
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -68,7 +55,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ env.IMAGE_NAME }}
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
@@ -98,3 +85,33 @@ jobs:
 #        # This step uses the identity token to provision an ephemeral certificate
 #        # against the sigstore community Fulcio instance.
 #        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+
+# now we need to publish to a different registry
+# we can use the same image name but we need to change the registry
+# we can use the same tags and labels
+      - name: Log into registry docker.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_HUB_KEY }}
+
+      - name: Extract Docker metadata
+        id: meta2
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
+        with:
+          images: docker.io/${{ env.IMAGE_NAME }}
+
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          # add latest to tags
+          tags: ${{ steps.meta2.outputs.tags }}
+          labels: ${{ steps.meta2.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
