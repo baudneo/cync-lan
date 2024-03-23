@@ -12,7 +12,7 @@ on:
   push:
     # branches: [ "python" ]
     # Publish semver tags as releases.
-    tags: [ 'v*.*.*' ]
+    tags: [ 'v*.*.**' ]
   # pull_request:
     # branches: [ "python" ]
 
