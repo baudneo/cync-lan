@@ -1,9 +1,10 @@
 # pycync_lan (cync_lan)
 
+:warning: **DNS redirection required** :warning:
+
 Async MQTT LAN controller for Cync/C by GE devices. **Local** only control of **most** Cync devices via Home Assistant.
 
-**This is a work in progress, and may not work for all devices.** See [known devices](docs/known_devices.md) for more information. 
-:warning: **DNS redirection required** :warning:
+**This is a work in progress, and may not work for all devices.** See [known devices](docs/known_devices.md) for more information.
 
 Forked from [cync-lan](https://github.com/iburistu/cync-lan) and [cync2mqtt](https://github.com/juanboro/cync2mqtt) - All credit to [iburistu](https://github.com/iburistu) and [juanboro](https://github.com/juanboro)
 
@@ -120,15 +121,21 @@ python3 cync-lan.py export ./cync_mesh.yaml
 
 ### Manually adding devices
 To manually add devices to the config file, look at the example and follow the template. 
-From what I have seen the device ID starts at 1 and increments by 1 for each device added to the "home" (it follows the order you added the bulbs).
+From what I have seen the device ID starts at 1 and increments by 1 for each device added to the "home" 
+(it follows the order you added the bulbs).
 
-*It is unknown how removing a device and adding a device may effect the ID number, YMMV. Be careful when manually adding devices.*
+*It is unknown how removing a device and adding a device may effect the ID number, YMMV. 
+Be careful when manually adding devices.*
+
+:warning: By manually adding, I mean you added a device via the app and did not re export a new config.
 
 ## Controlling devices
 
-Devices are controlled by MQTT messages. This was designed to be used with home assistant, but you can use any MQTT client to send messages to the server.
+Devices are controlled by MQTT messages. This was designed to be used with home assistant, but you can use 
+any MQTT client to send messages to the server.
 
-**Please see [Home Assistant MQTT documentation](https://www.home-assistant.io/integrations/light.mqtt/#json-schema) for more information on topics and payloads.**
+**Please see [Home Assistant MQTT documentation](https://www.home-assistant.io/integrations/light.mqtt/#json-schema) 
+for more information on JSON payloads.**
 
 ## Home Assistant
 
@@ -139,49 +146,35 @@ You can control the home assistant topic in the config file.
 
 ## Debugging / socat
 
-If the devices don't seem to responding to commands, it's likely that the TCP communication on your
-device is different than mine. Please open an issue and I can walk you through getting me good debug logs so 
-I can add support.
-
-You can inspect the traffic of the device communicating 
-with the cloud server in real-time by running:
-
-### Older firmware devices
+If the devices are not responding to commands, it's likely that the TCP communication on your
+device is different. You can either open an issue and I can walk you through getting good debug logs, 
+or you can use `socat` to inspect the traffic of the device communicating with the cloud server in real-time by running:
 
 ```bash
+# Older firmware devices
 socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:34.73.130.191:23779,verify=0
-```
-
-### Newer firmware devices
-
-*Notice the last IP change*
-```bash
+# Newer firmware devices (Notice the last IP change)
 sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:35.196.85.236:23779,verify=0
 ```
+In `dump.txt` you will see the back-and-forth communication between the device and the cloud server. ">" is device to server, "<" is server to device.
 
-in `dump.txt` you will see the back-and-forth communication between the device and the cloud server. ">" is device to server, "<" is server to device.
-
-Also make sure to check that your DNS re-route is actually routing to your local network. You can check by using `dig`:
-
-### Older firmware
+Also, make sure to check that your DNS is actually routing to your local network. You can check by using `dig`:
 
 ```bash
+# Older firmware
 dig cm-ge.xlink.cn
-```
 
-### Newer firmware
-
-```bash
+# Newer firmware
 dig cm.gelighting.com
 ```
 
 You should see an A record for your local network. If not, your DNS is not set up correctly.
 
-**If you are using selective DNS override via `views` in `unbound`, and you did not set up an override for your PC's IP,
+:warning: **If you are using selective DNS override via `views` in `unbound`, and you did not set up an override for your PC's IP,
 your dig command will still return the cync cloud IP. This is normal.**
 
 
 # Power cycle devices after DNS re-route
-The devices make 1 DNS query on first startup (or after a network loss, like AP reboot) - 
-you need to power cycle all devices that are currently connected to the cync cloud servers 
-before they request a new DNS record.
+Devices make a DNS query on first startup (or after a network loss, like AP reboot) - 
+you need to power cycle all devices that are currently connected to the Cync cloud servers 
+before they request a new DNS record and will connect to the local controller.
