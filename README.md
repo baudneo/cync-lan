@@ -62,7 +62,7 @@ wget https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
 bash ./create_certs.sh
 
 # install deps
-pip install pyyaml requests cryptography pydotenv uvloop wheel
+pip install pyyaml requests uvloop wheel
 pip install git+https://github.com/Yakifo/amqtt.git
 
 # wget file
