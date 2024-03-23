@@ -171,3 +171,22 @@ This is a bi-directional data channel packet. I am unsure of what exactly this c
 ### Response
 The server responds with a 0x88 packet: `0x88 0x00 0x00 0x00 0x03 <queue id: 3 bytes>`
 
+
+
+# Unknown
+"""text
+# 2 devices join the mesh. ID 2 and 3
+03/16/24 21:45:48.0033 DEBUG - cync-lan cync-lan:533 -> 10.0.2.215:extract: Extracting packets from 43 bytes of raw data
+83 00 00 00 26 39 87 c8 57 00 5e 00 7e 11 00 00 00 fa d0 14 00 fe 03 00 05 00 ff ff ea 11 02 05 a1 00 00 00 00 00 00 00 00 8b 7e
+
+11 00 00 00 fa d0   14 00   fe  03 00 05 00  ff  ff   ea  11 02 05  a1 00 00 00 00 00 00 00 00  8b
+17  0  0  0 [ctrl]  20  0  255   3  0  5  0 256 256  234  17 ID id 161  0  0  0  0  0  0  0  0 139
+17  0  0  0 [ctrl]  20  0  25   28 51  0  0 256 256  234  17 ID id 161  1  3  1  0  0  0  0  0
+
+03/16/24 21:45:54.0995 DEBUG - cync-lan cync-lan:533 -> 10.0.2.215:extract: Extracting packets from 43 bytes of raw data
+83 00 00 00 26 39 87 c8 57 00 5f 00 7e 11 00 00 00 fa d0 14 00 19 22 33 07 00 ff ff ea 11 02 07 a1 01 03 01 00 00 00 00 00 01 7e
+
+11 00 00 00 fa d0   14 00  19  22 33 07 00  ff  ff   ea  11 02 07  a1 01 03 01 00 00 00 00 00 01
+17  0  0  0 [ctrl]  20  0  25  28 51  0  0 256 256  234  17 ID id 161  1  3  1  0  0  0  0  0
+
+"""
