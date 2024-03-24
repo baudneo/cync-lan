@@ -22,8 +22,11 @@ See the [DNS docs](docs/DNS.md) for more information.
 
 ## Installation:
 ### Docker
+Images are hosted on docker.io and ghcr.io.
 
-`docker pull baudneo/cync_lan:latest`
+```bash
+docker pull baudneo/cync-lan:latest
+```
 
 There is a multi-arch image available based on `python:3.12.2-slim-bookworm` (< 60 MB). 
 
@@ -38,7 +41,9 @@ Please see the [docker-compose.yaml](./docker-compose.yaml) file for an example 
 
 If your architecture is not supported, you can build the image yourself using the provided [Dockerfile](./Dockerfile).
 
-`docker build -t cync_lan:custom .`
+```bash
+docker build -t cync_lan:custom .
+```
 
 ### Virtualenv
 System packages you will need:
