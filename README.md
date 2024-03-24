@@ -42,7 +42,7 @@ Please see the [docker-compose.yaml](./docker-compose.yaml) file for an example 
 If your architecture is not supported, you can build the image yourself using the provided [Dockerfile](./Dockerfile).
 
 ```bash
-docker build -t cync_lan:custom .
+docker build -t cync-lan:custom .
 ```
 
 ### Virtualenv
