@@ -16,6 +16,8 @@ services:
       # Create a ./config dir and place the exported config file in this directory
       # to bind mount into the container.
       - ./config:/root/cync-lan/config
+      # Want to run custom code or upgrade in place? Bind-mount the custom/upgraded cync-lan.py into the container!
+#      - ./cync-lan.py:/root/cync-lan/cync-lan.py
     environment:
       TZ: "America/Chicago"
       # If you don't use auth you can remove user:pass@ from the MQTT_URL

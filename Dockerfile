@@ -41,10 +41,9 @@ ENV MQTT_URL = "mqtt://homeassistant.local:1883" \
     HASS_TOPIC = "homeassistant" \
     MESH_CHECK = 30
 
-LABEL com.baudneo.authors="baudneo <86508179+baudneo@users.noreply.github.com>"
-LABEL com.baudneo.version="${CYNC_VERSION}"
-LABEL com.baudneo.description="Cync LAN Control for Home Assistant"
-LABEL com.baudneo.url="https://github.com/baudneo/cync-lan"
-LABEL com.baudneo.source="https://github.com/baudneo/cync-lan"
+LABEL org.opencontainers.image.authors="baudneo <86508179+baudneo@users.noreply.github.com>"
+LABEL org.opencontainers.image.version="${CYNC_VERSION}"
+LABEL org.opencontainers.image.source="https://github.com/baudneo/cync-lan"
+LABEL org.opencontainers.image.description="Local control for Cync by GE BT/Wi-Fi devices"
 
 CMD ["python3", "/root/cync-lan/cync-lan.py", "run", "/root/cync-lan/config/cync_mesh.yaml"]
