@@ -98,7 +98,7 @@ python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 | `CYNC_KEY`   | Path to key file                             | `certs/server.key`                 |
 | `CYNC_PORT`  | Port to listen on                            | `23779`                            |
 | `CYNC_HOST`  | Host to listen on                            | `0.0.0.0`                          |
-| `CYNC_TOPIC` | MQTT topic                                   | `cync-lan`                         |
+| `CYNC_TOPIC` | MQTT topic                                   | `cync_lan`                         |
 | `HASS_TOPIC` | Home Assistant topic                         | `homeassistant`                    |
 | `MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
 
