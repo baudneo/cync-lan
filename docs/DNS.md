@@ -29,9 +29,11 @@ To perform domain level DNS redirection (all devices that request `cm.gelighting
 - Power cycle cync devices.
 
 ### Selective DNS routing
+**Selective DNS routing means, only certain devies will have their DNS redirected, the rest of your network will not have their DNS redirected for thsoe specific domains**
+
 You can use `views` to selectively route DNS requests based on the requesting device. 
 
-The following example will reroute DNS requests for `cm.gelighting.com` to `10.0.1.9` for devices `10.0.1.167` and `10.0.1.112`.
+The following example will reroute DNS requests for `cm.gelighting.com` `10.0.1.9` **only for devices** `10.0.1.167` and `10.0.1.112`.
 `local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no `.`!!.
 
 - First disable domain level redirection if you have already configured it. (all devices requesting a domain get redirected)
@@ -66,4 +68,46 @@ As far as I know, you can only override a domain network wide, not selectively b
 
 
 # Pi-hole
-**Please contribute to this section if you have a Pi-hole!**
+*This example was pulled from [techaddressed](https://www.techaddressed.com/tutorials/using-pi-hole-local-dns/)*
+
+As far as I know, Pi-Hole does not support selective DNS routing, only network wide.
+
+- Left side navigation menu, click **Local DNS** to expand **DNS Records** and **CNAME Records**. 
+- Select `DNS Records`.
+![Pi Hole Local DNS](./assets/pi-hole-local-dns-menu-items.webp)
+
+- Enter `cm.gelighting.com` or `cm-ge.xlink.cn` in **Domain**.
+- Enter the IP of the machine that will be running cync-lan in **IP Address**. 
+- Click the *Add* button.
+![Pi-hole Local DNS Records Interface](./assets/pi-hole-local-dns-interface.webp)
+
+- Your local DNS records will appear under the **List of local DNS domains** – as shown below.
+![Pi-hole Local DNS Example Records](./assets/pi-hole-local-dns-examples.webp)
+
+- Test the DNS record by running `dig cm.gelighting.com` or `dig cm-ge.xlink.cn` from a device on your network.
+```bash
+❯ dig cm.gelighting.com
+
+; <<>> DiG 9.18.25 <<>> cm.gelighting.com
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 36051
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;cm.gelighting.com.             IN      A
+
+;; ANSWER SECTION:
+cm.gelighting.com.      3600    IN      A       10.0.1.14
+
+;; Query time: 0 msec
+;; SERVER: 10.0.1.1#53(10.0.1.1) (UDP)
+;; WHEN: Mon Apr 01 18:53:29 MDT 2024
+;; MSG SIZE  rcvd: 62
+```
+In the example above, `cm.gelighting.com` returns `10.0.1.14` which is the IP address of the machine running cync-lan. 
+After power cycling Cync devices, the devices will start trying to connect to `10.0.1.14`.
+
+:warning: **Don't forget to power cycle all your Wi-Fi Cync devices** :warning:
