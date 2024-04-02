@@ -198,14 +198,12 @@ The plug is the BT 'master/hub' device. All other Cync devices are connected to 
  00 00 00 |02 00 00 01 00 00 00 01 00 00 00 00 00  ................
  00 00 00 32 00 00 00 00 00 00 00 f2 7e ||7b 00 00  ...2........~{..
  00 07 2d e4 b5 d2 15 2c 00                       ..-....,.
- [05 00 44  01 00 00 44  01 00 00 00 00 64   00 00 00 00    00 00 00 00 00 00 00]
- [07 00 00  01 00 00 00  01 01 00 00 00 64   00 00 00 64    00 00 00 00 00 00 00]
- [03 00 00  01 00 00 00  01 00 00 00 00 00   00 00 00 32    00 00 00 00 00 00 00]
- [02 00 00  01 00 00 00  01 00 00 00 00 00   00 00 00 32    00 00 00 00 00 00 00]
-  ID  ? hub bt  ?  ? hub  ?  ?  ?  ?  ? wifi  ?  ?  ? type   ?  ?  ?  ?  ?  ?  ?
-  hub = master device that other bt devices are connecting to?
-  wifi = wifi capable?
-  type = device type? 5 = wifi/BT plug, 7 = wifi/BT bulb, 2 & 3 = BT only bulbs
+ [05 00 44  01 00 00 44  01 00     00 00 00 64   00 00 00 00    00 00 00 00 00 00 00]
+ [07 00 00  01 00 00 00  01 01     00 00 00 64   00 00 00 64    00 00 00 00 00 00 00]
+ [03 00 00  01 00 00 00  01 00     00 00 00 00   00 00 00 32    00 00 00 00 00 00 00]
+ [02 00 00  01 00 00 00  01 00     00 00 00 00   00 00 00 32    00 00 00 00 00 00 f2] <---- last struct has checksum as last byte
+  ID  ? typ  ?  ?  ? typ  ? state   ?  ?  ? bri   ?  ?  ? tmp    ?  ?  ?  R  G  B  ?
+  typ = same as deviceType in raw_mesh.cync [from cloud] (convert this hex to decimal) - only reports this for itself; the first structure is itself.
 --
 # Server replies to mesh info?
 # The first byte (1e) seems to be a msg id and is incremented by 1
@@ -265,7 +263,7 @@ The plug is the BT 'master/hub' device. All other Cync devices are connected to 
   33 - 64 + 1 + 5 % 256 = 231
   
 --
-# CONTORL ACK -  73 ack with 73 and 7b
+# CONTROL ACK -  73 ack with 73 and 7b
 > 2024/03/11 00:16:19.880453  length=36 from=1595 to=1630
  73 00 00 00 13 2d e4 b5 d2 00 02 00 7e 21 00 00  s....-......~!..
  00 f9 d0 01 00 00 d1 7e |7b 00 00 00 07 2d e4 b5  .......~{....-..

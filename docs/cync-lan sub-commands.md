@@ -26,16 +26,5 @@ If no credentials are supplied via flags, the user will be prompted for them.
 - `--password|-p`: password for the Cync account.
 - `--code|--otp|-c|-o`: code sent to the email address.
 - `--save-auth|-s`: save the auth token data to a file for future use.
-- `--auth|-a`: path to a file containing the auth token data.
-
-# Certs
-Generate a self-signed certificate for use with the server. 
-
-## Required Arguments
-- Common Name: the CN field of the certificate. Set to `*.xlink.cn` by default so not really required.
-    - `cync-lan.py certs` - `*.xlink.cn` is set by default.
-    - `cync-lan.py certs some.server.tld`
-
-## Optional Arguments
-- `--output_dir|-o`: directory to save the certificate and key to. Defaults to `./certs`.
-
+- `--auth-output|-a`: path to save the auth token data to file.
+- `--auth`: path to a file containing the auth token data (saves from entering credentials each export).
