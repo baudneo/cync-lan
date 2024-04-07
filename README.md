@@ -88,28 +88,49 @@ python3 ~/cync-lan/cync-lan.py export ~/cync-lan/cync_mesh.yaml --save-auth
 python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 ```
 
-## Env Vars
-
-| Variable     | Description                                  | Default                            |
-|--------------|----------------------------------------------|------------------------------------|
-| `MQTT_URL`   | URL of MQTT broker                           | `mqtt://homeassistant.local:1883/` |
-| `CYNC_DEBUG` | Enable debug logging                         | `0`                                |
-| `CYNC_CERT`  | Path to cert file                            | `certs/server.pem`                 |
-| `CYNC_KEY`   | Path to key file                             | `certs/server.key`                 |
-| `CYNC_PORT`  | Port to listen on                            | `23779`                            |
-| `CYNC_HOST`  | Host to listen on                            | `0.0.0.0`                          |
-| `CYNC_TOPIC` | MQTT topic                                   | `cync_lan`                         |
-| `HASS_TOPIC` | Home Assistant topic                         | `homeassistant`                    |
-| `MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
-
 
 ## Re-routing / Overriding DNS
-See [DNS docs](docs/DNS.md) for more information.
+There are detailed instructions for Opnsense and Pi-hole. See [DNS docs](docs/DNS.md) for more information.
 
 :warning: **After freshly redirecting DNS: Devices that are currently talking to Cync cloud will need to be power cycled before they make a DNS request and connect to the local server.** :warning:
 
 As long as your DNS is correctly re-routed, you should be able to start the server and see devices connecting to it.
 If you do not see any Cync devices connecting after power cycling them, you may need to check your DNS re-routing.
+
+### Testing DNS override
+If you set up **network wide** DNS override, you can use `dig` or `nslookup` to test 
+if the DNS override is working correctly.
+
+ ```bash
+# Older firmware
+dig cm-ge.xlink.cn
+
+# Newer firmware
+dig cm.gelighting.com
+
+# Example output with a local A record returned
+; <<>> DiG 9.18.24 <<>> cm.gelighting.com
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56237
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;cm.gelighting.com.             IN      A
+
+;; ANSWER SECTION:
+cm.gelighting.com.      3600    IN      A       10.0.1.9 <---- Overridden to a local machine running cync-lan
+
+;; Query time: 0 msec
+;; SERVER: 10.0.1.1#53(10.0.1.1) (UDP)
+;; WHEN: Fri Mar 29 08:26:51 MDT 2024
+;; MSG SIZE  rcvd: 62
+```
+
+:warning: **If you are using selective DNS override via `views` in `unbound`, and you did not set up an override for the IP of the machine running `dig`,
+the command will return the Cync cloud IP. This is normal.**
 
 ## Config file
 :warning: **The config file will override any environment variables set.** :warning:
@@ -140,6 +161,20 @@ Be careful when manually adding devices.*
 
 :warning: By manually adding, I mean you added a device via the app and did not re-export a new config.
 
+## Env Vars
+
+| Variable     | Description                                  | Default                            |
+|--------------|----------------------------------------------|------------------------------------|
+| `MQTT_URL`   | URL of MQTT broker                           | `mqtt://homeassistant.local:1883/` |
+| `CYNC_DEBUG` | Enable debug logging                         | `0`                                |
+| `CYNC_CERT`  | Path to cert file                            | `certs/server.pem`                 |
+| `CYNC_KEY`   | Path to key file                             | `certs/server.key`                 |
+| `CYNC_PORT`  | Port to listen on                            | `23779`                            |
+| `CYNC_HOST`  | Host to listen on                            | `0.0.0.0`                          |
+| `CYNC_TOPIC` | MQTT topic                                   | `cync_lan`                         |
+| `HASS_TOPIC` | Home Assistant topic                         | `homeassistant`                    |
+| `MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
+
 ## Controlling devices
 
 Devices are controlled by MQTT messages. This was designed to be used with Home Assistant, but you can use 
@@ -167,41 +202,6 @@ sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,ce
 ```
 In `dump.txt` you will see the back-and-forth communication between the device and the cloud server.
 `>` is device to server, `<` is server to device.
-
-Also, make sure to check that your DNS is actually routing to your local network. You can check by using `dig`:
-
- ```bash
-# Older firmware
-dig cm-ge.xlink.cn
-
-# Newer firmware
-dig cm.gelighting.com
-
-# Example output with a local A record returned
-; <<>> DiG 9.18.24 <<>> cm.gelighting.com
-;; global options: +cmd
-;; Got answer:
-;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56237
-;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
-
-;; OPT PSEUDOSECTION:
-; EDNS: version: 0, flags:; udp: 1232
-;; QUESTION SECTION:
-;cm.gelighting.com.             IN      A
-
-;; ANSWER SECTION:
-cm.gelighting.com.      3600    IN      A       10.0.1.9
-
-;; Query time: 0 msec
-;; SERVER: 10.0.1.1#53(10.0.1.1) (UDP)
-;; WHEN: Fri Mar 29 08:26:51 MDT 2024
-;; MSG SIZE  rcvd: 62
-```
-
-If the DNS request returns a non-local IP, DNS override is not set up correctly.
-
-:warning: **If you are using selective DNS override via `views` in `unbound`, and you did not set up an override for your PC's IP,
-your dig command will still return the Cync cloud IP. This is normal.**
 
 
 # Power cycle devices after DNS re-route

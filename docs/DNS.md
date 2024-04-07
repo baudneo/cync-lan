@@ -111,3 +111,11 @@ In the example above, `cm.gelighting.com` returns `10.0.1.14` which is the IP ad
 After power cycling Cync devices, the devices will start trying to connect to `10.0.1.14`.
 
 :warning: **Don't forget to power cycle all your Wi-Fi Cync devices** :warning:
+
+# New devices can't be added while DNS override is in place
+You will not be able to add any new devices to the Cync app while a network wide DNS override is in place.
+You will need to disable the DNS override, add the device(s), then re-enable the DNS override.
+
+It will let you get all the way to the end of adding the device and fail on the last step of 'Adding to your home'.
+
+*If you are using `unbound` and `views:` to selectively route DNS for only a few Cync devices, you should be able to add new devices*
