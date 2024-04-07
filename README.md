@@ -69,10 +69,10 @@ the command will return the Cync cloud IP. This is normal.**
 ## Config file
 :warning: **The config file will override any environment variables set.** :warning:
 
-For the best user experience, query the Cync cloud API to export all your homes and the devices in each home. 
+**It is required to query the Cync cloud API to export all your homes and the devices in each home.** 
 This requires your email, password and the code that will be emailed to you during export.
 
-If you add or remove devices, you will need to re-export the config file and restart the server.
+If you add or remove devices, you *should* re-export the config file and restart the server.
 
 See the example [config file](./cync_mesh_example.yaml)
 
