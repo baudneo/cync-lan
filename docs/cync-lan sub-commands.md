@@ -5,17 +5,16 @@ Parse the config file, connect to MQTT broker and start the TCP server.
 
 ## Required Arguments
 - Config file path: path to exported file.
-    - `cync-lan.py run cync_mesh.yaml`
+    - `cync-lan.py run /path/to/cync_mesh.yaml`
 
 ## Optional Arguments
 - `--debug` - enable debug logging
-- `--env|-e` - specify a .env file to load environment variables from
 
 # Export
 Export a cync-lan YAML config file from the Cync cloud API. 
 If no credentials are supplied via flags, the user will be prompted for them.
 
-**Also creates a `./raw_mesh.yaml` file which has all exported data from the cloud for the curious**
+**Also creates a `./raw_mesh.cync` YAML file which has all exported data from the cloud for the curious**
 
 ## Required Arguments
 - Output file path: path to export file.
