@@ -26,7 +26,7 @@ import yaml
 from amqtt import client as amqtt_client
 from amqtt.mqtt.constants import QOS_0, QOS_1
 
-__version__ = "0.0.1b2"
+__version__ = "0.0.1b3"
 CYNC_VERSION = __version__
 REPO_URL = "https://github.com/baudneo/cync-lan"
 # This will run a task every x seconds to check if a device is offline or online.
