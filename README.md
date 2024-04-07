@@ -10,84 +10,18 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and [cync2mqtt](htt
 
 ## Prerequisites
 
-- Cync account with devices added and configured
 - MQTT broker (I recommend EMQX)
-- Create self-signed SSL certs using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
+- Cync account with devices added and configured
 - A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug or always powered wifi bulb (wired switch not tested yet) - *The wifi device' can control BT only bulbs*
-- DNS override/redirection for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run this script.
+- Create self-signed SSL certs using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
+- Export devices from the Cync cloud to a YAML file; first export required cync email, password and a OTP emailed to you.
+- DNS override/redirection for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`.
 
 The only way local control will work is by re-routing DNS traffic from the Cync cloud server to your local network, you'll need some 
 way to override DNS - a local DNS server; OPNsense/pfSense running unbound, Pi-Hole, etc. See the [DNS docs](docs/DNS.md) for more information.
 
 ## Installation
-### Docker
-A multi-arch image is available. It is based on `python:3.12.2-slim-bookworm` with a total size of < 60 MB. 
-Images are hosted on Docker Hub and GitHub Container Registry. New images are automated using releases as a workflow trigger.
-
-```bash
-# docker.io or ghcr.io
-docker pull baudneo/cync-lan:latest
-```
-
-Supported Architectures:
-- `linux/arm/v7`
-- `linux/arm64`
-- `linux/amd64`
-
-:warning: It is required to first **export a config from the cloud** and then bind mount the config into the volume. 
-Please see the [docker-compose.yaml](./docker-compose.yaml) file for an example and the 
-[export config](#export-config-from-cync-cloud-api) section for export instructions. :warning:
-
-If your architecture is not supported, you can build the image yourself using the provided [Dockerfile](./Dockerfile).
-
-```bash
-docker build -t cync-lan:custom .
-```
-
-### Virtualenv
-To install on your system instead of using the docker image, a python virtualenv is highly recommended.
-You will also need to configure your own systemd `.service` or similar file to automate the script running on system boot.
-
-System packages you will need (package names are from a debian based system):
-- `openssl`
-- `git`
-- `python3`
-- `python3-venv`
-- `python3-pip`
-- `python3-setuptools`
-- You may also want `dig` and `socat` for **debugging**.
-
-```bash
-# Create dir for project and venv
-mkdir ~/cync-lan && cd ~/cync-lan
-python3 -m venv venv
-# activate the venv
-source ~/cync-lan/venv/bin/activate
-
-# create self-signed key/cert pair, wget the bash script and execute
-wget https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
-bash ./create_certs.sh
-
-# install python deps
-pip install pyyaml requests uvloop wheel
-pip install git+https://github.com/Yakifo/amqtt.git
-
-# wget file
-wget https://raw.githubusercontent.com/baudneo/cync-lan/python/src/cync-lan.py
-
-# Run script to export cloud device config to ./cync_mesh.yaml
-# It will ask you for email, password and the OTP emailed to you.
-# --save-auth flag will save the auth data to its own file (./auth.yaml)
-# You can supply the auth file in future export commands using -> export ./cync_mesh.yaml --auth ./auth.yaml
-python3 ~/cync-lan/cync-lan.py export ~/cync-lan/cync_mesh.yaml --save-auth
-
-# edit cync_mesh.yaml for your MQTT broker (mqtt_url:)
-
-# Run the script to start the server, provide the path to the config file
-# You can add --debug to enable debug logging
-python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
-```
-
+Please see [Install docs](./docs/INSTALL.md) for more information.
 
 ## Re-routing / Overriding DNS
 There are detailed instructions for Opnsense and Pi-hole. See [DNS docs](docs/DNS.md) for more information.
