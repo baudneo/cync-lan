@@ -28,13 +28,12 @@ services:
 #      HASS_TOPIC: "homeassistant"
 #      CYNC_HOST: "0.0.0.0"
 #      CYNC_PORT: 23779
+    # Debug logging
 #      CYNC_DEBUG: 1
+    # Interval between device online/offline and status check.
 #      MESH_CHECK: 30
     networks:
       - cync-lan
-    # - For debug logging
-    #command: [ "python3", "/root/cync-lan/cync-lan.py", "run", "/home/cync-lan/config/cync_mesh.yaml", "--debug"]
-
 
 networks:
     cync-lan:
