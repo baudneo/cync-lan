@@ -108,7 +108,8 @@ cm.gelighting.com.      3600    IN      A       10.0.1.14
 ;; MSG SIZE  rcvd: 62
 ```
 In the example above, `cm.gelighting.com` returns `10.0.1.14` which is the IP address of the machine running cync-lan. 
-After power cycling Cync devices, the devices will start trying to connect to `10.0.1.14`.
+After power cycling Cync devices, the devices will ask pi-hole for the Cync cloud server IP and pi-hole will return `10.0.1.14`.
+After the device receives the IP, it will connect to the local server running cync-lan.
 
 :warning: **Don't forget to power cycle all your Wi-Fi Cync devices** :warning:
 
