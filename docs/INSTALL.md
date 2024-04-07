@@ -57,8 +57,18 @@ python3 ~/cync-lan/cync-lan.py run ~/cync-lan/cync_mesh.yaml
 First, you **MUST** follow the virtualenv installation to generate certs and export devices from the Cync cloud.
 
 - Create a dir for your docker setup. i.e. `mkdir -p ~/docker/cync-lan/config`
-- Copy the exported config file from the virtualenv install into the `~/docker/cync-lan/config` dir. 
+- Copy the exported config file from the [virtualenv install](#virtualenv): `cp ~/cync-lan/cync_mesh.yaml ~/docker/cync-lan/config` 
 - Download the example docker-compose file: `cd ~/docker/cync-lan && wget https://raw.githubusercontent.com/baudneo/cync-lan/python/docker-compose.yaml`
 - Edit `docker-compose.yaml` and change `MQTT_URL` env var to match your MQTT broker details (can also enable DEBUG logs)
 - Run `docker compose up -d --force-recreate` to bring the container up
 - Optional: check logs using `docker compose logs -f` (Ctrl+C to exit)
+
+### Supported architectures
+- `linux/amd64`
+- `linux/arm64`
+- `linux/armv7`
+
+### Build image yourself
+```bash
+docker build -t cync-lan:custom-tag .
+```
