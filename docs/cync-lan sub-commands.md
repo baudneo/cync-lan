@@ -1,4 +1,4 @@
-There are a few different CLI commands that cync-lan supports.
+There are a few different CLI args that cync-lan supports.
 
 # Run
 Parse the config file, connect to MQTT broker and start the TCP server.
@@ -23,7 +23,7 @@ If no credentials are supplied via flags, the user will be prompted for them.
 ## Optional Arguments
 - `--email|-e`: email address for the Cync account.
 - `--password|-p`: password for the Cync account.
-- `--code|--otp|-c|-o`: code sent to the email address.
+- `--code|--otp|-c|-o`: code sent to the email address during the export process.
 - `--save-auth|-s`: save the auth token data to a file for future use.
 - `--auth-output|-a`: path to save the auth token data to file.
 - `--auth`: path to a file containing the auth token data (saves from entering credentials each export).

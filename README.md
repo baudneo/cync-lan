@@ -95,6 +95,10 @@ Be careful when manually adding devices.*
 
 :warning: By manually adding, I mean you added a device via the app and did not re-export a new config.
 
+## CLI arguments
+
+You can always supply `--help` to the cync-lan.py script to get a breakdown. Please see the [sub-command docs](./docs/cync-lan%20sub-commands.md) for more information.
+
 ## Env Vars
 
 | Variable     | Description                                  | Default                            |
@@ -137,6 +141,8 @@ sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,ce
 In `dump.txt` you will see the back-and-forth communication between the device and the cloud server.
 `>` is device to server, `<` is server to device.
 
+# Firewall
+Once the devices are local, they must be able to initiate a connection to the cync-lan server. If you block them from internet, don't forget to allow them to connect to the cync-lan server.
 
 # Power cycle devices after DNS re-route
 Devices make a DNS query on first startup (or after a network loss, like AP reboot) - 
