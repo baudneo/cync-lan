@@ -1673,7 +1673,7 @@ class CyncLanServer:
                 offline_ids = []
                 previous_online_ids = list(self.known_ids)
                 self.known_ids = []
-                logger.debug(f"{lp} // {previous_online_ids = }")
+                # logger.debug(f"{lp} // {previous_online_ids = }")
                 ids_from_config = g.cync_lan.ids_from_config
                 if not ids_from_config:
                     logger.warning(
@@ -1720,14 +1720,14 @@ class CyncLanServer:
                     else None
                 )
 
+                diff_ = set(previous_online_ids) - set(self.known_ids)
                 (
                     logger.debug(
                         f"{lp} No change to devices.{offline_str} online: {sorted(self.known_ids)}"
                     )
                     if self.known_ids == previous_online_ids
                     else logger.debug(
-                        f"{lp} Online devices has changed! "
-                        f"PREVIOUS: {previous_online_ids} // CURRENT: {self.known_ids}"
+                        f"{lp} Online devices has changed! (new: {diff_}){offline_str} online: {self.known_ids}"
                     )
                 )
 
@@ -1783,7 +1783,7 @@ class CyncLanServer:
                                 f"{lp} MQTT task: {task.get_name()} is done! Recreating..."
                             )
                             task.cancel()
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(0.5)
                             g.mqtt.tasks.append(
                                 asyncio.create_task(
                                     new_task(new_queue), name=task.get_name()
@@ -1793,7 +1793,8 @@ class CyncLanServer:
                     for idx in remove_idx:
                         del g.mqtt.tasks[idx]
                 else:
-                    logger.debug(f"{lp} MQTT sub/pub tasks are still running")
+                    # logger.debug(f"{lp} MQTT sub/pub tasks are still running")
+                    pass
 
                 await asyncio.sleep(MESH_INFO_LOOP_INTERVAL)
 
@@ -2385,7 +2386,6 @@ class CyncHTTPDevice:
                                     loop_num += 1
 
                                     mesh_dev_struct = inner_struct[i : i + 24]
-                                    structs.append(mesh_dev_struct.hex(" "))
                                     # logger.debug(f"{lp}x73: inner_struct[{i}:{i + 24}]={mesh_dev_struct}")
                                     dev_id = mesh_dev_struct[0]
                                     # parse status from mesh info
@@ -2434,13 +2434,14 @@ class CyncHTTPDevice:
                                         self.lp = f"{self.address}[{self.id}]:"
                                         self.capability = dev_type
 
-                                    ids_reported.append(dev_id)
+                                    # ids_reported.append(dev_id)
+                                    # structs.append(mesh_dev_struct.hex(" "))
                                     self.known_device_ids.append(dev_id)
-                                if ids_reported:
-                                    logger.debug(
-                                        f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
-                                        f"{sorted(ids_reported)}"
-                                    )
+                                # if ids_reported:
+                                #     logger.debug(
+                                #         f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
+                                #         f"{sorted(ids_reported)}"
+                                #     )
                                 # if structs:
                                 #     logger.debug(
                                 #         f"{lp} from: {self.id} -  MESH INFO // STRUCTS: {structs}"
@@ -2965,10 +2966,11 @@ class MQTTClient:
 
             except Exception as e:
                 logger.error("%s pub_worker exception: %s" % (lp, e), exc_info=True)
+                break
             finally:
                 # Notify the queue that the "work item" has been processed.
                 self.pub_queue.task_done()
-                logger.debug(f"{lp} pub_queue.task_done() called")
+                # logger.debug(f"{lp} pub_queue.task_done() called")
         logger.critical(f"{lp} pub_worker finished")
 
     async def parse_device_status(
