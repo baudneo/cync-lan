@@ -10,21 +10,22 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and [cync2mqtt](htt
 
 ## Prerequisites
 
-- MQTT broker (I recommend EMQX)
-- Cync account with devices added and configured
 - A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug or always powered wifi bulb (wired switch not tested yet) - *The wifi device' can control BT only bulbs*
-- Create self-signed SSL certs using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
-- Export devices from the Cync cloud to a YAML file; first export required cync email, password and a OTP emailed to you.
-- DNS override/redirection for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`.
+- Cync account with devices added and configured
+- MQTT broker (I recommend EMQX)
+- [Create self-signed SSL certs](./docs/command_line_sub_commands.md#export) using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
+- [Export devices](#export-config-from-cync-cloud-api) from the Cync cloud to a YAML file; first export required cync email, password and a OTP emailed to you.
+- [DNS override/redirection](./docs/DNS.md) for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`.
+- **Optional:** *[Firewall](#firewall) rules to allow cync devices to talk to `cync-lan`*
 
 The only way local control will work is by re-routing DNS traffic from the Cync cloud server to your local network, you'll need some 
-way to override DNS - a local DNS server; OPNsense/pfSense running unbound, Pi-Hole, etc. See the [DNS docs](docs/DNS.md) for more information.
+way to override DNS - a local DNS server; OPNSense/pfSense running unbound, Pi-Hole, etc. See the [DNS docs](docs/DNS.md) for more information.
 
 ## Installation
 Please see [Install docs](./docs/install) for more information.
 
 ## Re-routing / Overriding DNS
-There are detailed instructions for Opnsense and Pi-hole. See [DNS docs](docs/DNS.md) for more information.
+There are detailed instructions for OPNSense and Pi-hole. See [DNS docs](docs/DNS.md) for more information.
 
 :warning: **After freshly redirecting DNS: Devices that are currently talking to Cync cloud will need to be power cycled before they make a DNS request and connect to the local server.** :warning:
 
@@ -142,7 +143,12 @@ In `dump.txt` you will see the back-and-forth communication between the device a
 `>` is device to server, `<` is server to device.
 
 # Firewall
-Once the devices are local, they must be able to initiate a connection to the cync-lan server. If you block them from internet, don't forget to allow them to connect to the cync-lan server.
+Once the devices are local, they must be able to initiate a connection to 
+the `cync-lan` server. If you block them from internet, don't forget to allow 
+them to connect to the `cync-lan` server.
+
+## OPNsense Example
+Please see the [example](./docs/troubleshooting.md#opnsense-firewall-example) in the troubleshooting docs.
 
 # Power cycle devices after DNS re-route
 Devices make a DNS query on first startup (or after a network loss, like AP reboot) - 
