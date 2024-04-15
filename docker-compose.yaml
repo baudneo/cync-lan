@@ -2,6 +2,8 @@ version: '3'
 # Remember, you need to:
 # - Login and configure your Cync devices in the Cync app.
 # - downloaded cync-lan.py and run `cync-lan.py export` to generate cync_mesh.yaml
+# - Redirect DNS requests from: cm.gelighting.com to this machines IP address
+# - Optional: Create or edit firewall rules to allow cync devices to talk to the cync-lan container
 services:
   cync-lan:
     container_name: cync-lan
