@@ -21,7 +21,7 @@ The only way local control will work is by re-routing DNS traffic from the Cync 
 way to override DNS - a local DNS server; OPNsense/pfSense running unbound, Pi-Hole, etc. See the [DNS docs](docs/DNS.md) for more information.
 
 ## Installation
-Please see [Install docs](./docs/INSTALL.md) for more information.
+Please see [Install docs](./docs/install) for more information.
 
 ## Re-routing / Overriding DNS
 There are detailed instructions for Opnsense and Pi-hole. See [DNS docs](docs/DNS.md) for more information.
@@ -149,5 +149,5 @@ Devices make a DNS query on first startup (or after a network loss, like AP rebo
 you need to power cycle all devices that are currently connected to the Cync cloud servers 
 before they request a new DNS record and will connect to the local controller.
 
-# Trouble shooting
-If you are having issues, please see the [Troubleshooting docs](docs/trouble_shooting.md) for more information.
+# Troubleshooting
+If you are having issues, please see the [Troubleshooting docs](docs/troubleshooting) for more information.
