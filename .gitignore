@@ -1,5 +1,5 @@
 certs
 cync_data.json
-ssl_test.py
-no-ssl_test.py
+../../.config/JetBrains/PyCharm2024.1/scratches/ssl_test.py
+../../.config/JetBrains/PyCharm2024.1/scratches/no-ssl_test.py
 cync_mesh.yaml

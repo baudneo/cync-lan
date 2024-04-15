@@ -175,7 +175,7 @@ The server responds with a 0x88 packet: `0x88 0x00 0x00 0x00 0x03 <queue id: 3 b
 
 # Unknown
 """text
-# 2 devices join the mesh. ID 2 and 3
+# 2 devices join the mesh. ID 2 and 3 (both BT only bulbs)
 03/16/24 21:45:48.0033 DEBUG - cync-lan cync-lan:533 -> 10.0.2.215:extract: Extracting packets from 43 bytes of raw data
 83 00 00 00 26 39 87 c8 57 00 5e 00 7e 11 00 00 00 fa d0 14 00 fe 03 00 05 00 ff ff ea 11 02 05 a1 00 00 00 00 00 00 00 00 8b 7e
 
