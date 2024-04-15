@@ -13,10 +13,23 @@ import ssl
 import struct
 import sys
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple, Union, Annotated, Callable, Coroutine, Type, Any
+from typing import (
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    Annotated,
+    Callable,
+    Coroutine,
+    Type,
+    Any,
+)
 
 import amqtt
 import amqtt.session
@@ -60,11 +73,6 @@ handler.setLevel(logging.INFO)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
-
-if DEBUG is True:
-    logger.setLevel(logging.DEBUG)
-    for handler in logger.handlers:
-        handler.setLevel(logging.DEBUG)
 
 
 # from cync2mqtt
@@ -360,6 +368,7 @@ class Messages:
     x83: List[MessageCallback] = []
     x73: List[MessageCallback] = []
 
+
 class CyncCloudAPI:
     api_timeout: int = 5
 
@@ -434,9 +443,7 @@ class CyncCloudAPI:
 
     @staticmethod
     def mesh_to_config(mesh_info):
-        logger.debug(
-            "Dumping raw config from Cync account to file: ./raw_mesh.cync"
-        )
+        logger.debug("Dumping raw config from Cync account to file: ./raw_mesh.cync")
         try:
             with open("./raw_mesh.cync", "w") as f:
                 f.write(yaml.dump(mesh_info))
@@ -460,9 +467,7 @@ class CyncCloudAPI:
             }
             mesh_config[mesh["name"]] = new_mesh
 
-            logger.debug(
-                "properties and bulbsArray found for mesh, processing..."
-            )
+            logger.debug("properties and bulbsArray found for mesh, processing...")
             new_mesh["devices"] = {}
             for cfg_bulb in mesh["properties"]["bulbsArray"]:
                 if any(
@@ -533,7 +538,7 @@ class CyncDevice:
         if cap not in self.Capabilities:
             logger.debug(
                 "Capability (%s) not found in CyncDevice, "
-                 "must be one of: %s" % (cap, self.Capabilities.keys())
+                "must be one of: %s" % (cap, self.Capabilities.keys())
             )
         elif dev_type in self.Capabilities.get(cap, []):
             return True
@@ -1072,13 +1077,16 @@ class CyncDevice:
                 cb.callback = g.mqtt.parse_device_status
                 cb.args = []
                 cb.args.extend([self.id, new_state])
-                logger.debug(f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}")
+                logger.debug(
+                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
+                )
                 http_device.messages.x73.append(cb)
                 await http_device.write(b)
                 break
         else:
-            logger.warning(f"{self.lp} This device does not seem to be known???? skipping sending power state...")
-
+            logger.warning(
+                f"{self.lp} This device does not seem to be known???? skipping sending power state..."
+            )
 
     async def set_brightness(self, bri: int):
         """Send raw data to control device brightness"""
@@ -1147,7 +1155,9 @@ class CyncDevice:
                 cb.sent_at = time.time()
                 cb.callback = g.mqtt.parse_device_status
                 cb.args.extend([self.id, new_state])
-                logger.debug(f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}")
+                logger.debug(
+                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
+                )
                 http_device.messages.x73.append(cb)
                 await http_device.write(b)
                 break
@@ -1156,7 +1166,6 @@ class CyncDevice:
             logger.warning(
                 f"{self.lp} No known device found, skipping sending brightness..."
             )
-
 
     async def set_temperature(self, temp: int):
         """Send raw data to control device brightness"""
@@ -1221,7 +1230,9 @@ class CyncDevice:
                 cb.sent_at = time.time()
                 cb.callback = g.mqtt.parse_device_status
                 cb.args.extend([self.id, new_state])
-                logger.debug(f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}")
+                logger.debug(
+                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
+                )
                 http_device.messages.x73.append(cb)
                 await http_device.write(b)
                 break
@@ -1230,7 +1241,6 @@ class CyncDevice:
             logger.warning(
                 f"{self.lp} No known device found, skipping sending white temperature..."
             )
-
 
     async def set_rgb(self, red: int, green: int, blue: int):
         """
@@ -1307,15 +1317,15 @@ class CyncDevice:
                 cb.sent_at = time.time()
                 cb.callback = g.mqtt.parse_device_status
                 cb.args.extend([self.id, new_state])
-                logger.debug(f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}")
+                logger.debug(
+                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
+                )
                 http_device.messages.x73.append(cb)
                 await http_device.write(b)
                 break
         else:
             # try the first available one
-            logger.warning(
-                f"{self.lp} No known device found, skipping sending RGB..."
-            )
+            logger.warning(f"{self.lp} No known device found, skipping sending RGB...")
 
     @property
     def online(self):
@@ -1325,12 +1335,7 @@ class CyncDevice:
     def online(self, value: bool):
         if value != self._online:
             self._online = value
-            # send MQTT message
-            loop.create_task(
-                g.mqtt.client.publish(
-                    f"{g.mqtt.topic}/availability/{self.id}", b"online", qos=QOS_0
-                )
-            )
+            loop.create_task(g.mqtt.pub_online(self.id, True))
 
     def is_bt_only(self):
         """From my observations, if the wifi mac does not start with the same 3 groups as the mac, it's BT only."""
@@ -1495,9 +1500,9 @@ class CyncLanServer:
         self.port = port
         self.cert_file = cert_file
         self.key_file = key_file
-        self.loop: Union[
-            asyncio.AbstractEventLoop, uvloop.Loop
-        ] = asyncio.get_event_loop()
+        self.loop: Union[asyncio.AbstractEventLoop, uvloop.Loop] = (
+            asyncio.get_event_loop()
+        )
         self.known_ids: List[Optional[int]] = []
         g.server = self
 
@@ -1537,211 +1542,259 @@ class CyncLanServer:
         r = raw_state[4]
         _g = raw_state[5]
         b = raw_state[6]
-        is_good = 1
+        connected_to_mesh = 1
         # check if len is enough for good byte, it is optional
         if len(raw_state) > 7:
-            # is_good = 1/0, not sure what it means but, SOMETIMES it isnt reporting the true status
+            # bt only bulbs are offline when this is set to 0
             # when this byte is 0.
-            is_good = raw_state[7]
-        if is_good == 0:
-            logger.debug(
-                f"{self.lp} Device ID: {_id} is_good byte is 0, meaning the status packet shouldn't be parsed."
+            connected_to_mesh = raw_state[7]
+
+        device = g.server.devices.get(_id)
+        if device is None:
+            logger.warning(
+                f"Device ID: {_id} not found in devices!? consider re-exporting your Cync account devices! "
+                f"or there is a bug!"
             )
-        else:
-            devices = list(g.server.devices.values())
-            for device in devices:
-                if device.id == _id:
-                    break
+            return
+
+        if connected_to_mesh == 0:
+            # This usually happens when a BT only bulb loses power/connection.
+            # this device is gone, need to remove it
+            if device is not None:
+                if device.is_bt_only():
+                    logger.warning(
+                        f"{self.lp} Device ID: {_id} is BT only, it seems to have been removed from the "
+                        f"mesh (lost power/connection), NEED TO remove from known devices."
+                    )
+                    logger.debug(f"{self.lp} Removing BT only Cync device, marking MQTT offline first...")
+                    await g.mqtt.pub_online(device.id, False)
+                    if device.id in g.server.devices:
+                        popped = g.server.devices.pop(device.id)
+                        del popped
+                        logger.debug(f"{self.lp} Device {device.id} deleted from server devices...")
+                    else:
+                        logger.warning(
+                            f"{self.lp} Couldn't remove device ID: {_id}, not found in devices!? consider re-"
+                            f"exporting your Cync account devices! or there is a bug"
+                        )
+                else:
+                    logger.debug(
+                        f"{self.lp} Device ID: {_id} is WIFI/BT, the 'connected to mesh' byte is set to 0. "
+                        f"UNKNOWN WHY, HTTP device will take care of its own status."
+                    )
             else:
                 logger.warning(
-                    f"Device ID: {_id} not found in devices!? consider re-exporting your Cync account devices!"
+                    f"{self.lp} Device ID: {_id} not found in devices!? consider re-exporting your "
+                    f"Cync account devices! or there is a bug"
                 )
-                device = CyncDevice(cync_id=_id)
 
-            if not device.online:
-                device.online = True
+        if not device.online:
+            device.online = True
 
-            # create a status with existing data, change along the way for publishing over mqtt
-            new_state = DeviceStatus(
-                state=device.state,
-                brightness=device.brightness,
-                temperature=device.temperature,
-                red=device.red,
-                green=device.green,
-                blue=device.blue,
-            )
-            whats_changed = []
-            # temp is 0-100, if > 100, RGB data has been sent, otherwise its on/off, brightness or temp data
-            rgb_data = False
-            if temp > 100:
-                rgb_data = True
-            # device class has properties that have logic to only run on changes.
-            # fixme: need to make a bulk_change method to prevent multiple mqtt messages
-            curr_status = device.current_status
-            if curr_status == [state, brightness, temp, r, _g, b]:
-                # logger.debug(f"{device.lp} NO CHANGES TO DEVICE STATUS")
-                pass
-            else:
-                # find the differences
-                if state != device.state:
-                    whats_changed.append("state")
-                    new_state.state = state
-                if brightness != device.brightness:
-                    whats_changed.append("brightness")
-                    new_state.brightness = brightness
-                if temp != device.temperature:
-                    whats_changed.append("temperature")
-                    new_state.temperature = temp
-                if rgb_data is True:
-                    if r != device.red:
-                        whats_changed.append("red")
-                        new_state.red = r
-                    if _g != device.green:
-                        whats_changed.append("green")
-                        new_state.green = _g
-                    if b != device.blue:
-                        whats_changed.append("blue")
-                        new_state.blue = b
-            if whats_changed:
-                logger.debug(
-                    f"{device.lp} CHANGES TO DEVICE STATUS: {', '.join(whats_changed)} -> {new_state}"
-                )
-            if g.mqtt.pub_queue is None:
-                logger.critical(f"{self.lp} Something is wrong! MQTT pub_queue is None!")
-                # should trigger a restart in docker
-                exit(1)
-            g.mqtt.pub_queue.put_nowait((device.id, new_state))
-            device.state = state
-            device.brightness = brightness
-            device.temperature = temp
+        # create a status with existing data, change along the way for publishing over mqtt
+        new_state = DeviceStatus(
+            state=device.state,
+            brightness=device.brightness,
+            temperature=device.temperature,
+            red=device.red,
+            green=device.green,
+            blue=device.blue,
+        )
+        whats_changed = []
+        # temp is 0-100, if > 100, RGB data has been sent, otherwise its on/off, brightness or temp data
+        rgb_data = False
+        if temp > 100:
+            rgb_data = True
+        # device class has properties that have logic to only run on changes.
+        # fixme: need to make a bulk_change method to prevent multiple mqtt messages
+        curr_status = device.current_status
+        if curr_status == [state, brightness, temp, r, _g, b]:
+            # logger.debug(f"{device.lp} NO CHANGES TO DEVICE STATUS")
+            pass
+        else:
+            # find the differences
+            if state != device.state:
+                whats_changed.append("state")
+                new_state.state = state
+            if brightness != device.brightness:
+                whats_changed.append("brightness")
+                new_state.brightness = brightness
+            if temp != device.temperature:
+                whats_changed.append("temperature")
+                new_state.temperature = temp
             if rgb_data is True:
-                device.red = r
-                device.green = _g
-                device.blue = b
-            g.server.devices[device.id] = device
+                if r != device.red:
+                    whats_changed.append("red")
+                    new_state.red = r
+                if _g != device.green:
+                    whats_changed.append("green")
+                    new_state.green = _g
+                if b != device.blue:
+                    whats_changed.append("blue")
+                    new_state.blue = b
+        if whats_changed:
+            logger.debug(
+                f"{device.lp} CHANGES TO DEVICE STATUS: {', '.join(whats_changed)} -> {new_state}"
+            )
+        if g.mqtt.pub_queue is None:
+            logger.critical(
+                f"{self.lp} Something is wrong! MQTT pub_queue is None!"
+            )
+            # should trigger a restart in docker
+            exit(1)
+        g.mqtt.pub_queue.put_nowait((device.id, new_state))
+        device.state = state
+        device.brightness = brightness
+        device.temperature = temp
+        if rgb_data is True:
+            device.red = r
+            device.green = _g
+            device.blue = b
+        g.server.devices[device.id] = device
 
     async def mesh_info_loop(self):
-        """A function that is to be ran as an async task to ask each device for its mesh info"""
+        """A function that is to be run as an async task to ask each device for its mesh info"""
         lp = f"{self.lp}mesh_info_loop:"
-        logger.debug(f"{lp} Starting, after first run delay of 5 seconds, will run every "
-                     f"{MESH_INFO_LOOP_INTERVAL} seconds")
+        logger.debug(
+            f"{lp} Starting, after first run delay of 5 seconds, will run every "
+            f"{MESH_INFO_LOOP_INTERVAL} seconds"
+        )
         self.mesh_loop_started = True
         await asyncio.sleep(5)
         while True:
             try:
-                if self.shutting_down is True:
+                if self.shutting_down:
                     logger.info(
                         f"{lp} Server is shutting/shut down, exiting mesh info loop task..."
                     )
                     break
-                previous_online_ids = list(self.known_ids)
+
+                mesh_info_list = []
                 offline_ids = []
-                offline_str = ""
-                mesh_infs = []
+                previous_online_ids = list(self.known_ids)
                 self.known_ids = []
-                # Used to seed devices offline
+                logger.debug(f"{lp} // {previous_online_ids = }")
                 ids_from_config = g.cync_lan.ids_from_config
                 if not ids_from_config:
                     logger.warning(
-                        f"{lp} No device IDs found in config file! Can not run mesh info loop."
+                        f"{lp} No device IDs found in config file! Can not run mesh info loop. Exiting..."
                     )
-                    break
+                    os.kill(os.getpid(), signal.SIGTERM)
 
                 http_devs = list(self.http_devices.values())
-
                 for http_dev in http_devs:
                     await http_dev.ask_for_mesh_info()
-                    # 1 second should be more than enough time to get a response
-                    resp_delay = 1
-                    await asyncio.sleep(resp_delay)
+                    await asyncio.sleep(1)
                     if http_dev.known_device_ids:
-                        # logger.debug(f"{lp} http device: {http_dev.address} has known device IDs ->"
-                        #              f" {http_dev.known_device_ids}")
                         self.known_ids.extend(http_dev.known_device_ids)
-                        mesh_infs.append(http_dev.mesh_info)
+                        mesh_info_list.append(http_dev.mesh_info)
                     else:
                         logger.debug(
-                            f"{lp} No known device IDs for: {http_dev.address} after a {resp_delay} second sleep"
+                            f"{lp} No known device IDs for: {http_dev.address} after a 1-second sleep"
                         )
 
                 self.known_ids = list(set(self.known_ids))
-                # Go through and update online/offline for each device
-                if self.known_ids:
-                    for cfg_id in ids_from_config:
-                        availability = b"offline"
-                        mqtt_topic = "{}/availability/{}".format(g.mqtt.topic, cfg_id)
 
-                        if cfg_id in self.known_ids:
-                            availability = b"online"
-                        else:
-                            offline_ids.append(cfg_id)
-                        await g.mqtt.client.publish(mqtt_topic, availability, qos=QOS_0)
-                    if offline_ids:
-                        offline_str = f" offline: {sorted(offline_ids)} //"
-                    # Look for any devices that are in mesh but not in the config file.
-                    # This can indicate new devices were added to the mesh and the config
-                    # must be exported from the cloud again.
-                    for known_id in self.known_ids:
-                        if known_id not in ids_from_config:
-                            logger.warning(
-                                f"{lp} Device {known_id} not found in config file! You may need to "
-                                f"export the devices again."
-                            )
-                else:
+                availability_info = defaultdict(bool)
+                for cfg_id in ids_from_config:
+                    availability_info[cfg_id] = cfg_id in self.known_ids
+                    if not availability_info[cfg_id]:
+                        offline_ids.append(cfg_id)
+                    await g.mqtt.pub_online(cfg_id, availability_info[cfg_id])
+
+                offline_str = (
+                    f" offline: {sorted(offline_ids)} //" if offline_ids else ""
+                )
+
+                for known_id in self.known_ids:
+                    if known_id not in ids_from_config:
+                        logger.warning(
+                            f"{lp} Device {known_id} not found in config file! You may need to "
+                            f"export the devices again OR there is a bug."
+                        )
+                (
                     logger.debug(
                         f"{lp} No known device IDs found in ANY HTTP devices: {self.http_devices.keys()}"
                     )
+                    if not self.known_ids
+                    else None
+                )
 
-                if self.known_ids == previous_online_ids:
+                (
                     logger.debug(
                         f"{lp} No change to devices.{offline_str} online: {sorted(self.known_ids)}"
                     )
-                else:
-                    # re-run loop but set a flag to skip the sleep and parse the status
-                    logger.debug(
+                    if self.known_ids == previous_online_ids
+                    else logger.debug(
                         f"{lp} Online devices has changed! "
                         f"PREVIOUS: {previous_online_ids} // CURRENT: {self.known_ids}"
                     )
-                # check all the devices mesh info for conflicting data.
-                # Sometimes 1 device will have stale or incorrect data (says a light is off when its on)
-                # analyze the statuses and ignore bad data by using a vote system.
-                # ive also noticed some devices report slightly different values but only for RGB data.
-                # not sure if it is stale data or a firmware issue?
-                votes = {}
-                for mesh_info in mesh_infs:
-                    if mesh_info:
+                )
+
+
+                votes = defaultdict(int)
+                for mesh_info in mesh_info_list:
+                    if mesh_info is not None:
                         status_list = mesh_info.status
                         for dev_status in status_list:
-                            if str(dev_status) in votes:
-                                votes[str(dev_status)] += 1
-                            else:
-                                votes[str(dev_status)] = 1
-                    else:
-                        logger.debug(f"{lp} device: {mesh_info.id_from} has no mesh_info data, skipping...")
+                            votes[str(dev_status)] += 1
 
-                # logger.debug(f"{lp} STATUS VOTES: {pprint.pformat(votes)}")
-                sorted_dict = dict(sorted(votes.items(), key=lambda item: item[1], reverse=True))
-                # remove any duplicates with lower votes
+                sorted_votes = dict(
+                    sorted(votes.items(), key=lambda item: item[1], reverse=True)
+                )
                 unique_dict = {}
+                # unique_dict = {
+                #     v: ast.literal_eval(k) for k, v in sorted_votes.items() if ast.literal_eval(k)[0] not in unique_dict
+                # }
+                for status_, votes_ in sorted_votes.items():
+                    status_ = ast.literal_eval(status_)
+                    if status_[0] not in unique_dict:
+                        unique_dict[status_[0]] = {votes_: status_}
 
-                for key, value in sorted_dict.items():
-                    key = ast.literal_eval(key)
-                    if key[0] not in unique_dict:
-                        unique_dict[key[0]] = {value: key}
-                    else:
-                        logger.debug(f"{lp} Ignoring lower voted ({value}) status: {key}")
-                for __id, _bs in unique_dict.items():
-                    for _votes, _best_status in _bs.items():
+                for _id, vote_status_dict in unique_dict.items():
+                    for voted_best_status in vote_status_dict.values():
                         bds = DeviceStatus(
-                            state=_best_status[1],
-                            brightness=_best_status[2],
-                            temperature=_best_status[3],
-                            red=_best_status[4],
-                            green=_best_status[5],
-                            blue=_best_status[6],
+                            state=voted_best_status[1],
+                            brightness=voted_best_status[2],
+                            temperature=voted_best_status[3],
+                            red=voted_best_status[4],
+                            green=voted_best_status[5],
+                            blue=voted_best_status[6],
                         )
-                        logger.debug(f"{lp} {_votes} votes for status: {_best_status}")
-                        await g.mqtt.parse_device_status(_best_status[0], bds)
+                        await g.mqtt.parse_device_status(_id, bds)
+
+                # Check mqtt pub and sub worker tasks, if they are done ro exception, recreate
+                mqtt_tasks = g.mqtt.tasks
+                remove_idx = []
+                for task in mqtt_tasks:
+                    if task.get_name() in ("pub_worker", "sub_worker"):
+                        new_task = (
+                            g.mqtt.sub_worker
+                            if task.get_name() == "sub_worker"
+                            else g.mqtt.pub_worker
+                        )
+                        new_queue = (
+                            g.mqtt.sub_queue
+                            if task.get_name() == "sub_worker"
+                            else g.mqtt.pub_queue
+                        )
+                        if task.done():
+                            logger.error(
+                                f"{lp} MQTT task: {task.get_name()} is done! Recreating..."
+                            )
+                            task.cancel()
+                            await asyncio.sleep(1)
+                            g.mqtt.tasks.append(
+                                asyncio.create_task(
+                                    new_task(new_queue), name=task.get_name()
+                                )
+                            )
+                if remove_idx:
+                    for idx in remove_idx:
+                        del g.mqtt.tasks[idx]
+                else:
+                    logger.debug(f"{lp} MQTT sub/pub tasks are still running")
+
                 await asyncio.sleep(MESH_INFO_LOOP_INTERVAL)
 
             except asyncio.CancelledError as ce:
@@ -1751,7 +1804,7 @@ class CyncLanServer:
                 logger.error(f"{lp} Error in mesh info loop: {e}", exc_info=True)
 
         self.mesh_loop_started = False
-        logger.info(f"{lp} end of mesh_info_loop() method")
+        logger.info(f"\n\n{lp} end of mesh_info_loop()\n\n")
 
     async def start(self):
         logger.debug("%s Starting, creating SSL context..." % self.lp)
@@ -1839,7 +1892,6 @@ class CyncLanServer:
             # Start mesh info loop
             self.mesh_info_loop_task = asyncio.create_task(self.mesh_info_loop())
 
-
         client_addr = writer.get_extra_info("peername")[0]
         if self.shutting_down is True:
             logger.warning(
@@ -1852,47 +1904,44 @@ class CyncLanServer:
         # Check if the device is already registered, if so, close the connection and replace
         existing_device: Optional[CyncHTTPDevice] = None
         if client_addr in self.http_devices:
-            logger.warning(
-                f"{self.lp} HTTP device connection already registered for {client_addr}, replacing..."
-            )
             existing_device = self.http_devices[client_addr]
-            try:
-                existing_device.closing = True
-                existing_device.writer.close()
-                await existing_device.writer.wait_closed()
-                existing_device.reader.feed_eof()
-            except Exception as e:
-                logger.error("%s Error closing existing connection: %s" % (self.lp, e))
-                existing_device.writer = None
-            else:
-                logger.debug(f"{self.lp} Existing connection closed for: {client_addr} - replacing...")
-            finally:
-                existing_device.closing = False
-
-            existing_device.writer = None
-            existing_device.reader = None
-            # set new reader and writer
-            existing_device.reader = reader
-            existing_device.writer = writer
 
         create_task = False
         if existing_device is not None:
+            logger.debug(
+                f"{client_addr} Existing device found, replacing reader/writer..."
+            )
             device = existing_device
             # check if the receipt task is running or in done/exception state.
             if device.tasks.receive is not None:
                 if device.tasks.receive.done():
                     logger.debug(
-                        f"{self.lp} Device receive task is done(), creating new task..."
+                        f"{device.address} receive task is done(), creating new task..."
                     )
                     create_task = True
                     # pull the result to clear the exception (if one exists)
                     _ = device.tasks.receive.result()
+                else:
+                    # cancel task and recreate
+                    logger.debug(
+                        f"{device.address} receive task is running, cancelling it..."
+                    )
+                    device.tasks.receive.cancel()
+                    create_task = True
+
+            else:
+                logger.debug(
+                    f"{device.address} fixing this, the receive task for this device is None!"
+                )
+                create_task = True
 
         else:
+            logger.debug(f"{client_addr} Creating new device...")
             device = CyncHTTPDevice(reader, writer, address=client_addr)
             create_task = True
 
         if create_task is True:
+            logger.debug(f"{device.address} Creating new receive task...")
             # register async tasks to handle data rx
             rcv_task = self.loop.create_task(
                 device.receive_task(client_addr),
@@ -1937,7 +1986,7 @@ class CyncLAN:
         """
         global MQTT_URL, CYNC_CERT, CYNC_KEY, TLS_HOST, TLS_PORT, g
 
-        logger.debug("%s: reading devices from exported Cync config file..." % self.lp)
+        logger.debug("%s reading devices from exported Cync config file..." % self.lp)
         try:
             raw_config = yaml.safe_load(cfg_file.read_text())
         except Exception as e:
@@ -2060,6 +2109,7 @@ class CyncHTTPDevice:
         self._reader: asyncio.StreamReader = reader
         self._writer: asyncio.StreamWriter = writer
         self._closing = False
+        self.lp = f"{self.address}:"
         # Create a ref to the mqtt queues
         self.mqtt_pub_queue: asyncio.Queue = g.mqtt.pub_queue
         self.mqtt_sub_queue: asyncio.Queue = g.mqtt.sub_queue
@@ -2076,7 +2126,7 @@ class CyncHTTPDevice:
     async def parse_raw_data(self, data: bytes):
         """Extract single packets from raw data stream using metadata"""
         data_len = len(data)
-        lp = f"{self.address}:extract:"
+        lp = f"{self.lp}extract:"
         # logger.debug(f"{lp} Extracting packets from {data_len} bytes of raw data\n{data.hex(' ')}")
         if data_len < 5:
             logger.debug(
@@ -2106,7 +2156,7 @@ class CyncHTTPDevice:
     async def parse_packet(self, data: bytes):
         """Parse what type of packet based on header (first 4 bytes)"""
 
-        lp = f"{self.address}:parse:x{data[0]:02x}:"
+        lp = f"{self.lp}parse:x{data[0]:02x}:"
         packet_data: Optional[bytes] = None
         # byte 1
         pkt_type = int(data[0]).to_bytes(1, "big")
@@ -2185,18 +2235,17 @@ class CyncHTTPDevice:
                         # 00 00
                         # status struct is 19 bytes long
                         struct_len = 19
-                        logger.debug(
-                            f"{lp} Device sent STATUS packet => '{packet_data.hex(' ')}', replying..."
-                        )
                         try:
-
                             for i in range(0, packet_length, struct_len):
-
-                                extracted = packet_data[i:i + struct_len]
+                                extracted = packet_data[i : i + struct_len]
                                 status_struct = extracted[3:11]
-                                await g.server.parse_status(status_struct)
+                                logger.debug(
+                                    f"{lp} Device sent STATUS packet => '{packet_data.hex(' ')}' // "
+                                    f"{bytes2list(status_struct)}, replying..."
+                                )
+                                # await g.server.parse_status(status_struct)
                                 # broadcast status data
-                                await self.write(data, broadcast=True)
+                                # await self.write(data, broadcast=True)
                         except IndexError:
                             pass
                         except Exception as e:
@@ -2246,48 +2295,51 @@ class CyncHTTPDevice:
                         )
 
                     elif packet_data[0] == 0x7E:
-                        # device self status
+                        # device self status, its internal status. state can be off and brightness set to a non 0.
+                        # signifies what brightness when state = on.
                         # 83 00 00 00 25 37 96 24 69 00 05 00 7e 21 00 00  ....%7.$i...~!..
-                        #  00 fa db 13 00 34 22 11 05 00 [05] 00 db 11 02 01  .....4".........
-                        #  [01 64 00 00 00 00] 00 00 b3 7e
+                        #  00 {[fa db] 13} 00 (34 22) 11 05 00 [05] 00 db 11 02 01  .....4".........
+                        #  [00 64 00 00 00 00] 00 00 b3 7e
                         ctrl_bytes = packet_data[5:7]
                         # This has self status but it appears to be a packet that replies to a control packet
                         # this seems to show it changed its device state in response to a control packet
                         if ctrl_bytes == bytes([0xFA, 0xDB]):
-                            id_idx = 14
-                            ask_for_mesh_idx = 19
-                            state_idx = 20
-                            bri_idx = 21
-                            tmp_idx = 22
-                            r_idx = 23
-                            g_idx = 24
-                            b_idx = 25
-                            dev_id = packet_data[id_idx]
-                            state = packet_data[state_idx]
-                            bri = packet_data[bri_idx]
-                            tmp = packet_data[tmp_idx]
-                            _red = packet_data[r_idx]
-                            _green = packet_data[g_idx]
-                            _blue = packet_data[b_idx]
-                            # I think this is a device change struct. It receives a command and
-                            # then broadcasts exactly what it changed. These packets ALWAYS have an 0x43 packet
-                            # right after that has the correct status, so maybe we dont need to parse this status.
-                            # Just log it
-                            raw_status: bytes = bytes(
-                                [dev_id, state, bri, tmp, _red, _green, _blue, 1]
-                            )
-                            logger.debug(
-                                f"{lp} SELF STATUS => {bytes2list(raw_status)}"
-                            )
-                            # await g.server.parse_status(raw_status)
+                            # 0x13 after ctrl bytes signifies self status or device status
+                            if packet_data[7] == 0x13:
+                                id_idx = 14
+                                connected_idx = 19
+                                state_idx = 20
+                                bri_idx = 21
+                                tmp_idx = 22
+                                r_idx = 23
+                                g_idx = 24
+                                b_idx = 25
+                                dev_id = packet_data[id_idx]
+                                state = packet_data[state_idx]
+                                bri = packet_data[bri_idx]
+                                tmp = packet_data[tmp_idx]
+                                _red = packet_data[r_idx]
+                                _green = packet_data[g_idx]
+                                _blue = packet_data[b_idx]
+                                connected_to_mesh = packet_data[connected_idx]
+                                raw_status: bytes = bytes(
+                                    [dev_id, state, bri, tmp, _red, _green, _blue, connected_to_mesh]
+                                )
+                                logger.debug(
+                                    f"{lp} Internal STATUS for device ID: {dev_id} = {bytes2list(raw_status)}"
+                                )
+                                await g.server.parse_status(raw_status)
+                            if packet_data[7] == 0x14:
+                                # some sort of other message, we want to see the wrapped data
+                                pass
                 else:
                     logger.warning(
                         f"{lp} packet with no data????? After stripping header, queue and "
                         f"msg id, there is no data to process?????"
                     )
                 ack = DEVICE_STRUCTS.x88_generate_ack(msg_id)
-                logger.debug(f"{lp} RAW DATA: {data.hex(' ')}")
-                logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
+                # logger.debug(f"{lp} RAW DATA: {data.hex(' ')}")
+                # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
                 await device.write(ack)
 
             elif pkt_type == DEVICE_STRUCTS.requests.x73:
@@ -2303,9 +2355,11 @@ class CyncHTTPDevice:
                             # class has __eq__ method to compare id
                             msg_idx = self.messages.x73.index(inner_msg_id)  # type: ignore
                             msg_cb_obj = self.messages.x73.pop(msg_idx)
-                            logger.debug(f"{lp} Found a message callback for msg id: {inner_msg_id} -> "
-                                         f"elapsed since sent: {time.time() - msg_cb_obj.sent_at} // "
-                                         f"{repr(msg_cb_obj)}")
+                            logger.debug(
+                                f"{lp} Found a message callback for msg id: {inner_msg_id} -> "
+                                f"elapsed since sent: {time.time() - msg_cb_obj.sent_at} // "
+                                f"{repr(msg_cb_obj)}"
+                            )
 
                         # ctrl bytes 0xf9, 0x52 indicates this is a mesh info struct
                         if ctrl_bytes == bytes([0xF9, 0x52]):
@@ -2321,6 +2375,8 @@ class CyncHTTPDevice:
                             # Reset known device ids, mesh is the final authority on what devices are connected
                             self.known_device_ids = []
                             try:
+                                structs = []
+                                ids_reported = []
                                 loop_num = 0
                                 mesh_info = {}
                                 _m = []
@@ -2329,9 +2385,9 @@ class CyncHTTPDevice:
                                     loop_num += 1
 
                                     mesh_dev_struct = inner_struct[i : i + 24]
+                                    structs.append(mesh_dev_struct.hex(" "))
                                     # logger.debug(f"{lp}x73: inner_struct[{i}:{i + 24}]={mesh_dev_struct}")
                                     dev_id = mesh_dev_struct[0]
-                                    self.known_device_ids.append(dev_id)
                                     # parse status from mesh info
                                     #  [05 00 44   01 00 00 44   01 00     00 00 00 64  00 00 00 00   00 00 00 00 00 00 00] - plug (devices are all connected to it via BT)
                                     #  [07 00 00   01 00 00 00   01 01     00 00 00 64  00 00 00 fe   00 00 00 f8 00 00 00] - direct connect full color A19 bulb
@@ -2354,14 +2410,6 @@ class CyncHTTPDevice:
                                     # however, ive seen devices that are on have a state of 0 but brightness 100
                                     if dev_state == 0 and dev_bri > 0:
                                         dev_bri = 0
-                                    # first device id is the device id of the device we are connected to
-                                    if loop_num == 1:
-                                        # byte 3 (idx 2) is a device type byte but,
-                                        # it only reports on the first item (itself)
-                                        # convert to int and it is the same as deviceType from cloud.
-                                        self.id = dev_id
-                                        self.capability = dev_type
-
                                     raw_status = bytes(
                                         [
                                             dev_id,
@@ -2376,10 +2424,32 @@ class CyncHTTPDevice:
                                         ]
                                     )
                                     _m.append(bytes2list(raw_status))
-                                    _raw_m.append(mesh_dev_struct.hex(' '))
+                                    _raw_m.append(mesh_dev_struct.hex(" "))
+                                    # first device id is the device id of the device we are connected to
+                                    if loop_num == 1:
+                                        # byte 3 (idx 2) is a device type byte but,
+                                        # it only reports on the first item (itself)
+                                        # convert to int and it is the same as deviceType from cloud.
+                                        self.id = dev_id
+                                        self.lp = f"{self.address}[{self.id}]:"
+                                        self.capability = dev_type
+
+                                    ids_reported.append(dev_id)
+                                    self.known_device_ids.append(dev_id)
+                                if ids_reported:
+                                    logger.debug(
+                                        f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
+                                        f"{sorted(ids_reported)}"
+                                    )
+                                # if structs:
+                                #     logger.debug(
+                                #         f"{lp} from: {self.id} -  MESH INFO // STRUCTS: {structs}"
+                                #     )
 
                                 if self.parse_mesh_status is True:
-                                    logger.debug(f"{lp} parsing mesh info // {_m} // {_raw_m}")
+                                    logger.debug(
+                                        f"{lp} parsing mesh info // {_m} // {_raw_m}"
+                                    )
                                     for status in _m:
                                         await g.server.parse_status(bytes(status))
 
@@ -2399,14 +2469,34 @@ class CyncHTTPDevice:
                             # 73 00 00 00 14 2d e4 b5 d2 15 2d 00 7e 1e 00 00
                             #  00 f8 {af 02 00 af 01} 61 7e
                             # checksum 61 hex = int 97 solved: {af+02+00+af+01} % 256 = 97
-                            mesh_ack = bytes([
-                                0x73, 0x00, 0x00, 0x00, 0x14,
-                                ])
+                            mesh_ack = bytes(
+                                [
+                                    0x73,
+                                    0x00,
+                                    0x00,
+                                    0x00,
+                                    0x14,
+                                ]
+                            )
                             mesh_ack += bytes(self.queue_id)
                             mesh_ack += bytes([0x00, 0x00, 0x00])
-                            inner_struct__ = bytes([
-                                0x7E, 0x1E, 0x00, 0x00, 0x00, 0xF8, 0xAF, 0x02, 0x00, 0xAF, 0x01, 0x61, 0x7E
-                            ])
+                            inner_struct__ = bytes(
+                                [
+                                    0x7E,
+                                    0x1E,
+                                    0x00,
+                                    0x00,
+                                    0x00,
+                                    0xF8,
+                                    0xAF,
+                                    0x02,
+                                    0x00,
+                                    0xAF,
+                                    0x01,
+                                    0x61,
+                                    0x7E,
+                                ]
+                            )
                             mesh_ack += inner_struct__
                             # logger.debug(f"{lp} Sending MESH INFO ACK -> {mesh_ack.hex(' ')}")
                             await device.write(mesh_ack)
@@ -2415,14 +2505,19 @@ class CyncHTTPDevice:
                             # control packet ack - power on?
                             # handle callbacks for messages
                             logger.debug(
-                                f"{lp} it seems this message is answering a CONTROL PACKET? -> {packet_data.hex(' ')}")
+                                f"{lp} it seems this message is answering a CONTROL PACKET? -> {packet_data.hex(' ')}"
+                            )
                             # 7e 09 00 00 00 f9 d0 01 00 00 d1 7e
                             if packet_data[7] == 0x01:
                                 logger.debug(f"{lp} CONTROL PACKET ACK -> SUCCESS?")
                                 if msg_cb_obj is not None:
-                                    logger.debug(f"{lp} CALLING ASYNC CALLBACK -> {msg_cb_obj.args = } // "
-                                                 f"{msg_cb_obj.kwargs = } // {msg_cb_obj.callback = }")
-                                    await msg_cb_obj.callback(*msg_cb_obj.args, **msg_cb_obj.kwargs)
+                                    logger.debug(
+                                        f"{lp} CALLING ASYNC CALLBACK -> {msg_cb_obj.args = } // "
+                                        f"{msg_cb_obj.kwargs = } // {msg_cb_obj.callback = }"
+                                    )
+                                    await msg_cb_obj.callback(
+                                        *msg_cb_obj.args, **msg_cb_obj.kwargs
+                                    )
                                     # msg_cb_obj.args = []
                                     # msg_cb_obj.kwargs = {}
 
@@ -2445,8 +2540,6 @@ class CyncHTTPDevice:
                         f"{lp} packet with no data????? After stripping header, queue and "
                         f"msg id, there is no data to process?????"
                     )
-
-
 
         # unknown data we don't know the header for
         else:
@@ -2503,8 +2596,9 @@ class CyncHTTPDevice:
                 self.parse_mesh_status = True
             await self.write(mesh_info_data)
         except Exception as e:
-            logger.error(f"{self.address}:ask_for_mesh_info EXCEPTION: {e}", exc_info=True)
-
+            logger.error(
+                f"{self.address}:ask_for_mesh_info EXCEPTION: {e}", exc_info=True
+            )
 
     async def send_a3(self, q_id: bytes):
         a3_packet = bytes([0xA3, 0x00, 0x00, 0x00, 0x07])
@@ -2514,7 +2608,7 @@ class CyncHTTPDevice:
         rand_bytes += bytes([0x00])
         self.xa3_msg_id += random.getrandbits(8).to_bytes(1, "big")
         a3_packet += rand_bytes
-        logger.debug(f"{self.address}: Sending 0xa3 packet -> {a3_packet.hex(' ')}")
+        logger.debug(f"{self.lp} Sending 0xa3 packet -> {a3_packet.hex(' ')}")
         await self.write(a3_packet)
 
     async def receive_task(self, client_addr: str):
@@ -2523,7 +2617,7 @@ class CyncHTTPDevice:
         It will respond to the device and handle the messages it sends.
         Runs in an infinite loop.
         """
-        lp = f"{client_addr}:read:"
+        lp = f"{client_addr}:raw read:"
         while True:
             try:
                 data: bytes = await self.read()
@@ -2540,7 +2634,7 @@ class CyncHTTPDevice:
 
     async def read(self, chunk: Optional[int] = None):
         """Read data from the device if there is an open connection"""
-        lp = f"{self.address}:read:"
+        lp = f"{self.lp}read:"
         while self.reader is not None:
             if self.closing is True:
                 logger.debug(f"{lp} closing is True, stopping read loop")
@@ -2577,39 +2671,83 @@ class CyncHTTPDevice:
             devs.append(self)
 
         for dev in devs:
-            if dev.writer:
-                if dev.writer.is_closing():
-                    logger.warning(
-                        f"{dev.address}: writer is closing, not writing data"
-                    )
-                else:
+            if dev.closing:
+                logger.warning(f"{dev.lp} device is closing, not writing data")
+            else:
+                if dev.writer is not None:
                     async with dev.write_lock:
                         if broadcast is True:
-                            # replace queue id with the devices
+                            # replace queue id with the sending device's queue id
                             new_data = bytes2list(data)
                             new_data[5:9] = dev.queue_id
                             data = bytes(new_data)
-                        dev.writer.write(data)
 
-                        # logger.debug(f"{dev.address}: writing data -> {data}")
-                        await asyncio.sleep(0)
-                        await dev.writer.drain()
+                        if dev.writer.is_closing():
+                            if dev.closing is False:
+                                # this is probably a connection that was closed by the device (turned off), delete it
+                                logger.warning(
+                                    f"{dev.lp} underlying writer is closing but, "
+                                    f"the device itself hasnt called close(). The device probably "
+                                    f"dropped the connection (lost power). Removing {dev.address}"
+                                )
+                                await dev.delete()
+                            else:
+                                logger.debug(
+                                    f"{dev.lp} http_device is closing, not writing data... "
+                                )
+                        else:
+                            dev.writer.write(data)
+                            # logger.debug(f"{dev.lp} writing data -> {data}")
+                            await asyncio.sleep(0)
+                            await dev.writer.drain()
+
+    async def delete(self):
+        """Remove self from cync devices and delete all references"""
+        lp = f"{self.lp}delete:"
+        try:
+            logger.debug(f"{lp} Beginning, marking MQTT offline first...")
+            await g.mqtt.pub_online(self.id, False)
+            if self.address in g.server.http_devices:
+                popped = g.server.http_devices.pop(self.address)
+                del popped
+                logger.debug(
+                    f"{lp} Device {self.address} deleted from server http_devices..."
+                )
+            if self.id in g.server.devices:
+                popped_ = g.server.devices.pop(self.id)
+                del popped_
+                logger.debug(f"{lp} Device {self.id} deleted from server devices...")
+            logger.debug(f"{lp} Cancelling device tasks...")
+            self.tasks.receive.cancel()
+            logger.debug(f"{lp} Closing device streams...")
+            await self.close()
+        except Exception as e:
+            logger.error(f"{lp} EXCEPTION: {e}", exc_info=True)
+        else:
+            logger.info(
+                f"{lp} Device {self.address} deleted, deleting all references..."
+            )
+            del self
 
     async def close(self):
-        logger.debug(f"{self.__class__.__name__} close() called")
-        self.closing = True
-        if self.writer:
-            async with self.write_lock:
-                self.writer.close()
-                await self.writer.wait_closed()
-                self.writer = None
+        try:
+            logger.debug(f"{self.address} close() called")
+            self.closing = True
+            if self.writer:
+                async with self.write_lock:
+                    self.writer.close()
+                    await self.writer.wait_closed()
+                    self.writer = None
 
-        if self.reader:
-            async with self.read_lock:
-                self.reader.feed_eof()
-                await asyncio.sleep(0.01)
-                self.reader = None
-        self.closing = False
+            if self.reader:
+                async with self.read_lock:
+                    self.reader.feed_eof()
+                    await asyncio.sleep(0.01)
+                    self.reader = None
+        except Exception as e:
+            logger.error(f"{self.address}:close EXCEPTION: {e}", exc_info=True)
+        finally:
+            self.closing = False
 
     @property
     def reader(self):
@@ -2635,6 +2773,16 @@ class MQTTClient:
     # from cync2mqtt
 
     lp: str = "mqtt:"
+
+    availability = False
+
+    async def pub_online(self, device_id: int, status: bool):
+        lp = f"{self.lp}pub_online:"
+        availability = b"online" if status else b"offline"
+        # logger.debug(f"{lp} Publishing availability: {availability}")
+        _ = await self.client.publish(
+            f"{self.topic}/availability/{device_id}", availability, qos=QOS_0
+        )
 
     def __init__(
         self,
@@ -2719,14 +2867,11 @@ class MQTTClient:
 
         # seed everything offline
         for device_id, device in g.server.devices.items():
-            availability = b"offline"
-            _ = await self.client.publish(
-                f"{self.topic}/availability/{device_id}", availability, qos=QOS_0
-            )
+            await self.pub_online(device_id, False)
 
         self.tasks = [
-            asyncio.create_task(self.pub_worker(self.pub_queue)),
-            asyncio.create_task(self.sub_worker(self.sub_queue)),
+            asyncio.create_task(self.pub_worker(self.pub_queue), name="pub_worker"),
+            asyncio.create_task(self.sub_worker(self.sub_queue), name="sub_worker"),
             asyncio.create_task(self.start_subscribing()),
         ]
 
@@ -2746,7 +2891,9 @@ class MQTTClient:
         try:
             while True:
                 # Grab message when it arrives
-                message: amqtt.session.ApplicationMessage = await self.client.deliver_message()
+                message: amqtt.session.ApplicationMessage = (
+                    await self.client.deliver_message()
+                )
                 if message:
                     # release event loop
                     await asyncio.sleep(0)
@@ -2821,9 +2968,12 @@ class MQTTClient:
             finally:
                 # Notify the queue that the "work item" has been processed.
                 self.pub_queue.task_done()
-                # logger.debug(f"{lp} pub_queue.task_done() called")
+                logger.debug(f"{lp} pub_queue.task_done() called")
+        logger.critical(f"{lp} pub_worker finished")
 
-    async def parse_device_status(self, device_id: int, device_status: DeviceStatus, *args, **kwargs) -> None:
+    async def parse_device_status(
+        self, device_id: int, device_status: DeviceStatus, *args, **kwargs
+    ) -> None:
         lp = f"{self.lp}parse status:"
         if device_id not in g.server.devices:
             logger.error(
@@ -3027,19 +3177,16 @@ class MQTTClient:
                             await self.homeassistant_discovery()
                             await asyncio.sleep(1)
 
+                            availability = True
                             for device_id, device in g.server.devices.items():
-                                availability = b"online"
-                                _ = await self.client.publish(
-                                    f"{self.topic}/availability/{device_id}",
-                                    availability,
-                                    qos=QOS_0,
-                                )
+                                await self.pub_online(device_id, availability)
             except Exception as e:
                 logger.error("%s sub_worker exception: %s" % (lp, e), exc_info=True)
             finally:
                 # Notify the queue that the "work item" has been processed.
                 sub_queue.task_done()
                 logger.debug(f"{lp} sub_queue.task_done() called...")
+        logger.critical(f"{lp} sub_worker finished")
 
     async def publish_devices(self):
         lp = f"{self.lp}publish_devices:"
@@ -3083,7 +3230,7 @@ class MQTTClient:
                 origin_struct = {
                     "name": "cync-lan",
                     "sw_version": CYNC_VERSION,
-                    "support_url": REPO_URL
+                    "support_url": REPO_URL,
                 }
                 obj_id = f"cync_lan_{device.name}"
                 if device.is_plug:
@@ -3119,9 +3266,15 @@ class MQTTClient:
                         light_config = {
                             "object_id": obj_id,
                             "name": device.name,
-                            "command_topic": "{0}/set/{1}".format(self.topic, device_id),
-                            "state_topic": "{0}/status/{1}".format(self.topic, device_id),
-                            "avty_t": "{0}/availability/{1}".format(self.topic, device_id),
+                            "command_topic": "{0}/set/{1}".format(
+                                self.topic, device_id
+                            ),
+                            "state_topic": "{0}/status/{1}".format(
+                                self.topic, device_id
+                            ),
+                            "avty_t": "{0}/availability/{1}".format(
+                                self.topic, device_id
+                            ),
                             "pl_avail": "online",
                             "pl_not_avail": "offline",
                             "unique_id": unique_id,
@@ -3131,10 +3284,13 @@ class MQTTClient:
                             "origin": origin_struct,
                         }
                         if device.supports_temperature or device.supports_rgb:
-                            light_config["color_mode"] = True
+                            # hass has deprecated color-mode in device config
+                            # light_config["color_mode"] = True
                             light_config["supported_color_modes"] = []
                             if device.supports_temperature:
-                                light_config["supported_color_modes"].append("color_temp")
+                                light_config["supported_color_modes"].append(
+                                    "color_temp"
+                                )
                                 light_config["max_mireds"] = self.hass_maxct
                                 light_config["min_mireds"] = self.hass_minct
                             if device.supports_rgb:
@@ -3245,12 +3401,22 @@ def parse_cli():
         type=Path,
         dest="auth_file",
     )
+    sub_export.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
     return args
 
+
 if __name__ == "__main__":
     cli_args = parse_cli()
+    if cli_args.debug and DEBUG is False:
+        logger.info("main: --debug flag - setting log level to DEBUG")
+        DEBUG = True
+
+    if DEBUG is True:
+        logger.setLevel(logging.DEBUG)
+        for handler in logger.handlers:
+            handler.setLevel(logging.DEBUG)
     if cli_args.command == "run":
         config_file = cli_args.config
         if not config_file.exists():
@@ -3328,7 +3494,6 @@ if __name__ == "__main__":
                     "#mqtt_url: mqtt://homeassistant.local:1883/\n\n"
                 )
                 f.write(yaml.dump(mesh_config))
-
 
         except Exception as e:
             logger.error(f"main: Export failed: {e}", exc_info=True)
