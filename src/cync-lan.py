@@ -2159,7 +2159,6 @@ class CyncHTTPDevice:
                                 f"{lp} Device sent BROADCAST STATUS packet => '{packet_data.hex(' ')}'"
                             )
                             for i in range(0, packet_length, struct_len):
-
                                 extracted = packet_data[i: i + struct_len]
                                 if extracted:
                                     status_struct = extracted[3:11]
