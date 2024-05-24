@@ -7,7 +7,7 @@ version: '3'
 services:
   cync-lan:
     container_name: cync-lan
-    image: baudneo/cync_lan:latest
+    image: baudneo/cync-lan:latest
     restart: unless-stopped
 #    build:
 #      dockerfile: ./Dockerfile
