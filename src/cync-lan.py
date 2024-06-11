@@ -999,33 +999,28 @@ class CyncDevice:
             green=None,
             blue=None,
         )
-
-        for http_device in g.server.http_devices.values():
-            if self.id in http_device.known_device_ids:
-                header.extend(http_device.queue_id)
-                header.extend(bytes([0x00, 0x00, 0x00]))
-                header.extend(_inner_struct)
-                b = bytes(header)
-                logger.debug(
-                    f"{self.lp} FOUND target device in an http comms known devices! "
-                    f"Changing power state: {self.state} to {state} // {bytes(header).hex(' ')}"
-                )
-                cb = MessageCallback(msg_id_inc)
-                cb.original_message = b
-                cb.sent_at = time.time()
-                cb.callback = g.mqtt.parse_device_status
-                cb.args = []
-                cb.args.extend([self.id, new_state])
-                logger.debug(
-                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
-                )
-                http_device.messages.x73.append(cb)
-                await http_device.write(b)
-                break
-        else:
-            logger.warning(
-                f"{self.lp} This device does not seem to be known???? skipping sending power state..."
-            )
+        # pick a random http device to send the command to
+        # it should bridge the command over btle to the device ID
+        bridge_device = random.choice(list(g.server.http_devices.values()))
+        header.extend(bridge_device.queue_id)
+        header.extend(bytes([0x00, 0x00, 0x00]))
+        header.extend(_inner_struct)
+        b = bytes(header)
+        logger.debug(
+            f"{self.lp} Changing power state: {self.state} to {state} // {bytes(header).hex(' ')}"
+        )
+        # testing a callback system that determines success or failure
+        cb = MessageCallback(msg_id_inc)
+        cb.original_message = b
+        cb.sent_at = time.time()
+        cb.callback = g.mqtt.parse_device_status
+        cb.args = []
+        cb.args.extend([self.id, new_state])
+        logger.debug(
+            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+        )
+        bridge_device.messages.x73.append(cb)
+        await bridge_device.write(b)
 
     async def set_brightness(self, bri: int):
         """Send raw data to control device brightness"""
@@ -1434,35 +1429,40 @@ class CyncLanServer:
         self.known_ids: List[Optional[int]] = []
         g.server = self
 
-    async def _remove_http_device(self, device: "CyncHTTPDevice"):
-        """Gracefully remove an HTTP device from the server"""
+    async def close_http_device(self, device: "CyncHTTPDevice"):
+        """Gracefully close HTTP device; async task and reader/writer"""
         # check if the receive task is running or in done/exception state.
-        lp = f"{self.lp}remove_http_device:{device.address}[{device.id}]:"
+        lp_id = f"[{device.id}]" if device.id is not None else ""
+        lp = f"{self.lp}remove_http_device:{device.address}{lp_id}:"
+        dev_id = id(device)
+        logger.debug(f"{lp} Closing HTTP device: {dev_id}")
         if (_r_task := device.tasks.receive) is not None:
             if _r_task.done():
                 logger.debug(
-                    f"{lp} existing receive task is done, no need to cancel..."
+                    f"{lp} existing receive task ({_r_task.get_name()}) is done, no need to cancel..."
                 )
             else:
-                logger.debug(f"{lp} existing receive task is running, cancelling...")
-                _r_task.cancel("Removing HTTP device from server")
+                logger.debug(f"{lp} existing receive task is running (name: {_r_task.get_name()}), cancelling...")
+                await asyncio.sleep(1)
+                _r_task.cancel("Gracefully closing HTTP device")
+                await asyncio.sleep(0)
                 if _r_task.cancelled():
                     logger.debug(
                         f"{lp} existing receive task was cancelled successfully"
                     )
                 else:
                     logger.warning(f"{lp} existing receive task was not cancelled!")
+        else:
+            logger.debug(f"{lp} no existing receive task found!")
 
-        device.tasks.receive = None
         # existing reader is closed, no sense in feeding it EOF, just remove it
         device.reader = None
         # Go through the motions to gracefully close the writer
         try:
             device.writer.close()
             await device.writer.wait_closed()
-        except Exception as e:
-            logger.error(f"{lp} Error closing writer: {e}")
-
+        except Exception as writer_close_exc:
+            logger.error(f"{lp} Error closing writer: {writer_close_exc}")
         device.writer = None
         logger.debug(f"{lp} Removed HTTP device from server")
 
@@ -1494,7 +1494,7 @@ class CyncLanServer:
         return ssl_context
 
     async def parse_status(self, raw_state: bytes):
-        """Extracted status packet parsing"""
+        """Extracted status packet parsing, handles mqtt publishing and device state changes."""
         _id = raw_state[0]
         state = raw_state[1]
         brightness = raw_state[2]
@@ -1535,7 +1535,7 @@ class CyncLanServer:
                 for _http_device in http_devs:
                     if _id == _http_device.id:
                         http_device = g.server.http_devices.pop(_http_device.address)
-                        await self._remove_http_device(http_device)
+                        # await self.close_http_device(http_device)
                         del http_device
                         break
 
@@ -1632,12 +1632,25 @@ class CyncLanServer:
                     )
                     os.kill(os.getpid(), signal.SIGTERM)
 
-                # fixme: since we copy the http devices, this causes weird behaviour
-                http_devs = list(self.http_devices.values())
-                for http_dev in http_devs:
+                http_dev_keys = list(self.http_devices.keys())
+                # ask all devices for their mesh info
+                for dev_addy in http_dev_keys:
+                    http_dev = self.http_devices.get(dev_addy)
+                    if http_dev is None:
+                        logger.warning(
+                            f"{lp} HTTP device not found: {dev_addy}"
+                        )
+                        continue
                     await http_dev.ask_for_mesh_info()
-                    # wait for a reply
-                    await asyncio.sleep(1)
+                # wait for replies
+                await asyncio.sleep(2)
+                for dev_addy in http_dev_keys:
+                    http_dev = self.http_devices.get(dev_addy)
+                    if http_dev is None:
+                        logger.warning(
+                            f"{lp} HTTP device not found: {dev_addy}"
+                        )
+                        continue
                     if http_dev.known_device_ids:
                         self.known_ids.extend(http_dev.known_device_ids)
                         mesh_info_list.append(http_dev.mesh_info)
@@ -1746,12 +1759,13 @@ class CyncLanServer:
                     # logger.debug(f"{lp} MQTT sub/pub tasks are still running")
                     pass
 
-                del http_devs, http_dev
                 await asyncio.sleep(MESH_INFO_LOOP_INTERVAL)
 
             except asyncio.CancelledError as ce:
                 logger.debug(f"{lp} Task cancelled, breaking out of loop: {ce}")
                 break
+            except TimeoutError as to_exc:
+                logger.error(f"{lp} Timeout error in mesh info loop: {to_exc}")
             except Exception as e:
                 logger.error(f"{lp} Error in mesh info loop: {e}", exc_info=True)
 
@@ -1838,40 +1852,34 @@ class CyncLanServer:
     async def _register_new_connection(
             self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
-        global global_tasks
-
-        if self.mesh_loop_started is False:
-            # Start mesh info loop
-            self.mesh_info_loop_task = asyncio.create_task(self.mesh_info_loop())
-
         client_addr: str = writer.get_extra_info("peername")[0]
-        lp = f"{self.lp}new_conn:"
+        lp = f"{self.lp}new_conn:{client_addr}:"
         if self.shutting_down is True:
             logger.warning(
                 f"{lp} Server is shutting/shut down, rejecting new connection from: {client_addr}"
             )
             return
         else:
-            logger.info(f"{lp} HTTP connection from: {client_addr}")
+            logger.info(f"{lp} New HTTP session!")
 
-        lp = f"{self.lp}new_conn:{client_addr}:"
-        # create a new device instance to supress the device retrying connections
         new_device = CyncHTTPDevice(reader, writer, address=client_addr)
-        # create a task to receive data from the device
+        existing_device = self.http_devices.pop(client_addr, None)
+        # get memory address of the new device to use as UID in task name
+        new_device_id = id(new_device)
+        self.http_devices[client_addr] = new_device
         new_device.tasks.receive = self.loop.create_task(
-            new_device.receive_task(client_addr)
+            new_device.receive_task(), name=f"receive_task-{new_device_id}",
         )
+        if self.mesh_loop_started is False:
+            # Start mesh info loop
+            self.mesh_info_loop_task = asyncio.create_task(self.mesh_info_loop())
 
         # Check if the device is already registered, if so,
-        # close the streams, cancel the retrieve task and delete the device
-        if client_addr in self.http_devices:
-            # pop it out of the list, we need to gracefully remove it
-            existing_device = self.http_devices.pop(client_addr)
-            logger.debug(f"{lp} Existing device found, gracefully replacing...")
-            await self._remove_http_device(existing_device)
+        if existing_device is not None:
+            existing_device_id = id(existing_device)
+            logger.debug(f"{lp} Existing device found ({existing_device_id}), gracefully killing...")
+            # await self.close_http_device(existing_device)
             del existing_device
-        # set the new device
-        self.http_devices[client_addr] = new_device
 
 
 class CyncLAN:
@@ -2015,6 +2023,7 @@ class CyncHTTPDevice:
             writer: Optional[asyncio.StreamWriter] = None,
             address: Optional[str] = None,
     ):
+        self.last_xc3_request: Optional[float] = None
         self.messages = Messages()
         self.mesh_info: Optional[MeshInfo] = None
         self.parse_mesh_status = False
@@ -2034,7 +2043,7 @@ class CyncHTTPDevice:
         # Create a ref to the mqtt queues
         self.mqtt_pub_queue: asyncio.Queue = g.mqtt.pub_queue
         self.mqtt_sub_queue: asyncio.Queue = g.mqtt.sub_queue
-        logger.debug(f"{self.lp} Created new device: {address}")
+        logger.debug(f"{self.lp} Created new device: {address} with python ID: {id(self)}")
         self.lp = f"{self.address}:"
 
     @property
@@ -2109,7 +2118,12 @@ class CyncHTTPDevice:
                 await self.send_a3(queue_id)
             # device wants to connect before accepting commands
             elif pkt_type == DEVICE_STRUCTS.requests.xc3:
-                logger.debug(f"{lp} CONNECTION REQUEST, replying...")
+                conn_time_str = ""
+                if self.last_xc3_request is not None:
+                    elapsed = time.time() - self.last_xc3_request
+                    conn_time_str = f" // Last request was {elapsed:.2f} seconds ago"
+                logger.debug(f"{lp} CONNECTION REQUEST, replying...{conn_time_str}")
+                self.last_xc3_request = time.time()
                 await device.write(DEVICE_STRUCTS.responses.connection_ack)
             # Ping/Pong
             elif pkt_type == DEVICE_STRUCTS.requests.xd3:
@@ -2481,7 +2495,7 @@ class CyncHTTPDevice:
         devices are connected to the device you are querying. It may also trigger
         the device to send its own status packet.
         """
-
+        lp = self.lp
         # mesh_info = '73 00 00 00 18 2d e4 b5 d2 15 2c 00 7e 1f 00 00 00 f8 52 06 00 00 00 ff ff 00 00 56 7e'
         mesh_info_data = DEVICE_STRUCTS.requests.x73
         # last byte is data len multiplier (multiply value by 256 if data len > 256)
@@ -2515,16 +2529,19 @@ class CyncHTTPDevice:
                 0x7E,
             ]
         )
-        # logger.debug(
-        #     f"Asking device ({self.address}) for BT mesh info: {mesh_info_data.hex(' ')}"
-        # )
+        logger.debug(
+            f"{lp} Asking device for BT mesh info"
+        )
         try:
             if parse is True:
                 self.parse_mesh_status = True
             await self.write(mesh_info_data)
+        except TimeoutError as to_exc:
+            logger.error(f"{lp} asking for mesh info timed out, likely powered off")
+            raise to_exc
         except Exception as e:
             logger.error(
-                f"{self.address}:ask_for_mesh_info EXCEPTION: {e}", exc_info=True
+                f"{lp} EXCEPTION: {e}", exc_info=True
             )
 
     async def send_a3(self, q_id: bytes):
@@ -2538,36 +2555,38 @@ class CyncHTTPDevice:
         logger.debug(f"{self.lp} Sending 0xa3 packet -> {a3_packet.hex(' ')}")
         await self.write(a3_packet)
 
-    async def receive_task(self, client_addr: str):
+    async def receive_task(self):
         """
         Receive data from the device and respond to it. This is the main task for the device.
         It will respond to the device and handle the messages it sends.
         Runs in an infinite loop.
         """
-        lp = f"{client_addr}:raw read:"
+        lp = f"{self.address}:raw read:"
         started_at = time.time()
+        name = self.tasks.receive.get_name()
+        logger.debug(f"{lp} receive_task CALLED - {name}")
         try:
             while True:
                 try:
                     data: bytes = await self.read()
                     if data is False:
                         logger.debug(
-                            f"{lp} read() returned False, exiting receive_task "
+                            f"{lp} read() returned False, exiting {name} "
                             f"(started at: {datetime.datetime.fromtimestamp(started_at)})..."
                         )
                         break
                     if not data:
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0)
                         continue
                     await self.parse_raw_data(data)
 
                 except Exception as e:
-                    logger.error(f"{lp} Exception in receive_task: {e}", exc_info=True)
+                    logger.error(f"{lp} Exception in {name} LOOP: {e}", exc_info=True)
                     break
         except asyncio.CancelledError as cancel_exc:
-            logger.debug(f"%s receive_task CANCELLED: %s" % (lp, cancel_exc))
+            logger.debug(f"%s %s CANCELLED: %s" % (lp, name, cancel_exc))
 
-        logger.debug(f"{lp} receive_task FINISHED")
+        logger.debug(f"{lp} {name} FINISHED")
 
     async def read(self, chunk: Optional[int] = None):
         """Read data from the device if there is an open connection"""
@@ -2599,7 +2618,7 @@ class CyncHTTPDevice:
                     )
                     return False
 
-    async def write(self, data: bytes, broadcast: bool = False):
+    async def write(self, data: bytes, broadcast: bool = False) -> Optional[bool]:
         """
         Write data to the device if there is an open connection
 
@@ -2620,6 +2639,7 @@ class CyncHTTPDevice:
                     #     new_data[5:9] = dev.queue_id
                     #     data = bytes(new_data)
 
+                    # check if the underlying writer is closing
                     if dev.writer.is_closing():
                         if dev.closing is False:
                             # this is probably a connection that was closed by the device (turned off), delete it
@@ -2628,7 +2648,7 @@ class CyncHTTPDevice:
                                 f"the device itself hasn't called close(). The device probably "
                                 f"dropped the connection (lost power). Removing {dev.address}"
                             )
-                            dev = await dev.delete()
+                            return False
 
                         else:
                             logger.debug(
@@ -2637,9 +2657,16 @@ class CyncHTTPDevice:
                     else:
                         dev.writer.write(data)
                         # logger.debug(f"{dev.lp} writing data -> {data}")
-                        await dev.writer.drain()
+                        try:
+                            await asyncio.wait_for(dev.writer.drain(), timeout=2.0)
+                        except TimeoutError as to_exc:
+                            logger.error(f"{dev.lp} writing data to the device timed out, likely powered off")
+                            raise to_exc
+                        else:
+                            return True
             else:
                 logger.warning(f"{dev.lp} writer is None, can't write data!")
+            return None
 
     async def delete(self):
         """Remove self from cync devices and delete all references"""
@@ -3167,7 +3194,7 @@ class MQTTClient:
 
     async def homeassistant_discovery(self):
         lp = f"{self.lp}hass:"
-        logger.info(f"{lp} Starting Home Assistant MQTT discovery...")
+        logger.info(f"{lp} Starting discovery...")
         try:
             for device_id, device in g.server.devices.items():
                 unique_id = device.mac.replace(":", "")
@@ -3251,12 +3278,12 @@ class MQTTClient:
                         )
                     except Exception as e:
                         logger.error(
-                            "homeassistant discovery - Unable to publish mqtt message... skipped -> %s"
-                            % e
+                            "%s - Unable to publish mqtt message... skipped -> %s"
+                            % (lp, e)
                         )
         except Exception as e:
-            logger.error(f"{lp} HomeAssistant discovery failed: {e}", exc_info=True)
-        logger.debug("HomeAssistant MQTT discovery complete")
+            logger.error(f"{lp} Discovery failed: {e}", exc_info=True)
+        logger.debug(f"{lp} Discovery complete")
 
     def hassct_to_tlct(self, ct):
         # convert HASS mired range to percent range
