@@ -1020,7 +1020,11 @@ class CyncDevice:
             f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
         )
         bridge_device.messages.x73.append(cb)
-        await bridge_device.write(b)
+        _x = await bridge_device.write(b)
+        if _x is False:
+            # the device is dead, remove it from the global http_devices
+            bridge_device = g.server.http_devices.pop(bridge_device.address)
+            del bridge_device
 
     async def set_brightness(self, bri: int):
         """Send raw data to control device brightness"""
@@ -1028,12 +1032,12 @@ class CyncDevice:
         #  00 f8 f0 10 00 17 00 00 00 00 07 00 f0 11 02 01  ................
         #  27 ff ff ff ff 45 7e
         # lp = f"{self.lp}set_brightness:"
-        inc = self.get_incremental_number()
-        checksum = (inc + bri + self.id) % 256
+        msg_id_inc = self.get_incremental_number()
+        checksum = (msg_id_inc + bri + self.id) % 256
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            inc,
+            msg_id_inc,
             0,
             0,
             0,
@@ -1041,7 +1045,7 @@ class CyncDevice:
             240,
             16,
             0,
-            inc,
+            msg_id_inc,
             0,
             0,
             0,
@@ -1068,32 +1072,32 @@ class CyncDevice:
             green=None,
             blue=None,
         )
-        for http_device in g.server.http_devices.values():
-            if self.id in http_device.known_device_ids:
-                header.extend(http_device.queue_id)
-                header.extend(bytes([0x00, 0x00, 0x00]))
-                header.extend(inner_struct)
-                b = bytes(header)
-                logger.debug(
-                    f"{self.lp} FOUND target device in an http comms known devices! "
-                    f"Changing brightness: {self.brightness} to {bri} => {b.hex(' ')}"
-                )
-                cb = MessageCallback(inc)
-                cb.original_message = b
-                cb.sent_at = time.time()
-                cb.callback = g.mqtt.parse_device_status
-                cb.args.extend([self.id, new_state])
-                logger.debug(
-                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
-                )
-                http_device.messages.x73.append(cb)
-                await http_device.write(b)
-                break
-        else:
-            # try the first available one
-            logger.warning(
-                f"{self.lp} No known device found, skipping sending brightness..."
-            )
+        # pick a random http device to send the command to
+        # it should bridge the command over btle to the device ID
+        bridge_device = random.choice(list(g.server.http_devices.values()))
+        header.extend(bridge_device.queue_id)
+        header.extend(bytes([0x00, 0x00, 0x00]))
+        header.extend(inner_struct)
+        b = bytes(header)
+        logger.debug(
+            f"{self.lp} Changing brightness: {self._brightness} to {bri}"
+        )
+        # testing a callback system that determines success or failure
+        cb = MessageCallback(msg_id_inc)
+        cb.original_message = b
+        cb.sent_at = time.time()
+        cb.callback = g.mqtt.parse_device_status
+        cb.args = []
+        cb.args.extend([self.id, new_state])
+        logger.debug(
+            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+        )
+        bridge_device.messages.x73.append(cb)
+        _x = await bridge_device.write(b)
+        if _x is False:
+            # the device is dead, remove it from the global http_devices
+            bridge_device = g.server.http_devices.pop(bridge_device.address)
+            del bridge_device
 
     async def set_temperature(self, temp: int):
         """Send raw data to control device brightness"""
@@ -1103,12 +1107,12 @@ class CyncDevice:
         # checksum = 0x88 = 136
         # 0x36 0x48 0x07 = 54 + 72 + 7 = 133 (needs + 3)
 
-        inc = self.get_incremental_number()
-        checksum = ((inc + temp + self.id) + 3) % 256
+        msg_id_inc = self.get_incremental_number()
+        checksum = ((msg_id_inc + temp + self.id) + 3) % 256
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            inc,
+            msg_id_inc,
             0,
             0,
             0,
@@ -1116,7 +1120,7 @@ class CyncDevice:
             240,
             16,
             0,
-            inc,
+            msg_id_inc,
             0,
             0,
             0,
@@ -1143,32 +1147,32 @@ class CyncDevice:
             green=None,
             blue=None,
         )
-        for http_device in g.server.http_devices.values():
-            if self.id in http_device.known_device_ids:
-                header.extend(http_device.queue_id)
-                header.extend(bytes([0x00, 0x00, 0x00]))
-                header.extend(inner_struct)
-                b = bytes(header)
-                logger.debug(
-                    f"{self.lp} FOUND target device in an http comms known devices! "
-                    f"Changing white temperature: {self.temperature} to {temp} => {b.hex(' ')}"
-                )
-                cb = MessageCallback(inc)
-                cb.original_message = b
-                cb.sent_at = time.time()
-                cb.callback = g.mqtt.parse_device_status
-                cb.args.extend([self.id, new_state])
-                logger.debug(
-                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
-                )
-                http_device.messages.x73.append(cb)
-                await http_device.write(b)
-                break
-        else:
-            # try the first available one
-            logger.warning(
-                f"{self.lp} No known device found, skipping sending white temperature..."
-            )
+        # pick a random http device to send the command to
+        # it should bridge the command over btle to the device ID
+        bridge_device = random.choice(list(g.server.http_devices.values()))
+        header.extend(bridge_device.queue_id)
+        header.extend(bytes([0x00, 0x00, 0x00]))
+        header.extend(inner_struct)
+        b = bytes(header)
+        logger.debug(
+            f"{self.lp} Changing white temperature: {self.temperature} to {temp}"
+        )
+        # testing a callback system that determines success or failure
+        cb = MessageCallback(msg_id_inc)
+        cb.original_message = b
+        cb.sent_at = time.time()
+        cb.callback = g.mqtt.parse_device_status
+        cb.args = []
+        cb.args.extend([self.id, new_state])
+        logger.debug(
+            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+        )
+        bridge_device.messages.x73.append(cb)
+        _x = await bridge_device.write(b)
+        if _x is False:
+            # the device is dead, remove it from the global http_devices
+            bridge_device = g.server.http_devices.pop(bridge_device.address)
+            del bridge_device
 
     async def set_rgb(self, red: int, green: int, blue: int):
         """
@@ -1184,12 +1188,12 @@ class CyncDevice:
 
         2b 07 00 fb ff = 43 + 7 + 0 + 251 + 255 = 556 ( needs + 1)
         """
-        inc = self.get_incremental_number()
-        checksum = ((inc + self.id + red + green + blue) + 1) % 256
+        msg_id_inc = self.get_incremental_number()
+        checksum = ((msg_id_inc + self.id + red + green + blue) + 1) % 256
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            inc,
+            msg_id_inc,
             0,
             0,
             0,
@@ -1197,7 +1201,7 @@ class CyncDevice:
             240,
             16,
             0,
-            inc,
+            msg_id_inc,
             0,
             0,
             0,
@@ -1224,30 +1228,32 @@ class CyncDevice:
             green=green,
             blue=blue,
         )
-        for http_device in g.server.http_devices.values():
-            if self.id in http_device.known_device_ids:
-                header.extend(http_device.queue_id)
-                header.extend(bytes([0x00, 0x00, 0x00]))
-                header.extend(inner_struct)
-                b = bytes(header)
-                logger.debug(
-                    f"{self.lp} FOUND target device in an http comms known devices! "
-                    f"Changing RGB: {self.red}, {self.green}, {self.blue} to {red}, {green}, {blue} => {b.hex(' ')}"
-                )
-                cb = MessageCallback(inc)
-                cb.original_message = b
-                cb.sent_at = time.time()
-                cb.callback = g.mqtt.parse_device_status
-                cb.args.extend([self.id, new_state])
-                logger.debug(
-                    f"{self.lp} Adding x73 callback to HTTP device: {http_device.address} -> {cb}"
-                )
-                http_device.messages.x73.append(cb)
-                await http_device.write(b)
-                break
-        else:
-            # try the first available one
-            logger.warning(f"{self.lp} No known device found, skipping sending RGB...")
+        # pick a random http device to send the command to
+        # it should bridge the command over btle to the device ID
+        bridge_device = random.choice(list(g.server.http_devices.values()))
+        header.extend(bridge_device.queue_id)
+        header.extend(bytes([0x00, 0x00, 0x00]))
+        header.extend(inner_struct)
+        b = bytes(header)
+        logger.debug(
+            f"{self.lp} Changing RGB: {self.red}, {self.green}, {self.blue} to {red}, {green}, {blue}"
+        )
+        # testing a callback system that determines success or failure
+        cb = MessageCallback(msg_id_inc)
+        cb.original_message = b
+        cb.sent_at = time.time()
+        cb.callback = g.mqtt.parse_device_status
+        cb.args = []
+        cb.args.extend([self.id, new_state])
+        logger.debug(
+            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+        )
+        bridge_device.messages.x73.append(cb)
+        _x = await bridge_device.write(b)
+        if _x is False:
+            # the device is dead, remove it from the global http_devices
+            bridge_device = g.server.http_devices.pop(bridge_device.address)
+            del bridge_device
 
     @property
     def online(self):
@@ -1530,14 +1536,8 @@ class CyncLanServer:
             if bt_only:
                 pass
             elif not bt_only:
-                http_devs = list(g.server.http_devices.values())
-                _http_device: CyncHTTPDevice
-                for _http_device in http_devs:
-                    if _id == _http_device.id:
-                        http_device = g.server.http_devices.pop(_http_device.address)
-                        # await self.close_http_device(http_device)
-                        del http_device
-                        break
+                # dont remove the http device, sometimes the mesh says devices are offline when they arent
+                pass
 
         else:
             device.online = True
@@ -3062,7 +3062,8 @@ class MQTTClient:
                             device_id = int(topic[2])
                             if device_id not in g.server.devices:
                                 logger.warning(
-                                    f"{lp} Device ID {device_id} not found, have you deleted or added any devices recently?"
+                                    f"{lp} Device ID {device_id} not found, have you deleted or added any "
+                                    f"devices recently?"
                                 )
                                 continue
                             device = g.server.devices[device_id]
