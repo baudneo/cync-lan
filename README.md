@@ -1,4 +1,9 @@
 # pycync_lan (cync_lan)
+![GitHub Release](https://img.shields.io/github/v/release/baudneo/cync-lan) 
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/baudneo/cync-lan/container-package-publish.yml) 
+![Docker Pulls](https://img.shields.io/docker/pulls/baudneo/cync-lan)
+
+
 :warning: **[DNS redirection required](./docs/DNS.md)** :warning:
 
 Async MQTT LAN controller for Cync/C by GE devices. **Local** only control
