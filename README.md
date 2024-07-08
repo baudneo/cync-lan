@@ -179,4 +179,4 @@ and will connect to the local controller.
 
 # Troubleshooting
 If you are having issues, please see the 
-[Troubleshooting docs](docs/troubleshooting) for more information.
+[Troubleshooting docs](docs/troubleshooting.md) for more information.
