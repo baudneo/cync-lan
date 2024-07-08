@@ -18,11 +18,11 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and
 [juanboro](https://github.com/juanboro)
 
 ## Prerequisites
-- A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug or always powered wifi bulb (wired switch not tested yet) - *The wifi device' can control BT only bulbs*
+- A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug, wired switch or always powered wifi bulb - *The wifi device' can control BT only bulbs*
 - Cync account with devices added and configured
 - MQTT broker (I recommend EMQX)
 - [Create self-signed SSL certs](./docs/install.md#setup) using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
-- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export required cync email, password and a OTP emailed to you.
+- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export requires cync email, password and a OTP emailed to you.
 - [DNS override/redirection](./docs/DNS.md) for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`.
 - **Optional:** *[Firewall](#firewall) rules to allow cync devices to talk to `cync-lan`*
 
