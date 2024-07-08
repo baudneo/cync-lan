@@ -5,6 +5,7 @@ Devices known to work, kind of work, and known not to work are listed here.
 - Cync: direct connect bulbs (Full color, Decorative, white temp, dimmable, edison)
 - Cync/C by GE: Bluetooth only bulbs \**needs at least 1 wifi device to act as a bridge*
 - Cync: Indoor smart plug (outdoor should also work)
+- Cync: Wired Switches (on/off, dimmer, white temp control) [no motion/ambient light data **yet**]
 
 # Known Bad
 - Cameras: I have none and do not intend to support them.
@@ -17,5 +18,5 @@ Devices I do not own, but would like to add support for. If you can get me good 
 - Light strips
 - Hexagon panels
 - Dynamic lights
-- Wired switch [motion sensor and ambient light sensor]
+- Wired switch: motion sensor and ambient light sensor
 - Fan controller
