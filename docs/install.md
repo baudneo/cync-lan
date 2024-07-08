@@ -16,6 +16,7 @@ System packages you will need (package names are from a debian based system):
 - `python3-venv`
 - `python3-pip`
 - `python3-setuptools`
+- `wget`
 - You may also want `dig` and `socat` for **debugging**.
 
 ### Setup
