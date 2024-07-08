@@ -19,7 +19,7 @@ There are a few different methods using OPNsense depending on your setup. Unboun
 requesting device IP, DNS redirection.
 
 ## Unbound DNS
-To perform domain level DNS redirection (all devices that request `cm.gelighting.com` will be redirected)
+To perform domain level DNS redirection (all devices that request `cm.gelighting.com` will be redirected to ip: 10.0.1.9)
 
 - Go to `Services`>`Unbound DNS`>`Overrides`.
 ![Unbound DNS Overrides](./assets/opnsense_unbound_host_overrides_.png)
@@ -33,7 +33,7 @@ To perform domain level DNS redirection (all devices that request `cm.gelighting
 
 You can use `views` to selectively route DNS requests based on the requesting device. 
 
-The following example will reroute DNS requests for `cm.gelighting.com` `10.0.1.9` **only for devices** `10.0.1.167` and `10.0.1.112`.
+The following example will reroute DNS requests for `cm.gelighting.com` to local IP `10.0.1.9` **only for requesting devices** `10.0.1.167` and `10.0.1.112`.
 `local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no `.`!!.
 
 - First disable domain level redirection if you have already configured it. (all devices requesting a domain get redirected)
