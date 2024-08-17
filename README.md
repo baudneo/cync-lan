@@ -4,7 +4,7 @@
 ![Docker Pulls](https://img.shields.io/docker/pulls/baudneo/cync-lan)
 
 
->![IMPORTANT]
+>[!IMPORTANT]
 > [DNS redirection REQUIRED](./docs/DNS.md)
 
 Async MQTT LAN controller for Cync/C by GE devices. **Local** only control
@@ -36,7 +36,7 @@ See the [DNS docs](docs/DNS.md) for more information.
 Please see [Install docs](./docs/install.md) for more information.
 
 ## Re-routing / Overriding DNS
->![WARNING] 
+>[!WARNING] 
 > After freshly redirecting DNS: Devices that are currently
 > talking to the Cync cloud will need to be power cycled before they make
 > a DNS request and connect to the local `cync-lan` server.
@@ -50,7 +50,7 @@ devices connecting after power cycling them, you may need to check your
 DNS re-routing **and** firewall rules (if applicable).
 
 ### Testing DNS override
->![WARNING] 
+>[!WARNING] 
 > If you are using selective DNS override via `views` in
 > `unbound`, and you did not set up an override for the IP of the
 > machine running `dig` / `nslookup`, the command will return the Cync cloud IP, this is normal.
@@ -86,7 +86,7 @@ cm.gelighting.com.      3600    IN      A       10.0.1.9 <---- Overridden to a l
 ```
 
 ## Config file
->![IMPORTANT]
+> [!IMPORTANT]
 > At the moment, the config file will override any environment variables set.
 
 **It is required to query the Cync cloud API to export all your homes
@@ -112,7 +112,7 @@ the bulbs).
 *It is unknown how removing a device from the cloud and adding a device may affect the
 ID number, YMMV. Be careful when manually adding devices.*
 
->![NOTE]
+>[!NOTE]
 > By manually adding, I mean you added a device via the app and 
 > did not re-export a new config.
 
