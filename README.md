@@ -4,10 +4,11 @@
 ![Docker Pulls](https://img.shields.io/docker/pulls/baudneo/cync-lan)
 
 
-:warning: **[DNS redirection required](./docs/DNS.md)** :warning:
+>![IMPORTANT]
+> [DNS redirection REQUIRED](./docs/DNS.md)
 
 Async MQTT LAN controller for Cync/C by GE devices. **Local** only control
-of **most** Cync devices via Home Assistant.
+of **most** Cync devices via Home Assistant (MQTT JSON payloads).
 
 **This is a work in progress, and may not work for all devices.** 
 See [known devices](docs/known_devices.md) for more information.
@@ -18,11 +19,11 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and
 [juanboro](https://github.com/juanboro)
 
 ## Prerequisites
-- A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug, wired switch or always powered wifi bulb - *The wifi device' can control BT only bulbs*
+- A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug, wired switch or an always powered wifi bulb - *The wifi device' can control BT only bulbs*
 - Cync account with devices added and configured
 - MQTT broker (I recommend EMQX)
 - [Create self-signed SSL certs](./docs/install.md#setup) using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
-- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export requires cync email, password and a OTP emailed to you.
+- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export requires cync email, password and an OTP emailed to you.
 - [DNS override/redirection](./docs/DNS.md) for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`.
 - **Optional:** *[Firewall](#firewall) rules to allow cync devices to talk to `cync-lan`*
 
@@ -35,21 +36,26 @@ See the [DNS docs](docs/DNS.md) for more information.
 Please see [Install docs](./docs/install.md) for more information.
 
 ## Re-routing / Overriding DNS
+>![WARNING] 
+> After freshly redirecting DNS: Devices that are currently
+> talking to the Cync cloud will need to be power cycled before they make
+> a DNS request and connect to the local `cync-lan` server.
+
 There are detailed instructions for OPNSense and Pi-hole. 
 See [DNS docs](docs/DNS.md) for more information.
-
-:warning: **After freshly redirecting DNS: Devices that are currently
-talking to Cync cloud will need to be power cycled before they make
-a DNS request and connect to the local server. :warning:
 
 As long as your DNS is correctly re-routed, you should be able to start 
 the server and see devices connecting to it. If you do not see any Cync 
 devices connecting after power cycling them, you may need to check your 
-DNS re-routing.
+DNS re-routing **and** firewall rules (if applicable).
 
 ### Testing DNS override
-If you set up **network wide** DNS override, you can use `dig` or 
-`nslookup` to test if the DNS override is working correctly.
+>![WARNING] 
+> If you are using selective DNS override via `views` in
+> `unbound`, and you did not set up an override for the IP of the
+> machine running `dig` / `nslookup`, the command will return the Cync cloud IP, this is normal.
+
+you can use `dig` or `nslookup` to test if the DNS override is working correctly. 
 
  ```bash
 # Older firmware
@@ -79,14 +85,9 @@ cm.gelighting.com.      3600    IN      A       10.0.1.9 <---- Overridden to a l
 ;; MSG SIZE  rcvd: 62
 ```
 
-:warning: **If you are using selective DNS override via `views` in
-`unbound`, and you did not set up an override for the IP of the
-machine running `dig`, the command will return the Cync cloud IP.
-This is normal.**
-
 ## Config file
-:warning: **The config file will override any environment
-variables set.** :warning:
+>![IMPORTANT]
+> At the moment, the config file will override any environment variables set.
 
 **It is required to query the Cync cloud API to export all your homes
 and the devices in each home.** This requires your email, password and
@@ -99,7 +100,7 @@ See the example [config file](./cync_mesh_example.yaml)
 
 ### Export config from Cync cloud API
 There is an `export` [sub command](./docs/command_line_sub_commands.md#export) 
-that will query the Cync cloud API and export the devices to a YAML file.
+that will query the Cync cloud API and export all homes and each homes devices to a YAML file.
 
 
 ### Manually adding devices
@@ -108,11 +109,12 @@ the template. From what I have seen the device ID starts at 1 and increments
 by 1 for each device added to the "home" (it follows the order you added 
 the bulbs).
 
-*It is unknown how removing a device and adding a device may affect the
+*It is unknown how removing a device from the cloud and adding a device may affect the
 ID number, YMMV. Be careful when manually adding devices.*
 
-:warning: By manually adding, I mean you added a device via the app and 
-did not re-export a new config.
+>![NOTE]
+> By manually adding, I mean you added a device via the app and 
+> did not re-export a new config.
 
 ## CLI arguments
 You can always supply `--help` to the cync-lan.py script to get a 
@@ -133,7 +135,7 @@ breakdown. Please see the
 | `MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
 
 ## Controlling devices
-Devices are controlled by MQTT messages. This was designed to be used 
+Devices are controlled by JSON MQTT messages. This was designed to be used 
 with Home Assistant, but you can use any MQTT client to send messages 
 to the MQTT broker.
 
@@ -147,10 +149,10 @@ automatically add devices. You can control the Home Assistant MQTT
 topic via the environment variable `HASS_TOPIC`.
 
 ## Debugging / socat
-If the devices are not responding to commands, it's likely that the TCP
-communication on your device is different. You can either open an issue 
+If your devices are not responding to commands, it's likely that the TCP
+communication on the device is different. You can either open an issue 
 and I can walk you through getting good debug logs, or you can use 
-`socat` to inspect the traffic of the device communicating with the 
+`socat` to inspect (MITM) the traffic of the device communicating with the 
 cloud server in real-time yourself by running:
 
 ```bash
@@ -164,7 +166,7 @@ In `dump.txt` you will see the back-and-forth communication between the device a
 
 # Firewall
 Once the devices are local, they must be able to initiate a connection to 
-the `cync-lan` server. If you block them from internet, don't forget to 
+the `cync-lan` server. If you block them from the internet, don't forget to 
 allow them to connect to the `cync-lan` server.
 
 ## OPNsense Example
@@ -175,7 +177,7 @@ in the troubleshooting docs.
 Devices make a DNS query on first startup (or after a network loss,
 like AP reboot) - you need to power cycle all devices that are currently 
 connected to the Cync cloud servers before they request a new DNS record 
-and will connect to the local controller.
+and will connect to the local `cync-lan` server.
 
 # Troubleshooting
 If you are having issues, please see the 
