@@ -53,7 +53,7 @@ DATA_BOUNDARY = 0x7E
 
 logger = logging.getLogger("cync-lan")
 formatter = logging.Formatter(
-    "%(asctime)s.%(msecs)04d %(levelname)s [%(module)s:%(lineno)d] > %(message)s",
+    "%(asctime)s.%(msecs)d %(levelname)s [%(module)s:%(lineno)d] > %(message)s",
     "%m/%d/%y %H:%M:%S",
 )
 handler = logging.StreamHandler(sys.stdout)
@@ -1589,7 +1589,7 @@ class CyncLanServer:
 
     async def mesh_info_loop(self):
         """A function that is to be run as an async task to ask each device for its mesh info"""
-        lp = f"{self.lp}mesh_info_loop:"
+        lp = f"{self.lp}mesh_loop:"
         logger.debug(
             f"{lp} Starting, after first run delay of 5 seconds, will run every "
             f"{MESH_INFO_LOOP_INTERVAL} seconds"
@@ -2298,21 +2298,22 @@ class CyncHTTPDevice:
                         # ctrl bytes 0xf9, 0x52 indicates this is a mesh info struct
                         if ctrl_bytes == bytes([0xF9, 0x52]):
                             # find next 0x7e and extract the inner struct
-                            end_bndry_idx = packet_data[1:].find(0x7E)
-                            inner_struct = packet_data[1:end_bndry_idx]
+                            end_bndry_idx = packet_data[7:].find(0x7E)
+                            inner_struct = packet_data[7:end_bndry_idx]
                             # logger.debug(f"{lp} RAW MESH INFO // {inner_struct.hex(' ')}")
+
                             # 15th OR 16th byte of inner struct is start of mesh info
-                            # len 135 for device struct start @ 16th byte (index 15)
-                            # 1f 00 00 00  f9 52 |  7d  5e 00 05 00 00 00 05 00 07[15] 00  89 01 00 00   89 01 01 00 00 00  64 00 00 00  fe 00 00 00 10 00  f0 00 08 00 00 01 00 00 00 01 01 00 00 00  64 00 00 00  fe 00 00 00  f8 00 00 00 05 00 00 01 00 00 00 01 01 00 00 00  64 00 00 00 00 00 00 00 00 00 00 00 0a 00 00 01 00 00 00 01 01 00 00 00 5a 00 00 00 64 00 00 00 00 00 00 00 13 00 00 01 00 00 00 01 01 00 00 00 5a 00 00 00 64 00 00 00 00 00 00 00
-                            # 31  0  0  0 249 82 | 125  94  0  5  0  0  0  5  0
-                            # len: 230 for device struct start @ 15th byte (index 14)
-                            # 1f 00 00 00  f9 52 |  de 00 09 00 00 00 09 00 09[14] 00  89 01 00 00  89 01 01 00 00 00 5e 00 00 00 56 00 00 00 18 00 f0 00 07 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 fe 00 00 00 10 00 f0 00 13 00 00 01 00 00 00 01 01 00 00 00 45 00 00 00 64 00 00 00 00 00 00 00 0a 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 64 00 00 00 00 00 00 00 12 00 00 01 00 00 00 01 01 00 00 00 50 00 00 00 55 00 00 00 00 00 00 00 14 00 00 01 00 00 00 01 01 00 00 00 50 00 00 00 55 00 00 00 00 00 00 00 08 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 fe 00 00 00 f8 00 00 00 05 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00 00 02 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 56 00 00 00 00 00 00 00
-                            # 31  0  0  0 249 82 | 222  0  9  0  0  0  9  0
-                            minfo_start_idx = 14
+                            # len 129 for device struct start @ 10th byte (index 9)
+                            #  7d  5e 00 05 00 00 00 05 00 07[9] 00  89 01 00 00   89 01 01 00 00 00  64 00 00 00  fe 00 00 00 10 00  f0 00 08 00 00 01 00 00 00 01 01 00 00 00  64 00 00 00  fe 00 00 00  f8 00 00 00 05 00 00 01 00 00 00 01 01 00 00 00  64 00 00 00 00 00 00 00 00 00 00 00 0a 00 00 01 00 00 00 01 01 00 00 00 5a 00 00 00 64 00 00 00 00 00 00 00 13 00 00 01 00 00 00 01 01 00 00 00 5a 00 00 00 64 00 00 00 00 00 00 00
+                            # 125  94  0  5  0  0  0  5  0
+                            # len: 224 for device struct start @ 9th byte (index 8)
+                            #  de 00 09 00 00 00 09 00 09[8] 00  89 01 00 00  89 01 01 00 00 00 5e 00 00 00 56 00 00 00 18 00 f0 00 07 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 fe 00 00 00 10 00 f0 00 13 00 00 01 00 00 00 01 01 00 00 00 45 00 00 00 64 00 00 00 00 00 00 00 0a 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 64 00 00 00 00 00 00 00 12 00 00 01 00 00 00 01 01 00 00 00 50 00 00 00 55 00 00 00 00 00 00 00 14 00 00 01 00 00 00 01 01 00 00 00 50 00 00 00 55 00 00 00 00 00 00 00 08 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 fe 00 00 00 f8 00 00 00 05 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00 00 02 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 56 00 00 00 00 00 00 00
+                            # 222  0  9  0  0  0  9  0
+                            minfo_start_idx = 8
                             if inner_struct[minfo_start_idx] == 0x00:
                                 minfo_start_idx += 1
-                                logger.warning(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx-1}, "
-                                             f"trying index {minfo_start_idx} = {inner_struct[minfo_start_idx]}")
+                                # logger.warning(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx-1}, "
+                                #                f"trying index {minfo_start_idx} = {inner_struct[minfo_start_idx]}")
 
                             if inner_struct[minfo_start_idx] == 0x00:
                                 logger.error(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx}, skipping...")
@@ -2374,7 +2375,7 @@ class CyncHTTPDevice:
                                         if loop_num == 1:
                                             # byte 3 (idx 2) is a device type byte but,
                                             # it only reports on the first item (itself)
-                                            # convert to int and it is the same as deviceType from cloud.
+                                            # convert to int, and it is the same as deviceType from cloud.
                                             self.id = dev_id
                                             self.lp = f"{self.address}[{self.id}]:"
                                             self.capability = dev_type
@@ -2418,7 +2419,7 @@ class CyncHTTPDevice:
                                 mesh_ack = bytes([0x73, 0x00, 0x00, 0x00, 0x14])
                                 mesh_ack += bytes(self.queue_id)
                                 mesh_ack += bytes([0x00, 0x00, 0x00])
-                                inner_struct__ = bytes(
+                                mesh_ack += bytes(
                                     [
                                         0x7E,
                                         0x1E,
@@ -2435,7 +2436,6 @@ class CyncHTTPDevice:
                                         0x7E,
                                     ]
                                 )
-                                mesh_ack += inner_struct__
                                 # logger.debug(f"{lp} Sending MESH INFO ACK -> {mesh_ack.hex(' ')}")
                                 await device.write(mesh_ack)
 
@@ -2626,7 +2626,7 @@ class CyncHTTPDevice:
         else:
             if dev.writer is not None:
                 async with dev.write_lock:
-                    # if broadcast is True:
+                    # if broadcast is True:inner_struct__
                     #     # replace queue id with the sending device's queue id
                     #     new_data = bytes2list(data)
                     #     new_data[5:9] = dev.queue_id
@@ -2782,8 +2782,10 @@ class MQTTClient:
                 ha_topic = HASS_TOPIC
 
         self.broker_address = broker_address
+        # Negative int denotes infinite retries, from amqtt source code:
+        # if reconnect_retries >= 0 and nb_attempt > reconnect_retries:
         self.client = amqtt_client.MQTTClient(
-            config={"reconnect_retries": 10, "auto_reconnect": True}
+            config={"reconnect_retries": -1, "auto_reconnect": True}
         )
         self.topic = topic
         self.ha_topic = ha_topic
