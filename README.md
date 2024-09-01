@@ -183,3 +183,7 @@ and will connect to the local `cync-lan` server.
 # Troubleshooting
 If you are having issues, please see the 
 [Troubleshooting docs](docs/troubleshooting.md) for more information.
+
+# Buy devices to be supported
+If you really want a device added, [purchase it from this Amazon wish list](https://www.amazon.ca/registries/gl/guest-view/270SHDZQLXRU8) and it will be sent to me. I will add support ASAP.
+
