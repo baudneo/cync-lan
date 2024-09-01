@@ -42,14 +42,7 @@ CYNC_HASS_TOPIC = os.environ.get("CYNC_HASS_TOPIC", "homeassistant")
 CYNC_PORT = os.environ.get("CYNC_PORT", 23779)
 CYNC_HOST = os.environ.get("CYNC_HOST", "0.0.0.0")
 CYNC_CHUNK_SIZE = os.environ.get("CYNC_CHUNK_SIZE", 2048)
-YES_ANSWER = (
-    "true",
-    "1",
-    "yes",
-    "y",
-    "t",
-    1,
-)
+YES_ANSWER = ("true", "1", "yes", "y", "t", 1)
 CYNC_RAW = os.environ.get("CYNC_RAW_DEBUG", "0").casefold() in YES_ANSWER
 CYNC_DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in YES_ANSWER
 CORP_ID: str = "1007d2ad150c4000"
@@ -66,7 +59,6 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 # set library loggers to INFO
-
 
 
 # from cync2mqtt
@@ -496,7 +488,6 @@ class CyncDevice:
         "STRIP": [133],
         "PLUG": [64, 65, 66, 67, 68],
         "EDISON": [146, 148],
-
     }
     Capabilities = {
         "ONOFF": [
@@ -882,7 +873,6 @@ class CyncDevice:
                 dev_types[dtype] = False
         return dev_types
 
-
     def check_dev_capabilities(self, dev_type: int) -> Dict[str, bool]:
         """Check what capabilities a device type has."""
         dev_caps = {}
@@ -931,7 +921,12 @@ class CyncDevice:
     def is_full_color(self) -> bool:
         if self.type is None:
             return False
-        return all({self.type in self.Capabilities["RGB"], self.type in self.Capabilities["COLORTEMP"]})
+        return all(
+            {
+                self.type in self.Capabilities["RGB"],
+                self.type in self.Capabilities["COLORTEMP"],
+            }
+        )
 
     @property
     def supports_rgb(self) -> bool:
@@ -1628,8 +1623,10 @@ class CyncLanServer:
 
                 http_dev_keys = list(self.http_devices.keys())
                 # ask all devices for their mesh info
-                logger.debug(f"{lp} Asking all ({len(http_dev_keys)}) HTTP devices for their "
-                             f"mesh info: {', '.join(http_dev_keys).rstrip(',')}")
+                logger.debug(
+                    f"{lp} Asking all ({len(http_dev_keys)}) HTTP devices for their "
+                    f"mesh info: {', '.join(http_dev_keys).rstrip(',')}"
+                )
                 for dev_addy in http_dev_keys:
                     http_dev = self.http_devices.get(dev_addy)
                     if http_dev is None:
@@ -1661,7 +1658,9 @@ class CyncLanServer:
                     await g.mqtt.pub_online(cfg_id, availability_info[cfg_id])
 
                 offline_str = (
-                    f" offline ({len(offline_ids)}): {sorted(offline_ids)} //" if offline_ids else ""
+                    f" offline ({len(offline_ids)}): {sorted(offline_ids)} //"
+                    if offline_ids
+                    else ""
                 )
 
                 for known_id in self.known_ids:
@@ -1751,15 +1750,11 @@ class CyncLanServer:
                     else g.mqtt.pub_queue
                 )
                 if task.done():
-                    logger.error(
-                        f"MQTT task: {task.get_name()} is done! Recreating..."
-                    )
+                    logger.error(f"MQTT task: {task.get_name()} is done! Recreating...")
                     task.cancel()
                     await asyncio.sleep(0.5)
                     g.mqtt.tasks.append(
-                        asyncio.create_task(
-                            new_task(new_queue), name=task.get_name()
-                        )
+                        asyncio.create_task(new_task(new_queue), name=task.get_name())
                     )
         if remove_idx:
             for idx in remove_idx:
@@ -2062,7 +2057,9 @@ class CyncHTTPDevice:
         data_len = len(data)
         lp = f"{self.lp}extract:"
         if CYNC_RAW is True:
-            logger.debug(f"{lp} Extracting packets from {data_len} bytes of raw data\n{data.hex(' ')}")
+            logger.debug(
+                f"{lp} Extracting packets from {data_len} bytes of raw data\n{data.hex(' ')}"
+            )
         if data_len < 5:
             logger.debug(
                 f"{lp} Data is less than 5 bytes, not enough to parse (header: 5 bytes)"
@@ -2325,17 +2322,23 @@ class CyncHTTPDevice:
                             minfo_length = 24
                             if len(inner_struct) < 15:
                                 # seen this with Full Color LED light strip controller firmware version: 3.0.204
-                                logger.debug(f"{lp}mesh: bound data is too short (seen on full color light strip "
-                                             f"firmware version 3.0.204), skipping. Bound data: "
-                                             f"{inner_struct.hex(' ')}")
+                                logger.debug(
+                                    f"{lp}mesh: bound data is too short (seen on full color light strip "
+                                    f"firmware version 3.0.204), skipping. Bound data: "
+                                    f"{inner_struct.hex(' ')}"
+                                )
                             else:
                                 if inner_struct[minfo_start_idx] == 0x00:
                                     minfo_start_idx += 1
-                                    logger.warning(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx-1}, "
-                                                   f"trying index {minfo_start_idx} = {inner_struct[minfo_start_idx]}")
+                                    logger.warning(
+                                        f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx-1}, "
+                                        f"trying index {minfo_start_idx} = {inner_struct[minfo_start_idx]}"
+                                    )
 
                                 if inner_struct[minfo_start_idx] == 0x00:
-                                    logger.error(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx}, skipping...")
+                                    logger.error(
+                                        f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx}, skipping..."
+                                    )
                                 else:
                                     self.mesh_info = None
                                     # from what i've seen, the mesh info is 24 bytes long and repeats until the end.
@@ -2348,9 +2351,15 @@ class CyncHTTPDevice:
                                         mesh_info = {}
                                         _m = []
                                         _raw_m = []
-                                        for i in range(minfo_start_idx, len(inner_struct), minfo_length):
+                                        for i in range(
+                                            minfo_start_idx,
+                                            len(inner_struct),
+                                            minfo_length,
+                                        ):
                                             loop_num += 1
-                                            mesh_dev_struct = inner_struct[i : i + minfo_length]
+                                            mesh_dev_struct = inner_struct[
+                                                i : i + minfo_length
+                                            ]
                                             dev_id = mesh_dev_struct[0]
                                             # logger.debug(f"{lp}x73: inner_struct[{i}:{i + minfo_length}]={mesh_dev_struct.hex(' ')}")
                                             # parse status from mesh info
@@ -2397,21 +2406,35 @@ class CyncHTTPDevice:
                                                     # it only reports on the first item (itself)
                                                     # convert to int, and it is the same as deviceType from cloud.
                                                     self.id = dev_id
-                                                    self.lp = f"{self.address}[{self.id}]:"
+                                                    self.lp = (
+                                                        f"{self.address}[{self.id}]:"
+                                                    )
                                                     lp = f"{self.lp}parse:x{data[0]:02x}:"
                                                     self.device_type_id = dev_type_id
 
                                                     ids_reported.append(dev_id)
                                                     # structs.append(mesh_dev_struct.hex(" "))
                                                     self.known_device_ids.append(dev_id)
-                                                    self.capabilities = g.cync_lan.server.devices[self.id].check_dev_capabilities(dev_type_id)
-                                                    self.device_types = g.cync_lan.server.devices[self.id].check_dev_type(dev_type_id)
+                                                    self.capabilities = (
+                                                        g.cync_lan.server.devices[
+                                                            self.id
+                                                        ].check_dev_capabilities(
+                                                            dev_type_id
+                                                        )
+                                                    )
+                                                    self.device_types = (
+                                                        g.cync_lan.server.devices[
+                                                            self.id
+                                                        ].check_dev_type(dev_type_id)
+                                                    )
                                                     # logger.debug(f"{lp} device type ({dev_type_id}) capabilities: {self.capabilities}")
                                                     # logger.debug(f"{lp} device type ({dev_type_id}): {self.device_types}")
                                             else:
-                                                logger.warning(f"{lp} Device ID {dev_id} not found in devices "
-                                                               f"defined in config file: "
-                                                               f"{g.cync_lan.server.devices.keys()}")
+                                                logger.warning(
+                                                    f"{lp} Device ID {dev_id} not found in devices "
+                                                    f"defined in config file: "
+                                                    f"{g.cync_lan.server.devices.keys()}"
+                                                )
                                         # if ids_reported:
                                         # logger.debug(
                                         #     f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
@@ -2427,7 +2450,9 @@ class CyncHTTPDevice:
                                                 f"{lp} parsing mesh info // {_m} // {_raw_m}"
                                             )
                                             for status in _m:
-                                                await g.server.parse_status(bytes(status))
+                                                await g.server.parse_status(
+                                                    bytes(status)
+                                                )
 
                                         mesh_info["status"] = _m
                                         mesh_info["id_from"] = self.id
@@ -2438,7 +2463,9 @@ class CyncHTTPDevice:
                                         # ran out of data
                                         pass
                                     except Exception as e:
-                                        logger.error(f"{lp} MESH INFO for loop EXCEPTION: {e}")
+                                        logger.error(
+                                            f"{lp} MESH INFO for loop EXCEPTION: {e}"
+                                        )
                                     # Always clear parse mesh status
                                     self.parse_mesh_status = False
                                     # Send mesh status ack
@@ -2822,7 +2849,7 @@ class MQTTClient:
                     "message": LWT_MSG,
                     "qos": 0x01,
                     "retain": True,
-                }
+                },
             }
         )
         self.topic = topic
@@ -3045,11 +3072,14 @@ class MQTTClient:
             #     + json.dumps(mqtt_dev_state)
             # )
             try:
-                await asyncio.wait_for(self.client.publish(
-                                f"{self.topic}/status/{device_id}",
-                                json.dumps(mqtt_dev_state).encode(),
-                                qos=QOS_0,
-                            ), timeout=3.0)
+                await asyncio.wait_for(
+                    self.client.publish(
+                        f"{self.topic}/status/{device_id}",
+                        json.dumps(mqtt_dev_state).encode(),
+                        qos=QOS_0,
+                    ),
+                    timeout=3.0,
+                )
             except asyncio.TimeoutError:
                 logger.error(f"{lp} Timeout waiting for MQTT publish")
             except Exception as e:
@@ -3178,10 +3208,7 @@ class MQTTClient:
                             os.kill(os.getpid(), signal.SIGTERM)
                         elif topic[1] == "devices" and payload.lower() == b"get":
                             await self.publish_devices()
-                        elif (
-                            topic[0] == self.ha_topic
-                            and topic[1] == "status"
-                        ):
+                        elif topic[0] == self.ha_topic and topic[1] == "status":
 
                             if payload.upper() == b"ONLINE":
                                 logger.info(
