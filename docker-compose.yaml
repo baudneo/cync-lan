@@ -22,18 +22,19 @@ services:
 #      - ./cync-lan.py:/root/cync-lan/cync-lan.py
     environment:
       TZ: "America/Chicago"
-      # If you don't use auth you can remove user:pass@ from the MQTT_URL
-      MQTT_URL: "mqtt://user:pass@ip:port/"
+      # If you don't use auth you can remove user:pass@ from the CYNC_MQTT_URL
+      CYNC_MQTT_URL: "mqtt://user:pass@ip:port/"
 #      CYNC_CERT: "/root/cync-lan/certs/cert.pem"
 #      CYNC_KEY: "/root/cync-lan/certs/key.pem"
 #      CYNC_TOPIC: "cync_lan"
-#      HASS_TOPIC: "homeassistant"
+#      CYNC_HASS_TOPIC: "homeassistant"
 #      CYNC_HOST: "0.0.0.0"
 #      CYNC_PORT: 23779
     # Debug logging
 #      CYNC_DEBUG: 1
+#      CYNC_RAW_DEBUG: 1
     # Interval between device online/offline and status check.
-#      MESH_CHECK: 30
+#      CYNC_MESH_CHECK: 30
     networks:
       - cync-lan
 

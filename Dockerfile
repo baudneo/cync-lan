@@ -31,15 +31,16 @@ COPY ./src/cync-lan.py /root/cync-lan
 VOLUME /root/cync-lan/config
 EXPOSE 23779
 
-ENV MQTT_URL = "mqtt://homeassistant.local:1883" \
+ENV CYNC_MQTT_URL = "mqtt://homeassistant.local:1883" \
     CYNC_PORT = 23779 \
     CYNC_HOST = "0.0.0.0" \
     CYNC_CERT = "/root/cync-lan/certs/cert.pem" \
     CYNC_KEY = "/root/cync-lan/certs/key.pem" \
     CYNC_DEBUG = 0 \
+    CYNC_RAW_DEBUG = 0 \
     CYNC_TOPIC = "cync_lan" \
-    HASS_TOPIC = "homeassistant" \
-    MESH_CHECK = 30
+    CYNC_HASS_TOPIC = "homeassistant" \
+    CYNC_MESH_CHECK = 30
 
 LABEL org.opencontainers.image.authors="baudneo <86508179+baudneo@users.noreply.github.com>"
 LABEL org.opencontainers.image.version="${CYNC_VERSION}"
