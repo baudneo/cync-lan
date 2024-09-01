@@ -73,7 +73,7 @@ First, you **MUST** follow the [virtualenv installation](#virtualenv) to generat
 - Create a dir for your docker setup. i.e. `mkdir -p ~/docker/cync-lan/config`
 - Copy the exported config file from the [virtualenv install](#virtualenv): `cp ~/cync-lan/cync_mesh.yaml ~/docker/cync-lan/config` 
 - Download the example docker-compose file: `cd ~/docker/cync-lan && wget https://raw.githubusercontent.com/baudneo/cync-lan/python/docker-compose.yaml`
-- Edit `docker-compose.yaml` and change `MQTT_URL` env var to match your MQTT broker details (Optional: enable DEBUG logs)
+- Edit `docker-compose.yaml` and change `CYNC_MQTT_URL` env var to match your MQTT broker details (Optional: enable DEBUG logs)
 - Run `docker compose up -d --force-recreate` to bring the container up
 - Optional: check logs using `docker compose logs -f` (Ctrl+C to exit)
 
