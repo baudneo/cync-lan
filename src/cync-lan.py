@@ -486,6 +486,16 @@ class CyncDevice:
     _mac: Optional[str] = None
     wifi_mac: Optional[str] = None
     _online: bool = False
+    DeviceTypes: Dict[str, List[int]] = {
+        "BULB": [31, 137, 146, 148],
+        "SWITCH": [113],
+        "BATTERY": [113],
+        "DIMMER": [113],
+        "STRIP": [133],
+        "PLUG": [64, 65, 66, 67, 68],
+        "EDISON": [146, 148],
+
+    }
     Capabilities = {
         "ONOFF": [
             1,
