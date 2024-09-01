@@ -2092,22 +2092,27 @@ class CyncHTTPDevice:
 
         lp = f"{self.lp}parse:x{data[0]:02x}:"
         packet_data: Optional[bytes] = None
-        # byte 1
-        pkt_type = int(data[0]).to_bytes(1, "big")
-        pkt_multiplier = data[3] * 256
+        pkt_header_len = 12
+        packet_header = data[:pkt_header_len]
+        # logger.debug(f"{lp} Parsing packet header: {packet_header.hex(' ')}")
+        # byte 1 (2, 3 are unknown)
+        pkt_type = int(packet_header[0]).to_bytes(1, "big")
+        # byte 4
+        pkt_multiplier = packet_header[3] * 256
         # byte 5
-        packet_length = data[4] + pkt_multiplier
-        data_check_len = 7
-        # remove header and length bytes
-        stripped_packet = data[5:]
-        # byte 1-4
-        queue_id = stripped_packet[:4]
-        # byte 5-7
-        msg_id = stripped_packet[4:7]
-        # check if any data after msg_id
-        if len(stripped_packet) > data_check_len:
-            packet_data = stripped_packet[data_check_len:]
-        device = self
+        packet_length = packet_header[4] + pkt_multiplier
+        # byte 6-10
+        queue_id = packet_header[5:10]
+        # byte 10-12
+        msg_id = packet_header[9:12]
+        # check if any data after header
+        if len(data) > pkt_header_len:
+            packet_data = data[pkt_header_len:]
+        else:
+            # logger.warning(f"{lp} there is no data after the packet header!")
+            pass
+        # logger.debug(f"{lp} raw data length: {len(data)} // {data.hex(' ')}")
+        # logger.debug(f"{lp} packet_data length: {len(packet_data)} // {packet_data.hex(' ')}")
         if pkt_type in DEVICE_STRUCTS.requests:
             if pkt_type == DEVICE_STRUCTS.requests.x23:
                 queue_id = data[6:10]
