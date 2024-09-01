@@ -837,9 +837,8 @@ class CyncDevice:
         "PLUG": [64, 65, 66, 67, 68],
         "FAN": [81],
         "MULTIELEMENT": {"67": 2},
-        "BATTERY_SWITCH": [113],
-        "SWITCH": [113],
-        "DIMMER": [113],
+        "DYNAMIC": [],
+        "MUSIC_SYNC": [],
     }
 
     def __init__(
