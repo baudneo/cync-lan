@@ -2317,146 +2317,157 @@ class CyncHTTPDevice:
                         # ctrl bytes 0xf9, 0x52 indicates this is a mesh info struct
                         if ctrl_bytes == bytes([0xF9, 0x52]):
                             # find next 0x7e and extract the inner struct
-                            end_bndry_idx = packet_data[7:].find(0x7E)
-                            inner_struct = packet_data[7:end_bndry_idx]
-                            # logger.debug(f"{lp} RAW MESH INFO // {inner_struct.hex(' ')}")
+                            end_bndry_idx = packet_data[1:].find(0x7E) + 1
+                            inner_struct = packet_data[1:end_bndry_idx]
+                            # logger.debug(f"{lp} inner_struct length: {len(inner_struct)} // {inner_struct.hex(' ')}")
 
-                            # 15th OR 16th byte of inner struct is start of mesh info
-                            # len 129 for device struct start @ 10th byte (index 9)
-                            #  7d  5e 00 05 00 00 00 05 00 07[9] 00  89 01 00 00   89 01 01 00 00 00  64 00 00 00  fe 00 00 00 10 00  f0 00 08 00 00 01 00 00 00 01 01 00 00 00  64 00 00 00  fe 00 00 00  f8 00 00 00 05 00 00 01 00 00 00 01 01 00 00 00  64 00 00 00 00 00 00 00 00 00 00 00 0a 00 00 01 00 00 00 01 01 00 00 00 5a 00 00 00 64 00 00 00 00 00 00 00 13 00 00 01 00 00 00 01 01 00 00 00 5a 00 00 00 64 00 00 00 00 00 00 00
-                            # 125  94  0  5  0  0  0  5  0
-                            # len: 224 for device struct start @ 9th byte (index 8)
-                            #  de 00 09 00 00 00 09 00 09[8] 00  89 01 00 00  89 01 01 00 00 00 5e 00 00 00 56 00 00 00 18 00 f0 00 07 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 fe 00 00 00 10 00 f0 00 13 00 00 01 00 00 00 01 01 00 00 00 45 00 00 00 64 00 00 00 00 00 00 00 0a 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 64 00 00 00 00 00 00 00 12 00 00 01 00 00 00 01 01 00 00 00 50 00 00 00 55 00 00 00 00 00 00 00 14 00 00 01 00 00 00 01 01 00 00 00 50 00 00 00 55 00 00 00 00 00 00 00 08 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 fe 00 00 00 f8 00 00 00 05 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00 00 02 00 00 01 00 00 00 01 01 00 00 00 64 00 00 00 56 00 00 00 00 00 00 00
-                            # 222  0  9  0  0  0  9  0
-                            minfo_start_idx = 8
-                            if inner_struct[minfo_start_idx] == 0x00:
-                                minfo_start_idx += 1
-                                # logger.warning(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx-1}, "
-                                #                f"trying index {minfo_start_idx} = {inner_struct[minfo_start_idx]}")
-
-                            if inner_struct[minfo_start_idx] == 0x00:
-                                logger.error(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx}, skipping...")
+                            # 15th OR 16th byte of inner struct is start of mesh info, 24 bytes long
+                            minfo_start_idx = 14
+                            minfo_length = 24
+                            if len(inner_struct) < 15:
+                                # seen this with Full Color LED light strip controller firmware version: 3.0.204
+                                logger.debug(f"{lp}mesh: bound data is too short (seen on full color light strip "
+                                             f"firmware version 3.0.204), skipping. Bound data: "
+                                             f"{inner_struct.hex(' ')}")
                             else:
-                                self.mesh_info = None
-                                # from what i've seen, the mesh info is 24 bytes long and repeats until the end.
-                                # Reset known device ids, mesh is the final authority on what devices are connected
-                                self.known_device_ids = []
-                                try:
-                                    # structs = []
-                                    ids_reported = []
-                                    loop_num = 0
-                                    mesh_info = {}
-                                    _m = []
-                                    _raw_m = []
-                                    for i in range(minfo_start_idx, len(inner_struct), 24):
-                                        loop_num += 1
-                                        mesh_dev_struct = inner_struct[i : i + 24]
-                                        dev_id = mesh_dev_struct[0]
-                                        # logger.debug(f"{lp}x73: inner_struct[{i}:{i + 24}]={mesh_dev_struct}")
-                                        # parse status from mesh info
-                                        #  [05 00 44   01 00 00 44   01 00     00 00 00 64  00 00 00 00   00 00 00 00 00 00 00] - plug (devices are all connected to it via BT)
-                                        #  [07 00 00   01 00 00 00   01 01     00 00 00 64  00 00 00 fe   00 00 00 f8 00 00 00] - direct connect full color A19 bulb
-                                        #   ID  ? type  ?  ?  ? type  ? state   ?  ?  ? bri  ?  ?  ? tmp   ?  ?  ?  R  G  B  ?
-                                        type_idx = 2
-                                        state_idx = 8
-                                        bri_idx = 12
-                                        tmp_idx = 16
-                                        r_idx = 20
-                                        g_idx = 21
-                                        b_idx = 22
-                                        dev_type = mesh_dev_struct[type_idx]
-                                        dev_state = mesh_dev_struct[state_idx]
-                                        dev_bri = mesh_dev_struct[bri_idx]
-                                        dev_tmp = mesh_dev_struct[tmp_idx]
-                                        dev_r = mesh_dev_struct[r_idx]
-                                        dev_g = mesh_dev_struct[g_idx]
-                                        dev_b = mesh_dev_struct[b_idx]
-                                        # in mesh info, brightness can be > 0 when set to off
-                                        # however, ive seen devices that are on have a state of 0 but brightness 100
-                                        if dev_state == 0 and dev_bri > 0:
-                                            dev_bri = 0
-                                        raw_status = bytes(
-                                            [
-                                                dev_id,
-                                                dev_state,
-                                                dev_bri,
-                                                dev_tmp,
-                                                dev_r,
-                                                dev_g,
-                                                dev_b,
-                                                1,
-                                                # dev_type,
-                                            ]
-                                        )
-                                        _m.append(bytes2list(raw_status))
-                                        _raw_m.append(mesh_dev_struct.hex(" "))
-                                        # first device id is the device id of the http device we are connected to
-                                        if loop_num == 1:
-                                            # byte 3 (idx 2) is a device type byte but,
-                                            # it only reports on the first item (itself)
-                                            # convert to int, and it is the same as deviceType from cloud.
-                                            self.id = dev_id
-                                            self.lp = f"{self.address}[{self.id}]:"
-                                            self.capability = dev_type
+                                if inner_struct[minfo_start_idx] == 0x00:
+                                    minfo_start_idx += 1
+                                    logger.warning(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx-1}, "
+                                                   f"trying index {minfo_start_idx} = {inner_struct[minfo_start_idx]}")
 
-                                        ids_reported.append(dev_id)
-                                        # structs.append(mesh_dev_struct.hex(" "))
-                                        self.known_device_ids.append(dev_id)
-                                    # if ids_reported:
-                                    # logger.debug(
-                                    #     f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
-                                    #     f"{sorted(ids_reported)}"
-                                    # )
-                                    # if structs:
-                                    #     logger.debug(
-                                    #         f"{lp} from: {self.id} -  MESH INFO // STRUCTS: {structs}"
-                                    #     )
+                                if inner_struct[minfo_start_idx] == 0x00:
+                                    logger.error(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx}, skipping...")
+                                else:
+                                    self.mesh_info = None
+                                    # from what i've seen, the mesh info is 24 bytes long and repeats until the end.
+                                    # Reset known device ids, mesh is the final authority on what devices are connected
+                                    self.known_device_ids = []
+                                    try:
+                                        # structs = []
+                                        ids_reported = []
+                                        loop_num = 0
+                                        mesh_info = {}
+                                        _m = []
+                                        _raw_m = []
+                                        for i in range(minfo_start_idx, len(inner_struct), minfo_length):
+                                            loop_num += 1
+                                            mesh_dev_struct = inner_struct[i : i + minfo_length]
+                                            dev_id = mesh_dev_struct[0]
+                                            # logger.debug(f"{lp}x73: inner_struct[{i}:{i + minfo_length}]={mesh_dev_struct.hex(' ')}")
+                                            # parse status from mesh info
+                                            #  [05 00 44   01 00 00 44   01 00     00 00 00 64  00 00 00 00   00 00 00 00 00 00 00] - plug (devices are all connected to it via BT)
+                                            #  [07 00 00   01 00 00 00   01 01     00 00 00 64  00 00 00 fe   00 00 00 f8 00 00 00] - direct connect full color A19 bulb
+                                            #   ID  ? type  ?  ?  ? type  ? state   ?  ?  ? bri  ?  ?  ? tmp   ?  ?  ?  R  G  B  ?
+                                            type_idx = 2
+                                            state_idx = 8
+                                            bri_idx = 12
+                                            tmp_idx = 16
+                                            r_idx = 20
+                                            g_idx = 21
+                                            b_idx = 22
+                                            dev_type_id = mesh_dev_struct[type_idx]
+                                            dev_state = mesh_dev_struct[state_idx]
+                                            dev_bri = mesh_dev_struct[bri_idx]
+                                            dev_tmp = mesh_dev_struct[tmp_idx]
+                                            dev_r = mesh_dev_struct[r_idx]
+                                            dev_g = mesh_dev_struct[g_idx]
+                                            dev_b = mesh_dev_struct[b_idx]
+                                            # in mesh info, brightness can be > 0 when set to off
+                                            # however, ive seen devices that are on have a state of 0 but brightness 100
+                                            if dev_state == 0 and dev_bri > 0:
+                                                dev_bri = 0
+                                            raw_status = bytes(
+                                                [
+                                                    dev_id,
+                                                    dev_state,
+                                                    dev_bri,
+                                                    dev_tmp,
+                                                    dev_r,
+                                                    dev_g,
+                                                    dev_b,
+                                                    1,
+                                                    # dev_type,
+                                                ]
+                                            )
+                                            _m.append(bytes2list(raw_status))
+                                            _raw_m.append(mesh_dev_struct.hex(" "))
+                                            if dev_id in g.cync_lan.server.devices:
+                                                # first device id is the device id of the http device we are connected to
+                                                if loop_num == 1:
+                                                    # byte 3 (idx 2) is a device type byte but,
+                                                    # it only reports on the first item (itself)
+                                                    # convert to int, and it is the same as deviceType from cloud.
+                                                    self.id = dev_id
+                                                    self.lp = f"{self.address}[{self.id}]:"
+                                                    lp = f"{self.lp}parse:x{data[0]:02x}:"
+                                                    self.device_type_id = dev_type_id
 
-                                    if self.parse_mesh_status is True:
-                                        logger.debug(
-                                            f"{lp} parsing mesh info // {_m} // {_raw_m}"
-                                        )
-                                        for status in _m:
-                                            await g.server.parse_status(bytes(status))
+                                                    ids_reported.append(dev_id)
+                                                    # structs.append(mesh_dev_struct.hex(" "))
+                                                    self.known_device_ids.append(dev_id)
+                                                    self.capabilities = g.cync_lan.server.devices[self.id].check_dev_capabilities(dev_type_id)
+                                                    self.device_types = g.cync_lan.server.devices[self.id].check_dev_type(dev_type_id)
+                                                    # logger.debug(f"{lp} device type ({dev_type_id}) capabilities: {self.capabilities}")
+                                                    # logger.debug(f"{lp} device type ({dev_type_id}): {self.device_types}")
+                                            else:
+                                                logger.warning(f"{lp} Device ID {dev_id} not found in devices "
+                                                               f"defined in config file: "
+                                                               f"{g.cync_lan.server.devices.keys()}")
+                                        # if ids_reported:
+                                        # logger.debug(
+                                        #     f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
+                                        #     f"{sorted(ids_reported)}"
+                                        # )
+                                        # if structs:
+                                        #     logger.debug(
+                                        #         f"{lp} from: {self.id} -  MESH INFO // STRUCTS: {structs}"
+                                        #     )
 
-                                    mesh_info["status"] = _m
-                                    mesh_info["id_from"] = self.id
-                                    # logger.debug(f"\n\n{lp} MESH INFO // {_raw_m}\n")
-                                    self.mesh_info = MeshInfo(**mesh_info)
+                                        if self.parse_mesh_status is True:
+                                            logger.debug(
+                                                f"{lp} parsing mesh info // {_m} // {_raw_m}"
+                                            )
+                                            for status in _m:
+                                                await g.server.parse_status(bytes(status))
 
-                                except IndexError:
-                                    # ran out of data
-                                    pass
-                                except Exception as e:
-                                    logger.error(f"{lp} MESH INFO for loop EXCEPTION: {e}")
-                                # Always clear parse mesh status
-                                self.parse_mesh_status = False
-                                # Send mesh status ack
-                                # 73 00 00 00 14 2d e4 b5 d2 15 2d 00 7e 1e 00 00
-                                #  00 f8 {af 02 00 af 01} 61 7e
-                                # checksum 61 hex = int 97 solved: {af+02+00+af+01} % 256 = 97
-                                mesh_ack = bytes([0x73, 0x00, 0x00, 0x00, 0x14])
-                                mesh_ack += bytes(self.queue_id)
-                                mesh_ack += bytes([0x00, 0x00, 0x00])
-                                mesh_ack += bytes(
-                                    [
-                                        0x7E,
-                                        0x1E,
-                                        0x00,
-                                        0x00,
-                                        0x00,
-                                        0xF8,
-                                        0xAF,
-                                        0x02,
-                                        0x00,
-                                        0xAF,
-                                        0x01,
-                                        0x61,
-                                        0x7E,
-                                    ]
-                                )
-                                # logger.debug(f"{lp} Sending MESH INFO ACK -> {mesh_ack.hex(' ')}")
-                                await device.write(mesh_ack)
+                                        mesh_info["status"] = _m
+                                        mesh_info["id_from"] = self.id
+                                        # logger.debug(f"\n\n{lp} MESH INFO // {_raw_m}\n")
+                                        self.mesh_info = MeshInfo(**mesh_info)
+
+                                    except IndexError:
+                                        # ran out of data
+                                        pass
+                                    except Exception as e:
+                                        logger.error(f"{lp} MESH INFO for loop EXCEPTION: {e}")
+                                    # Always clear parse mesh status
+                                    self.parse_mesh_status = False
+                                    # Send mesh status ack
+                                    # 73 00 00 00 14 2d e4 b5 d2 15 2d 00 7e 1e 00 00
+                                    #  00 f8 {af 02 00 af 01} 61 7e
+                                    # checksum 61 hex = int 97 solved: {af+02+00+af+01} % 256 = 97
+                                    mesh_ack = bytes([0x73, 0x00, 0x00, 0x00, 0x14])
+                                    mesh_ack += bytes(self.queue_id)
+                                    mesh_ack += bytes([0x00, 0x00, 0x00])
+                                    mesh_ack += bytes(
+                                        [
+                                            0x7E,
+                                            0x1E,
+                                            0x00,
+                                            0x00,
+                                            0x00,
+                                            0xF8,
+                                            0xAF,
+                                            0x02,
+                                            0x00,
+                                            0xAF,
+                                            0x01,
+                                            0x61,
+                                            0x7E,
+                                        ]
+                                    )
+                                    # logger.debug(f"{lp} Sending MESH INFO ACK -> {mesh_ack.hex(' ')}")
+                                    await self.write(mesh_ack)
 
                         elif ctrl_bytes == bytes([0xF9, 0xD0]):
                             # control packet ack - power on?
