@@ -65,6 +65,8 @@ handler.setLevel(logging.INFO)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
+# set library loggers to INFO
+
 
 
 # from cync2mqtt
@@ -871,50 +873,25 @@ class CyncDevice:
         self._g: int = 0
         self._b: int = 0
 
-    def check_dev_type(self, dev_type: int, cap: str) -> bool:
-        """Check if a device supports a capability."""
-        if cap not in self.Capabilities:
-            logger.debug(
-                "Capability (%s) not found in CyncDevice, "
-                "must be one of: %s" % (cap, self.Capabilities.keys())
-            )
-        elif dev_type in self.Capabilities.get(cap, []):
-            return True
-        return False
+    def check_dev_type(self, dev_type: int) -> dict:
+        dev_types = {}
+        for dtype in self.DeviceTypes:
+            if dev_type in self.DeviceTypes[dtype]:
+                dev_types[dtype] = True
+            else:
+                dev_types[dtype] = False
+        return dev_types
+
 
     def check_dev_capabilities(self, dev_type: int) -> Dict[str, bool]:
-        """Check what capabilities a device has."""
-        # self._supports_rgb = self.check_dev_type(dev_type, "RGB")
-        # self._supports_temperature = self.check_dev_type(dev_type, "COLORTEMP")
-        # self._is_plug = self.check_dev_type(dev_type, "PLUG")
-        onoff = self.check_dev_type(dev_type, "ONOFF")
-        brightness = self.check_dev_type(dev_type, "BRIGHTNESS")
-        color_temp = self.check_dev_type(dev_type, "COLORTEMP")
-        rgb = self.check_dev_type(dev_type, "RGB")
-        motion = self.check_dev_type(dev_type, "MOTION")
-        ambient_light = self.check_dev_type(dev_type, "AMBIENTLIGHT")
-        wifi_control = self.check_dev_type(dev_type, "WIFICONTROL")
-        plug = self.check_dev_type(dev_type, "PLUG")
-        fan = self.check_dev_type(dev_type, "FAN")
-        multi_element = self.check_dev_type(dev_type, "MULTIELEMENT")
-        battery_switch = self.check_dev_type(dev_type, "BATTERY_SWITCH")
-        switch = self.check_dev_type(dev_type, "SWITCH")
-        dimmer = self.check_dev_type(dev_type, "DIMMER")
-        return {
-            "onoff": onoff,
-            "brightness": brightness,
-            "color_temp": color_temp,
-            "rgb": rgb,
-            "motion": motion,
-            "ambient_light": ambient_light,
-            "wifi_control": wifi_control,
-            "plug": plug,
-            "fan": fan,
-            "multi_element": multi_element,
-            "battery_switch": battery_switch,
-            "switch": switch,
-            "dimmer": dimmer,
-        }
+        """Check what capabilities a device type has."""
+        dev_caps = {}
+        for cap in self.Capabilities:
+            if dev_type in self.Capabilities[cap]:
+                dev_caps[cap] = True
+            else:
+                dev_caps[cap] = False
+        return dev_caps
 
     @property
     def mac(self) -> str:
@@ -923,6 +900,14 @@ class CyncDevice:
     @mac.setter
     def mac(self, value: str) -> None:
         self._mac = str(value)
+
+    @property
+    def bt_only(self) -> bool:
+        return self.type not in self.Capabilities["WIFICONTROL"]
+
+    @property
+    def has_wifi(self) -> bool:
+        return self.type in self.Capabilities["WIFICONTROL"]
 
     @property
     def is_plug(self) -> bool:
@@ -935,6 +920,18 @@ class CyncDevice:
     @is_plug.setter
     def is_plug(self, value: bool) -> None:
         self._is_plug = value
+
+    @property
+    def is_dimmable(self) -> bool:
+        if self.type is None:
+            return False
+        return self.type in self.Capabilities["BRIGHTNESS"]
+
+    @property
+    def is_full_color(self) -> bool:
+        if self.type is None:
+            return False
+        return all({self.type in self.Capabilities["RGB"], self.type in self.Capabilities["COLORTEMP"]})
 
     @property
     def supports_rgb(self) -> bool:
@@ -1605,7 +1602,7 @@ class CyncLanServer:
         lp = f"{self.lp}mesh_loop:"
         logger.debug(
             f"{lp} Starting, after first run delay of 5 seconds, will run every "
-            f"{MESH_INFO_LOOP_INTERVAL} seconds"
+            f"{CYNC_MESH_CHECK_INTERVAL} seconds"
         )
         self.mesh_loop_started = True
         await asyncio.sleep(5)
@@ -1664,7 +1661,7 @@ class CyncLanServer:
                     await g.mqtt.pub_online(cfg_id, availability_info[cfg_id])
 
                 offline_str = (
-                    f" offline: {sorted(offline_ids)} //" if offline_ids else ""
+                    f" offline ({len(offline_ids)}): {sorted(offline_ids)} //" if offline_ids else ""
                 )
 
                 for known_id in self.known_ids:
@@ -1688,7 +1685,8 @@ class CyncLanServer:
                     )
                     if self.known_ids == previous_online_ids
                     else logger.debug(
-                        f"{lp} Online devices has changed! (new: {diff_}){offline_str} online: {self.known_ids}"
+                        f"{lp} Online devices has changed! (new: {diff_}){offline_str} online "
+                        f"({len(self.known_ids)}): {self.known_ids}"
                     )
                 )
 
@@ -1723,7 +1721,7 @@ class CyncLanServer:
                 # Check mqtt pub and sub worker tasks, if they are done or exception, recreate
                 await self.check_mqtt_tasks()
 
-                await asyncio.sleep(MESH_INFO_LOOP_INTERVAL)
+                await asyncio.sleep(CYNC_MESH_CHECK_INTERVAL)
 
             except asyncio.CancelledError as ce:
                 logger.debug(f"{lp} Task cancelled, breaking out of loop: {ce}")
@@ -1898,11 +1896,11 @@ class CyncLAN:
         self._ids_from_config: List[Optional[int]] = []
         g.cync_lan = self
         self.loop = uvloop.new_event_loop()
-        if DEBUG is True:
+        if CYNC_DEBUG is True:
             self.loop.set_debug(True)
         asyncio.set_event_loop(self.loop)
         self.cfg_devices = self.parse_config(cfg_file)
-        self.mqtt_client = MQTTClient(MQTT_URL)
+        self.mqtt_client = MQTTClient(CYNC_MQTT_URL)
 
     @property
     def ids_from_config(self):
@@ -1914,7 +1912,7 @@ class CyncLAN:
         Exported config created by scraping cloud API. Devices must already be added to your Cync account.
         If you add new or delete existing devices, you will need to re-export the config.
         """
-        global MQTT_URL, CYNC_CERT, CYNC_KEY, TLS_HOST, TLS_PORT, g
+        global CYNC_MQTT_URL, CYNC_CERT, CYNC_KEY, CYNC_HOST, CYNC_PORT, g
 
         logger.debug("%s reading devices from exported Cync config file..." % self.lp)
         try:
@@ -1924,8 +1922,8 @@ class CyncLAN:
             raise e
         devices = {}
         if "mqtt_url" in raw_config:
-            MQTT_URL = raw_config["mqtt_url"]
-            logger.info(f"{self.lp} MQTT URL set by config file to: {MQTT_URL}")
+            CYNC_MQTT_URL = raw_config["mqtt_url"]
+            logger.info(f"{self.lp} MQTT URL set by config file to: {CYNC_MQTT_URL}")
         if "cert" in raw_config:
             CYNC_CERT = raw_config["cert_file"]
             logger.info(f"{self.lp} Cert file set by config file to: {CYNC_CERT}")
@@ -1933,11 +1931,11 @@ class CyncLAN:
             CYNC_KEY = raw_config["key_file"]
             logger.info(f"{self.lp} Key file set by config file to: {CYNC_KEY}")
         if "host" in raw_config:
-            TLS_HOST = raw_config["host"]
-            logger.info(f"{self.lp} Host set by config file to: {TLS_HOST}")
+            CYNC_HOST = raw_config["host"]
+            logger.info(f"{self.lp} Host set by config file to: {CYNC_HOST}")
         if "port" in raw_config:
-            TLS_PORT = raw_config["port"]
-            logger.info(f"{self.lp} Port set by config file to: {TLS_PORT}")
+            CYNC_PORT = raw_config["port"]
+            logger.info(f"{self.lp} Port set by config file to: {CYNC_PORT}")
         for cfg_name, cfg in raw_config["account data"].items():
             cfg_id = cfg["id"]
             if "devices" not in cfg:
@@ -1982,7 +1980,7 @@ class CyncLAN:
     def start(self):
         global global_tasks
 
-        self.server = CyncLanServer(TLS_HOST, TLS_PORT, CYNC_CERT, CYNC_KEY)
+        self.server = CyncLanServer(CYNC_HOST, CYNC_PORT, CYNC_CERT, CYNC_KEY)
         self.server.devices = self.cfg_devices
         server_task = self.loop.create_task(self.server.start(), name="server_start")
 
@@ -2023,6 +2021,9 @@ class CyncHTTPDevice:
         writer: Optional[asyncio.StreamWriter] = None,
         address: Optional[str] = None,
     ):
+        self.device_types: Optional[dict] = None
+        self.device_type_id: Optional[int] = None
+        self.capabilities: Optional[dict] = None
         self.last_xc3_request: Optional[float] = None
         self.messages = Messages()
         self.mesh_info: Optional[MeshInfo] = None
@@ -2120,7 +2121,7 @@ class CyncHTTPDevice:
                     f"{lp} Device AUTH packet with starting queue ID: '{queue_id.hex(' ')}', replying..."
                 )
                 self.queue_id = queue_id
-                await device.write(DEVICE_STRUCTS.responses.auth_ack)
+                await self.write(DEVICE_STRUCTS.responses.auth_ack)
                 # MUST SEND a3 before you can ask device for anything over HTTP
                 await asyncio.sleep(0.5)
                 await self.send_a3(queue_id)
@@ -2132,23 +2133,21 @@ class CyncHTTPDevice:
                     conn_time_str = f" // Last request was {elapsed:.2f} seconds ago"
                 logger.debug(f"{lp} CONNECTION REQUEST, replying...{conn_time_str}")
                 self.last_xc3_request = time.time()
-                await device.write(DEVICE_STRUCTS.responses.connection_ack)
+                await self.write(DEVICE_STRUCTS.responses.connection_ack)
             # Ping/Pong
             elif pkt_type == DEVICE_STRUCTS.requests.xd3:
-                await device.write(DEVICE_STRUCTS.responses.ping_ack)
+                await self.write(DEVICE_STRUCTS.responses.ping_ack)
                 # logger.debug(f"{lp}xd3: Client sent HEARTBEAT, replying...")
             elif pkt_type == DEVICE_STRUCTS.requests.xa3:
                 logger.debug(f"{lp} APP ANNOUNCEMENT packet, replying...")
                 ack = DEVICE_STRUCTS.xab_generate_ack(queue_id, bytes(msg_id))
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
-                await device.write(ack)
+                await self.write(ack)
             elif pkt_type == DEVICE_STRUCTS.requests.xab:
                 # We sent an 0xa3 packet, device is responding with 0xab. msg contains ascii 'xlink_dev'.
-                # Request BT mesh info
-                # logger.debug(
-                #     f"{lp} DEVICE is ack'ing 0xa3, asking for BT mesh/Device Status info..."
-                # )
-                # await self.ask_for_mesh_info(parse=True)
+                # sometimes this is sent with other data. there may be remaining data to read in the enxt raw msg.
+                # http msg buffer seems to be 1024 bytes.
+                # 0xab packets are 1024 bytes long, so if any data is prepended, the remaining 0xab data will be in the next raw read
                 pass
             elif pkt_type == DEVICE_STRUCTS.requests.x7b:
                 # device is acking one of our x73 requests
@@ -2201,7 +2200,7 @@ class CyncHTTPDevice:
                     pass
                 ack = DEVICE_STRUCTS.x48_generate_ack(bytes(msg_id))
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
-                await device.write(ack)
+                await self.write(ack)
 
             # When the device sends a packet starting with 0x83, data is wrapped in 0x7e.
             # firmware version is sent without 0x7e boundaries
@@ -2293,7 +2292,7 @@ class CyncHTTPDevice:
                 ack = DEVICE_STRUCTS.x88_generate_ack(msg_id)
                 # logger.debug(f"{lp} RAW DATA: {data.hex(' ')}")
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
-                await device.write(ack)
+                await self.write(ack)
 
             elif pkt_type == DEVICE_STRUCTS.requests.x73:
                 if packet_data is not None:
@@ -2502,7 +2501,7 @@ class CyncHTTPDevice:
 
                     ack = DEVICE_STRUCTS.x7b_generate_ack(queue_id, msg_id)
                     # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
-                    await device.write(ack)
+                    await self.write(ack)
                 else:
                     logger.warning(
                         f"{lp} packet with no data????? After stripping header, queue and "
@@ -2619,7 +2618,7 @@ class CyncHTTPDevice:
             return False
         else:
             if chunk is None:
-                chunk = 1024
+                chunk = CYNC_CHUNK_SIZE
             async with self.read_lock:
                 if self.reader:
                     if not self.reader.at_eof():
@@ -2803,19 +2802,28 @@ class MQTTClient:
                 topic = CYNC_TOPIC
 
         if ha_topic is None:
-            if not HASS_TOPIC:
+            if not CYNC_HASS_TOPIC:
                 ha_topic = "homeassistant"
                 logger.warning(
                     "%s HomeAssistant topic not set, using default: %s" % (lp, ha_topic)
                 )
             else:
-                ha_topic = HASS_TOPIC
+                ha_topic = CYNC_HASS_TOPIC
 
         self.broker_address = broker_address
         # Negative int denotes infinite retries, from amqtt source code:
         # if reconnect_retries >= 0 and nb_attempt > reconnect_retries:
         self.client = amqtt_client.MQTTClient(
-            config={"reconnect_retries": -1, "auto_reconnect": True}
+            config={
+                "reconnect_retries": -1,
+                "auto_reconnect": True,
+                "will": {
+                    "topic": f"{CYNC_TOPIC}/connected",
+                    "message": LWT_MSG,
+                    "qos": 0x01,
+                    "retain": True,
+                }
+            }
         )
         self.topic = topic
         self.ha_topic = ha_topic
@@ -3396,11 +3404,11 @@ def parse_cli():
 
 if __name__ == "__main__":
     cli_args = parse_cli()
-    if cli_args.debug and DEBUG is False:
+    if cli_args.debug and CYNC_DEBUG is False:
         logger.info("main: --debug flag - setting log level to DEBUG")
-        DEBUG = True
+        CYNC_DEBUG = True
 
-    if DEBUG is True:
+    if CYNC_DEBUG is True:
         logger.setLevel(logging.DEBUG)
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
