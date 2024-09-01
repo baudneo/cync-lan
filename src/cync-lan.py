@@ -32,15 +32,16 @@ CYNC_VERSION = __version__
 REPO_URL = "https://github.com/baudneo/cync-lan"
 # This will run an async task every x seconds to check if any device is offline or online.
 # Hopefully keeps devices in sync (seems to do pretty good).
-MESH_INFO_LOOP_INTERVAL: int = int(os.environ.get("MESH_CHECK", 30)) or 30
-MQTT_URL = os.environ.get("MQTT_URL", "mqtt://homeassistant.local:1883")
+CYNC_MESH_CHECK_INTERVAL: int = int(os.environ.get("CYNC_MESH_CHECK", 30)) or 30
+CYNC_MQTT_URL = os.environ.get("CYNC_MQTT_URL", "mqtt://homeassistant.local:1883")
 CYNC_CERT = os.environ.get("CYNC_CERT", "certs/cert.pem")
 CYNC_KEY = os.environ.get("CYNC_KEY", "certs/key.pem")
 CYNC_TOPIC = os.environ.get("CYNC_TOPIC", "cync_lan")
-HASS_TOPIC = os.environ.get("HASS_TOPIC", "homeassistant")
-TLS_PORT = os.environ.get("CYNC_PORT", 23779)
-TLS_HOST = os.environ.get("CYNC_HOST", "0.0.0.0")
-DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in (
+CYNC_HASS_TOPIC = os.environ.get("CYNC_HASS_TOPIC", "homeassistant")
+CYNC_PORT = os.environ.get("CYNC_PORT", 23779)
+CYNC_HOST = os.environ.get("CYNC_HOST", "0.0.0.0")
+CYNC_CHUNK_SIZE = os.environ.get("CYNC_CHUNK_SIZE", 2048)
+YES_ANSWER = (
     "true",
     "1",
     "yes",
@@ -48,6 +49,8 @@ DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in (
     "t",
     1,
 )
+CYNC_RAW = os.environ.get("CYNC_RAW_DEBUG", "0").casefold() in YES_ANSWER
+CYNC_DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in YES_ANSWER
 CORP_ID: str = "1007d2ad150c4000"
 DATA_BOUNDARY = 0x7E
 
