@@ -2060,7 +2060,8 @@ class CyncHTTPDevice:
         """Extract single packets from raw data stream using metadata"""
         data_len = len(data)
         lp = f"{self.lp}extract:"
-        # logger.debug(f"{lp} Extracting packets from {data_len} bytes of raw data\n{data.hex(' ')}")
+        if CYNC_RAW is True:
+            logger.debug(f"{lp} Extracting packets from {data_len} bytes of raw data\n{data.hex(' ')}")
         if data_len < 5:
             logger.debug(
                 f"{lp} Data is less than 5 bytes, not enough to parse (header: 5 bytes)"
