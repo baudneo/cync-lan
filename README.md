@@ -122,17 +122,18 @@ breakdown. Please see the
 [sub-command docs](./docs/command_line_sub_commands.md) for more information.
 
 ## Env Vars
-| Variable     | Description                                  | Default                            |
-|--------------|----------------------------------------------|------------------------------------|
-| `MQTT_URL`   | URL of MQTT broker                           | `mqtt://homeassistant.local:1883/` |
-| `CYNC_DEBUG` | Enable debug logging                         | `0`                                |
-| `CYNC_CERT`  | Path to cert file                            | `certs/server.pem`                 |
-| `CYNC_KEY`   | Path to key file                             | `certs/server.key`                 |
-| `CYNC_PORT`  | Port to listen on                            | `23779`                            |
-| `CYNC_HOST`  | Host to listen on                            | `0.0.0.0`                          |
-| `CYNC_TOPIC` | MQTT topic                                   | `cync_lan`                         |
-| `HASS_TOPIC` | Home Assistant topic                         | `homeassistant`                    |
-| `MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
+| Variable          | Description                                  | Default                            |
+|-------------------|----------------------------------------------|------------------------------------|
+| `CYNC_MQTT_URL`   | URL of MQTT broker                           | `mqtt://homeassistant.local:1883/` |
+| `CYNC_DEBUG`      | Enable debug logging                         | `0`                                |
+| `CYNC_RAW_DEBUG`  | Enable raw binary message debug logging      | `0`                                |
+| `CYNC_CERT`       | Path to cert file                            | `certs/server.pem`                 |
+| `CYNC_KEY`        | Path to key file                             | `certs/server.key`                 |
+| `CYNC_PORT`       | Port to listen on                            | `23779`                            |
+| `CYNC_HOST`       | Host to listen on                            | `0.0.0.0`                          |
+| `CYNC_TOPIC`      | MQTT topic                                   | `cync_lan`                         |
+| `CYNC_HASS_TOPIC` | Home Assistant topic                         | `homeassistant`                    |
+| `CYNC_MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
 
 ## Controlling devices
 Devices are controlled by JSON MQTT messages. This was designed to be used 
@@ -146,7 +147,7 @@ date with the latest Home Assistant MQTT JSON schema.
 ## Home Assistant
 This script uses the MQTT discovery mechanism in Home Assistant to 
 automatically add devices. You can control the Home Assistant MQTT 
-topic via the environment variable `HASS_TOPIC`.
+topic via the environment variable `CYNC_HASS_TOPIC`.
 
 ## Debugging / socat
 If your devices are not responding to commands, it's likely that the TCP
