@@ -264,7 +264,7 @@ class DeviceStructs:
     def x7b_generate_ack(queue_id: bytes, msg_id: bytes):
         """
         Respond to a 0x73 packet from the device, needs a queue and msg id to reply with.
-        This is also called for 0x83 packets AFTER seeing an 0x73 packet.
+        This is also called for 0x83 packets AFTER seeing a 0x73 packet.
         Not sure of the intricacies yet, seems to be bound to certain queue ids.
         """
         _x = bytes([0x7B, 0x00, 0x00, 0x00, 0x07])
