@@ -2646,8 +2646,8 @@ class CyncHTTPDevice:
                     await self.write(ack)
                 else:
                     logger.warning(
-                        f"{lp} packet with no data????? After stripping header, queue and "
-                        f"msg id, there is no data to process?????"
+                        f"{lp} packet with no data????? After stripping 12 bytes header (5), queue (4) and "
+                        f"msg id (3), there is no data to process!?!"
                     )
 
         # unknown data we don't know the header for
@@ -2728,7 +2728,7 @@ class CyncHTTPDevice:
         lp = f"{self.address}:raw read:"
         started_at = time.time()
         name = self.tasks.receive.get_name()
-        logger.debug(f"{lp} receive_task CALLED - {name}")
+        logger.debug(f"{lp} receive_task CALLED") if CYNC_RAW is True else None
         try:
             while True:
                 try:
