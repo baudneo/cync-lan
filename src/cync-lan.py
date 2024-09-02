@@ -2062,7 +2062,7 @@ class CyncHTTPDevice:
         address: Optional[str] = None,
     ):
         self.network_version_str: Optional[str] = None
-        self.inc_byte: Optional[Union[int, bytes, str]] = None
+        self.inc_bytes: Optional[Union[int, bytes, str]] = None
         self.version: Optional[int] = None
         self.version_str: Optional[str] = None
         self.network_version: Optional[int] = None
@@ -2313,19 +2313,23 @@ class CyncHTTPDevice:
                         # full color light strip controller firmware version: 3.0.204 has byte index 1 as increment
                         # index 2 is the rollover so the value is * 256
                         inc_idx = 1
-                        if self.device_type_id == 133:
-                            # light strip controller
-                            if (self.version and self.version >= 30204) or (not self.version):
-                                inc_idx = 1
-                                # the next byte (idx 2) is the rollover byte (idx 2 * 256 + idx 1)
-                                logger.debug(f"{lp} device type: {self.device_type_id} has firmware version: "
-                                             f"{self.version_str} meaning increment byte at index: "
-                                             f"{inc_idx} ({bytes(packet_data[inc_idx])})")
-                        inc_byte = packet_data[inc_idx]
-                        self.inc_byte = inc_byte
+                        # if self.device_type_id == 133:
+                        #     # light strip controller
+                        #     inc_idx = 1
+                        #
+                        #     if self.version:
+                        #         if self.version >= 30204:
+                        #
+                        #             # the next byte (idx 2) is the rollover byte (idx 2 * 256 + idx 1)
+                        #             logger.debug(f"{lp} device type: {self.device_type_id} (Light Strip) has firmware version: "
+                        #                          f"{self.version_str} meaning increment byte at index: "
+                        #                          f"{inc_idx} ({bytes(packet_data[inc_idx])})")
+                        inc_bytes = packet_data[inc_idx:inc_idx + 4]
+                        self.inc_bytes = inc_bytes
+                        # logger.debug(f"{lp} Increment bytes: {inc_bytes.hex(' ')}")
 
                         ctrl_bytes = packet_data[5:7]
-                        # This has self status but it appears to be a packet that replies to a control packet
+                        # This has self status, but it appears to be a packet that replies to a control packet
                         # this seems to show it changed its device state in response to a control packet
                         if ctrl_bytes == bytes([0xFA, 0xDB]):
                             # 0x13 after ctrl bytes signifies self status or device status
