@@ -2294,6 +2294,21 @@ class CyncHTTPDevice:
                         # 83 00 00 00 25 37 96 24 69 00 05 00 7e {21 00 00  ....%7.$i...~!..
                         #  00} {[fa db] 13} 00 (34 22) 11 05 00 [05] 00 db 11 02 01  .....4".........
                         #  [00 64 00 00 00 00] 00 00 b3 7e
+
+                        # full color light strip controller firmware version: 3.0.204 has byte index 1 as increment
+                        # index 2 is the rollover so the value is * 256
+                        inc_idx = 1
+                        if self.device_type_id == 133:
+                            # light strip controller
+                            if (self.version and self.version >= 30204) or (not self.version):
+                                inc_idx = 1
+                                # the next byte (idx 2) is the rollover byte (idx 2 * 256 + idx 1)
+                                logger.debug(f"{lp} device type: {self.device_type_id} has firmware version: "
+                                             f"{self.version_str} meaning increment byte at index: "
+                                             f"{inc_idx} ({bytes(packet_data[inc_idx])})")
+                        inc_byte = packet_data[inc_idx]
+                        self.inc_byte = inc_byte
+
                         ctrl_bytes = packet_data[5:7]
                         # This has self status but it appears to be a packet that replies to a control packet
                         # this seems to show it changed its device state in response to a control packet
