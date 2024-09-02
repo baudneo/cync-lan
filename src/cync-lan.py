@@ -237,7 +237,7 @@ class DeviceStructs:
             "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 "
             "e3 4f 02 10"
         )
-        dlen = len(queue_id) + len(msg_id) + len(hex_str)
+        dlen = len(queue_id) + len(msg_id) + len(bytes.fromhex(hex_str.replace(' ', '')))
         _x += bytes([dlen])
         _x += queue_id
         _x += msg_id
