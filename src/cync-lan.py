@@ -116,7 +116,7 @@ def parse_firmware_version(data_struct: bytes, lp: str) -> Union[str, None]:
         firmware_version_int = int("".join(map(str, firmware_version)))
         logger.debug(f"{lp} {firmware_type} firmware VERSION: {firmware_version_int} ({firmware_str})")
 
-    return firmware_str
+    return firmware_type, firmware_version_int, firmware_str
 
 
 @dataclass
@@ -2271,36 +2271,22 @@ class CyncHTTPDevice:
             # firmware version is sent without 0x7e boundaries
             elif pkt_type == DEVICE_STRUCTS.requests.x83:
                 if packet_data is not None:
-                    logger.debug(f"{lp} DATA => {packet_data.hex(' ')}")
-                    # 0x83 inner struct - not always bound by 0x7e (firmware response doesnt have it)
-                    # firmware info, always seems to have 0x32 for header id byte
+                    logger.debug(f"{lp} DATA ({len(packet_data.hex())} bytes) => {packet_data.hex(' ')}")
+                    # 0x83 inner struct - not always bound by 0x7e (firmware response doesnt have starting boundary, has ending boundary 0x7e)
+                    # firmware info, data len = 30 (0x32), fw starts idx 23-27, 20-22 fw type (86 01 0x)
+                    #  {83 00 00 00 32} {[39 87 c8 57] [00 03 00]} {00 00 00 00  ....29..W.......
+                    #  00 fa 00 20 00 00 00 00 00 00 00 00 ea 00 00 00  ... ............
+                    #  86 01 01 31[idx=23 packet_data] 30 33 36 31 00 00 00 00 00 00 00 00  ...10361........
+                    #  00 00 00 00 00 [8d] [7e]}                             ......~
+                    # firmware packet may only be sent on startup / network reconnection
                     if packet_data[0] == 0x00:
-                        # n_idx = packet_data.find(0x86)
-                        n_idx = 20
-                        # next 2 bytes tell us if it is network firmware or device firmware
-                        # 0x01, 0x01 = device, 0x01, 0x00 = network
-                        firmware_type = (
-                            "device" if packet_data[n_idx + 2] == 0x01 else "network"
-                        )
-                        n_idx += 3
-                        firmware_version = []
-                        try:
-                            for i in range(n_idx, len(packet_data[n_idx:])):
-                                if packet_data[i] == 0x00:
-                                    logger.debug(
-                                        f"{lp} FIRMWARE VERSION for loop BREAKING at 0x00"
-                                    )
-                                    break
-                                firmware_version.append(packet_data[i])
-                        except IndexError:
-                            pass
-                        except Exception as e:
-                            logger.error(
-                                f"{lp} FIRMWARE VERSION for loop EXCEPTION: {e}"
-                            )
-                        logger.debug(
-                            f"{lp} {firmware_type} FIRMWARE VERSION, HOW TO USE? -> {firmware_version}"
-                        )
+                        fw_type, fw_ver, fw_str = parse_firmware_version(packet_data, lp)
+                        if fw_type == 'device':
+                            self.version = fw_ver
+                            self.version_str = fw_str
+                        else:
+                            self.network_version = fw_ver
+                            self.network_version_str = fw_str
 
                     elif packet_data[0] == 0x7E:
                         # device self status, its internal status. state can be off and brightness set to a non 0.
