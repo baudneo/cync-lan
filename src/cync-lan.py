@@ -1725,7 +1725,8 @@ class CyncLanServer:
                 diff_ = set(previous_online_ids) - set(self.known_ids)
                 (
                     logger.debug(
-                        f"{lp} No change to devices.{offline_str} online: {sorted(self.known_ids)}"
+                        f"{lp} No change to devices.{offline_str} online ({len(self.known_ids)}): "
+                        f"{sorted(self.known_ids)}"
                     )
                     if self.known_ids == previous_online_ids
                     else logger.debug(
@@ -2090,7 +2091,7 @@ class CyncHTTPDevice:
         self.mqtt_pub_queue: asyncio.Queue = g.mqtt.pub_queue
         self.mqtt_sub_queue: asyncio.Queue = g.mqtt.sub_queue
         logger.debug(
-            f"{self.lp} Created new device: {address} with python ID: {id(self)}"
+            f"{self.lp} Created new device: {address}"
         )
         self.lp = f"{self.address}:"
 
@@ -2165,7 +2166,7 @@ class CyncHTTPDevice:
             if pkt_type == DEVICE_STRUCTS.requests.x23:
                 queue_id = data[6:10]
                 logger.debug(
-                    f"{lp} Device AUTH packet with starting queue ID: '{queue_id.hex(' ')}', replying..."
+                    f"{lp} Device AUTH packet with starting queue ID: '{queue_id.hex(' ')}'..."
                 )
                 self.queue_id = queue_id
                 await self.write(DEVICE_STRUCTS.responses.auth_ack)
@@ -2191,7 +2192,7 @@ class CyncHTTPDevice:
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
                 await self.write(ack)
             elif pkt_type == DEVICE_STRUCTS.requests.xab:
-                # We sent an 0xa3 packet, device is responding with 0xab. msg contains ascii 'xlink_dev'.
+                # We sent a 0xa3 packet, device is responding with 0xab. msg contains ascii 'xlink_dev'.
                 # sometimes this is sent with other data. there may be remaining data to read in the enxt raw msg.
                 # http msg buffer seems to be 1024 bytes.
                 # 0xab packets are 1024 bytes long, so if any data is prepended, the remaining 0xab data will be in the next raw read
@@ -2239,7 +2240,7 @@ class CyncHTTPDevice:
                             ts_end_idx = -2
                         ts = packet_data[ts_idx:ts_end_idx]
                         logger.debug(
-                            f"{lp} Device sent TIMESTAMP ({len(bytes.fromhex(packet_data.hex()))}) ({ts_idx=}) -> {ts.decode('ascii', errors='replace')} - replying..."
+                            f"{lp} Device sent TIMESTAMP -> {ts.decode('ascii', errors='replace')} - replying..."
                         )
                     else:
                         # 43 00 00 00 2d 39 87 c8 57 01 01 06| [(06 00 10) {03  C...-9..W.......
@@ -2252,7 +2253,7 @@ class CyncHTTPDevice:
                         try:
                             logger.debug(
                                 f"{lp} Device sent BROADCAST STATUS packet => '{packet_data.hex(' ')}'"
-                            )
+                            )if CYNC_RAW is True else None
                             for i in range(0, packet_length, struct_len):
                                 extracted = packet_data[i : i + struct_len]
                                 if extracted:
@@ -2286,8 +2287,8 @@ class CyncHTTPDevice:
             # firmware version is sent without 0x7e boundaries
             elif pkt_type == DEVICE_STRUCTS.requests.x83:
                 if packet_data is not None:
-                    logger.debug(f"{lp} DATA ({len(packet_data.hex())} bytes) => {packet_data.hex(' ')}")
-                    # 0x83 inner struct - not always bound by 0x7e (firmware response doesnt have starting boundary, has ending boundary 0x7e)
+                    logger.debug(f"{lp} DATA ({len(bytes(packet_data))} bytes) => {packet_data.hex(' ')}")
+                    # 0x83 inner struct - not always bound by 0x7e (firmware response doesn't have starting boundary, has ending boundary 0x7e)
                     # firmware info, data len = 30 (0x32), fw starts idx 23-27, 20-22 fw type (86 01 0x)
                     #  {83 00 00 00 32} {[39 87 c8 57] [00 03 00]} {00 00 00 00  ....29..W.......
                     #  00 fa 00 20 00 00 00 00 00 00 00 00 ea 00 00 00  ... ............
@@ -2305,7 +2306,7 @@ class CyncHTTPDevice:
 
                     elif packet_data[0] == 0x7E:
                         # device self status, its internal status. state can be off and brightness set to a non 0.
-                        # signifies what brightness when state = on, meaning dont rely on brightness for on/off.
+                        # signifies what brightness when state = on, meaning don't rely on brightness for on/off.
                         # 83 00 00 00 25 37 96 24 69 00 05 00 7e {21 00 00  ....%7.$i...~!..
                         #  00} {[fa db] 13} 00 (34 22) 11 05 00 [05] 00 db 11 02 01  .....4".........
                         #  [00 64 00 00 00 00] 00 00 b3 7e
