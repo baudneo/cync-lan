@@ -2391,11 +2391,12 @@ class CyncHTTPDevice:
                             minfo_length = 24
                             if len(inner_struct) < 15:
                                 # seen this with Full Color LED light strip controller firmware version: 3.0.204
-                                logger.debug(
-                                    f"{lp}mesh: bound data is too short (seen on full color light strip "
-                                    f"firmware version 3.0.204), skipping. Bound data: "
-                                    f"{inner_struct.hex(' ')}"
-                                )
+                                # logger.debug(
+                                #     f"{lp}mesh: bound data is too short (seen on full color light strip "
+                                #     f"firmware version 3.0.204), skipping. Bound data: "
+                                #     f"{inner_struct.hex(' ')}"
+                                # )
+                                pass
                             else:
                                 if inner_struct[minfo_start_idx] == 0x00:
                                     minfo_start_idx += 1
