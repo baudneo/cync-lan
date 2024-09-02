@@ -2188,7 +2188,7 @@ class CyncHTTPDevice:
             elif pkt_type == DEVICE_STRUCTS.requests.x43:
                 if packet_data:
                     if packet_data[:2] == bytes([0xC7, 0x90]):
-                        # 43 00 00 00 34 39 87 c8 57 01 01 06 [c7 90] 2a
+                        # [c7 90]
                         # There is some sort of timestamp in the packet, not status
                         # 0x2c = ',' // 0x3a = ':'
                         # iterate packet_data for the : and ,
