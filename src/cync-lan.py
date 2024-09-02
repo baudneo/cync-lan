@@ -2046,6 +2046,11 @@ class CyncHTTPDevice:
         writer: Optional[asyncio.StreamWriter] = None,
         address: Optional[str] = None,
     ):
+        self.network_version_str: Optional[str] = None
+        self.inc_byte: Optional[Union[int, bytes, str]] = None
+        self.version: Optional[int] = None
+        self.version_str: Optional[str] = None
+        self.network_version: Optional[int] = None
         self.device_types: Optional[dict] = None
         self.device_type_id: Optional[int] = None
         self.capabilities: Optional[dict] = None
@@ -2185,11 +2190,41 @@ class CyncHTTPDevice:
                     if packet_data[:2] == bytes([0xC7, 0x90]):
                         # 43 00 00 00 34 39 87 c8 57 01 01 06 [c7 90] 2a
                         # There is some sort of timestamp in the packet, not status
-                        # look for ascii '*' (0x2A) and grab the data after it
-                        ts_idx = packet_data.find(0x2A) + 1
-                        ts = packet_data[ts_idx:]
+                        # 0x2c = ',' // 0x3a = ':'
+                        # iterate packet_data for the : and ,
+                        # first there will be year/month/day : hourminute :- ?? , ????? , new , ????? , ????? , ????? ,
+
+                        # full color light strip 3.0.204 has different offsets (packet_data len = 51, 6 bytes more than 1.x.yyy)
+                        # has additional 2 bytes at end and in the middle of timestamp there is a new 3 digit entry with a comma (4 bytes + 2 = 6 bytes, which is what were over the old style)
+                        # "c7 90 2e 32 30 32 34 30 33 31 30 3a 31 31 31 30 3a 2d 35 39 2c 30 30 31 35 31 2c 30 30 32 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 43 db"
+                        # packet_data = 51
+                        # 32 30 32 34 30 33 31 30 3a 31 31 31 30 3a 2d 35 39 2c 30 30 31 35
+                        # 20240310:1110:-59,00151,002,00000,00000,00000, 46 bytes long + 3 byte prefix + 2 byte suffix
+
+                        # OLD can just read until end of packet_data
+                        # "c7 90 2a 32 30 32 34 30 39 30 31 3a 31 38 35 39 3a 2d 34 32 2c 30 32 33 32 32 2c 30 30 30 30 34 2c 30 30 31 30 33 2c 30 30 30 36 33 2c" OLD
+                        # "c7 90 2e 32 30 32 34 30 33 31 30 3a 31 31 31 30 3a 2d 35 39 2c 30 30 31 35 31 2c 30 30 32 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 43 db" NEW
+
+
+                        # [199, 144, 42, 50, 48, 50, 52, 48, 57, 48, 49, 58, 49, 56, 53, 57, 58, 45, 52, 50, 44, 48, 50, 51, 50, 50, 44, 48, 48, 48, 48, 52, 44, 48, 48, 49, 48, 51, 44, 48, 48, 48, 54, 51, 44]
+
+                        # 32 30 32 34 30 39 30 31 3a 31 38 35 39 3a 2d 34 32 2c 30 32 33 32 32 2c 30 30 30 30 34 2c 30 30 31 30 33 2c 30 30 30 36 33
+                        # 20240901:1859:-42,02322,00004,00103,00063,
+                        # packet_data = 45
+
+                        ts_idx = 3
+                        ts_end_idx = -1
                         logger.debug(
-                            f"{lp} Device sent TIMESTAMP -> {ts.decode('ascii', errors='ignore')} - replying..."
+                            f"{lp} Device TIMESTAMP PACKET ({len(bytes.fromhex(packet_data.hex()))}) -> HEX: "
+                            f"{packet_data.hex(' ')} // INTS: {bytes2list(packet_data)} // "
+                            f"ASCII: {packet_data.decode(errors='replace')}"
+                        ) if CYNC_RAW is True else None
+                        # if self.version >= 30000 <= 40000:
+                        if self.address == "10.0.2.225":
+                            ts_end_idx = -2
+                        ts = packet_data[ts_idx:ts_end_idx]
+                        logger.debug(
+                            f"{lp} Device sent TIMESTAMP ({len(bytes.fromhex(packet_data.hex()))}) ({ts_idx=}) -> {ts.decode('ascii', errors='replace')} - replying..."
                         )
                     else:
                         # 43 00 00 00 2d 39 87 c8 57 01 01 06| [(06 00 10) {03  C...-9..W.......
