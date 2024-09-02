@@ -2233,6 +2233,7 @@ class CyncHTTPDevice:
                         # 00 00
                         # status struct is 19 bytes long
                         struct_len = 19
+                        extractions = []
                         try:
                             logger.debug(
                                 f"{lp} Device sent BROADCAST STATUS packet => '{packet_data.hex(' ')}'"
@@ -2241,16 +2242,18 @@ class CyncHTTPDevice:
                                 extracted = packet_data[i : i + struct_len]
                                 if extracted:
                                     status_struct = extracted[3:11]
-                                    logger.debug(
-                                        "%s Extracted STATUS struct => '%s' // %s, replying..."
-                                        % (
-                                            lp,
-                                            extracted.hex(" "),
-                                            bytes2list(status_struct),
-                                        )
-                                    )
+                                    # 14 00 10 01 00 00 64 00 00 00 01 15 15 00 00 00 00 00 00
+                                    # // [1, 0, 0, 100, 0, 0, 0, 1]
+                                    extractions.append((extracted.hex(' '), bytes2list(status_struct)))
                                 # broadcast status data
                                 # await self.write(data, broadcast=True)
+                            logger.debug(
+                                "%s Extracted data and STATUS struct => %s"
+                                % (
+                                    lp,
+                                    extractions,
+                                )
+                            )
                         except IndexError:
                             pass
                         except Exception as e:
