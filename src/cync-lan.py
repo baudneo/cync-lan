@@ -2386,38 +2386,39 @@ class CyncHTTPDevice:
                     ctrl_bytes = packet_data[5:7]
                     # check for boundary, all bytes between boundaries are for this request
                     if packet_data[0] == 0x7E:
-                        inner_msg_id = packet_data[1]
-                        msg_cb_obj: Optional[MessageCallback] = None
-                        if inner_msg_id in self.messages.x73:
-                            # message id callbacks; the idea is to set device state on a successful callback
-                            # class has __eq__ method to compare id
-                            msg_idx = self.messages.x73.index(inner_msg_id)  # type: ignore
-                            msg_cb_obj = self.messages.x73.pop(msg_idx)
-                            logger.debug(
-                                f"{lp} Found a message callback for msg id: {inner_msg_id} -> "
-                                f"elapsed since sent: {time.time() - msg_cb_obj.sent_at} // "
-                                f"{repr(msg_cb_obj)}"
-                            )
-
+                        # find next 0x7e and extract the inner struct
+                        end_bndry_idx = packet_data[1:].find(0x7E) + 1
+                        inner_struct = packet_data[1:end_bndry_idx]
                         # ctrl bytes 0xf9, 0x52 indicates this is a mesh info struct
+                        # some device firmwares respond with a message received poacket before replying with the data
+                        # example: 7e 1f 00 00 00 f9 52 01 00 00 53 7e (12 bytes, 0x7e bound. 10 bytes of data)
                         if ctrl_bytes == bytes([0xF9, 0x52]):
-                            # find next 0x7e and extract the inner struct
-                            end_bndry_idx = packet_data[1:].find(0x7E) + 1
-                            inner_struct = packet_data[1:end_bndry_idx]
                             # logger.debug(f"{lp} inner_struct length: {len(inner_struct)} // {inner_struct.hex(' ')}")
-
-                            # 15th OR 16th byte of inner struct is start of mesh info, 24 bytes long
-                            minfo_start_idx = 14
-                            minfo_length = 24
                             if len(inner_struct) < 15:
-                                # seen this with Full Color LED light strip controller firmware version: 3.0.204
-                                # logger.debug(
-                                #     f"{lp}mesh: bound data is too short (seen on full color light strip "
-                                #     f"firmware version 3.0.204), skipping. Bound data: "
-                                #     f"{inner_struct.hex(' ')}"
-                                # )
-                                pass
+                                if len(inner_struct) == 10:
+                                    # server sent mesh info request, this seems to be the ack?
+                                    # 7e 1f 00 00 00 f9 52 01 00 00 53 7e
+                                    # checksum (idx 10) = idx 6 + idx 7 % 256
+                                    # seen this with Full Color LED light strip controller firmware version: 3.0.204
+                                    succ_idx = 6
+                                    minfo_ack_succ = inner_struct[succ_idx]
+                                    minfo_ack_chksum = inner_struct[9]
+                                    calc_chksum = (inner_struct[5] + inner_struct[6]) % 256
+                                    if minfo_ack_succ == 0x01:
+                                        # logger.debug(f"{lp} Mesh info request ACK received, success: {minfo_ack_succ}."
+                                        #              f" checksum byte = {minfo_ack_chksum}) // Calculated checksum "
+                                        #              f"= {calc_chksum}")
+                                        if minfo_ack_chksum != calc_chksum:
+                                            logger.warning(
+                                                f"{lp} Mesh info request ACK checksum failed! {minfo_ack_chksum} != {calc_chksum}"
+                                            )
+
+                                else:
+                                    logger.debug(f"{lp} inner_struct is less than 15 bytes: {inner_struct.hex(' ')}")
                             else:
+                                # 15th OR 16th byte of inner struct is start of mesh info, 24 bytes long
+                                minfo_start_idx = 14
+                                minfo_length = 24
                                 if inner_struct[minfo_start_idx] == 0x00:
                                     minfo_start_idx += 1
                                     logger.warning(
@@ -2430,17 +2431,17 @@ class CyncHTTPDevice:
                                         f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx}, skipping..."
                                     )
                                 else:
-                                    self.mesh_info = None
-                                    # from what i've seen, the mesh info is 24 bytes long and repeats until the end.
+                                    # from what I've seen, the mesh info is 24 bytes long and repeats until the end.
                                     # Reset known device ids, mesh is the final authority on what devices are connected
+                                    self.mesh_info = None
                                     self.known_device_ids = []
+                                    ids_reported = []
+                                    loop_num = 0
+                                    mesh_info = {}
+                                    _m = []
+                                    _raw_m = []
+                                    # structs = []
                                     try:
-                                        # structs = []
-                                        ids_reported = []
-                                        loop_num = 0
-                                        mesh_info = {}
-                                        _m = []
-                                        _raw_m = []
                                         for i in range(
                                             minfo_start_idx,
                                             len(inner_struct),
@@ -2451,7 +2452,7 @@ class CyncHTTPDevice:
                                                 i : i + minfo_length
                                             ]
                                             dev_id = mesh_dev_struct[0]
-                                            # logger.debug(f"{lp}x73: inner_struct[{i}:{i + minfo_length}]={mesh_dev_struct.hex(' ')}")
+                                            # logger.debug(f"{lp} inner_struct[{i}:{i + minfo_length}]={mesh_dev_struct.hex(' ')}")
                                             # parse status from mesh info
                                             #  [05 00 44   01 00 00 44   01 00     00 00 00 64  00 00 00 00   00 00 00 00 00 00 00] - plug (devices are all connected to it via BT)
                                             #  [07 00 00   01 00 00 00   01 01     00 00 00 64  00 00 00 fe   00 00 00 f8 00 00 00] - direct connect full color A19 bulb
@@ -2495,30 +2496,30 @@ class CyncHTTPDevice:
                                                     # byte 3 (idx 2) is a device type byte but,
                                                     # it only reports on the first item (itself)
                                                     # convert to int, and it is the same as deviceType from cloud.
-                                                    self.id = dev_id
-                                                    self.lp = (
-                                                        f"{self.address}[{self.id}]:"
-                                                    )
+                                                    if not self.id:
+                                                        self.id = dev_id
+                                                        self.lp = (
+                                                            f"{self.address}[{self.id}]:"
+                                                        )
+                                                        cync_device = g.cync_lan.cfg_devices[dev_id]
+                                                        logger.debug(f"{self.lp}parse:x{data[0]:02x}: setting HTTP"
+                                                                     f"Device ID: {self.id}")
+                                                        self.capabilities = cync_device.check_dev_capabilities(dev_type_id)
+                                                        self.device_types = cync_device.check_dev_type(dev_type_id)
+                                                        # logger.debug(f"{lp} device type ({dev_type_id}) capabilities: {self.capabilities}")
+                                                        # logger.debug(f"{lp} device type ({dev_type_id}): {self.device_types}")
+                                                        del cync_device
+                                                    elif self.id and self.id != dev_id:
+                                                        logger.warning(f"{lp} The first device reported in 0x83 is "
+                                                                       f"usually the http device. current: {self.id} "
+                                                                       f"// proposed: {dev_id}")
                                                     lp = f"{self.lp}parse:x{data[0]:02x}:"
                                                     self.device_type_id = dev_type_id
 
-                                                    ids_reported.append(dev_id)
-                                                    # structs.append(mesh_dev_struct.hex(" "))
-                                                    self.known_device_ids.append(dev_id)
-                                                    self.capabilities = (
-                                                        g.cync_lan.server.devices[
-                                                            self.id
-                                                        ].check_dev_capabilities(
-                                                            dev_type_id
-                                                        )
-                                                    )
-                                                    self.device_types = (
-                                                        g.cync_lan.server.devices[
-                                                            self.id
-                                                        ].check_dev_type(dev_type_id)
-                                                    )
-                                                    # logger.debug(f"{lp} device type ({dev_type_id}) capabilities: {self.capabilities}")
-                                                    # logger.debug(f"{lp} device type ({dev_type_id}): {self.device_types}")
+                                                ids_reported.append(dev_id)
+                                                # structs.append(mesh_dev_struct.hex(" "))
+                                                self.known_device_ids.append(dev_id)
+
                                             else:
                                                 logger.warning(
                                                     f"{lp} Device ID {dev_id} not found in devices "
@@ -2584,32 +2585,56 @@ class CyncHTTPDevice:
                                     )
                                     # logger.debug(f"{lp} Sending MESH INFO ACK -> {mesh_ack.hex(' ')}")
                                     await self.write(mesh_ack)
-
-                        elif ctrl_bytes == bytes([0xF9, 0xD0]):
-                            # control packet ack - power on?
-                            # handle callbacks for messages
-                            logger.debug(
-                                f"{lp} it seems this message is answering a CONTROL PACKET? -> {packet_data.hex(' ')}"
-                            )
-                            # 7e 09 00 00 00 f9 d0 01 00 00 d1 7e
-                            if packet_data[7] == 0x01:
-                                logger.debug(f"{lp} CONTROL PACKET ACK -> SUCCESS?")
-                                if msg_cb_obj is not None:
-                                    logger.debug(
-                                        f"{lp} CALLING ASYNC CALLBACK -> {msg_cb_obj.args = } // "
-                                        f"{msg_cb_obj.kwargs = } // {msg_cb_obj.callback = }"
-                                    )
-                                    await msg_cb_obj.callback(
-                                        *msg_cb_obj.args, **msg_cb_obj.kwargs
-                                    )
-                                    # msg_cb_obj.args = []
-                                    # msg_cb_obj.kwargs = {}
-
                         else:
+
                             logger.debug(
-                                f"{lp} UNKNOWN CTRL_BYTES: {ctrl_bytes.hex(' ')} // EXTRACTED DATA -> "
-                                f"{packet_data.hex(' ')}"
-                            )
+                                f"{lp} control bytes: {ctrl_bytes.hex(' ')} // packet data:  {packet_data.hex(' ')}") if CYNC_RAW else None
+                            msg_cb_obj: Optional[MessageCallback] = None
+                            # are any callbacks stored?
+                            if self.messages.x73:
+                                inner_msg_id = packet_data[1]
+                                if inner_msg_id in self.messages.x73:
+                                    # message id callbacks; the idea is to set device state on a successful callback
+                                    # class has __eq__ method to compare id
+                                    msg_idx = self.messages.x73.index(inner_msg_id)  # type: ignore
+                                    msg_cb_obj = self.messages.x73.pop(msg_idx)
+                                    logger.debug(
+                                        f"{lp} Found a message callback for msg id: {inner_msg_id} -> "
+                                        f"elapsed since sent: {time.time() - msg_cb_obj.sent_at} // "
+                                        f"{repr(msg_cb_obj)}"
+                                    )
+                                else:
+                                    logger.debug(f"{lp} no callback for msg_id: {inner_msg_id} ({self.messages.x73})")
+
+                            if ctrl_bytes == bytes([0xF9, 0xD0]):
+                                # control packet ack - changed state.
+                                # handle callbacks for messages
+                                # byte 8 is success? 0x01 yes // 0x00 no
+                                # 7e 09 00 00 00 f9 d0 01 00 00 d1 7e
+                                logger.debug(f"{lp} CONTROL packet ACK (ctrl_bytes = {ctrl_bytes}) "
+                                             f"(inc_bytes = {packet_data[1:5]}) -> success: {packet_data[7]}")
+                                if packet_data[7] == 0x01:
+                                    if msg_cb_obj is not None:
+                                        logger.debug(
+                                            f"{lp} CALLING ASYNC CALLBACK -> {msg_cb_obj.args = } // "
+                                            f"{msg_cb_obj.kwargs = } // {msg_cb_obj.callback = }"
+                                        )
+                                        await msg_cb_obj.callback(
+                                            *msg_cb_obj.args, **msg_cb_obj.kwargs
+                                        )
+                                        # msg_cb_obj.args = []
+                                        # msg_cb_obj.kwargs = {}
+                                    else:
+                                        # logger.debug(f"{lp} NO CALLBACK FOUND FOR CONTROL PACKET ACK ?")
+                                        pass
+                                else:
+                                    logger.debug(f"{lp} CONTROL PACKET ACK -> FAILURE? success: {packet_data[7]}")
+
+                            else:
+                                logger.debug(
+                                    f"{lp} UNKNOWN CTRL_BYTES: {ctrl_bytes.hex(' ')} // EXTRACTED DATA -> "
+                                    f"{packet_data.hex(' ')}"
+                                )
                     else:
                         logger.debug(
                             f"{lp} packet with no boundary found????? After stripping header, queue and "
