@@ -88,6 +88,36 @@ def ints2bytes(ints: List[int]) -> bytes:
     """Convert a list of integers to a byte string"""
     return bytes(ints)
 
+def parse_firmware_version(data_struct: bytes, lp: str) -> Union[str, None]:
+    """Parse the firmware version from binary hex data."""
+    lp = f"{lp}firmware_version:"
+    if data_struct[0] != 0x00:
+        logger.error(f"{lp} Invalid first byte value: {data_struct[0]} should be 0x00 for firmware version data")
+
+    n_idx = 20  # Starting index for firmware information
+    firmware_type = "device" if data_struct[n_idx + 2] == 0x01 else "network"
+    n_idx += 3
+
+    firmware_version = []
+    try:
+        while len(firmware_version) < 5 and data_struct[n_idx] != 0x00:
+            firmware_version.append(int(chr(data_struct[n_idx])))
+            n_idx += 1
+        if not firmware_version:
+            logger.warning(f"{lp} No firmware version found in packet: {data_struct.hex(' ')}")
+            return None
+
+    except (IndexError, ValueError) as e:
+        logger.error(f"{lp} Exception occurred while parsing firmware version: {e}")
+        return None
+
+    else:
+        firmware_str = f"{firmware_version[0]}.{firmware_version[1]}.{''.join(map(str, firmware_version[2:]))}"
+        firmware_version_int = int("".join(map(str, firmware_version)))
+        logger.debug(f"{lp} {firmware_type} firmware VERSION: {firmware_version_int} ({firmware_str})")
+
+    return firmware_str
+
 
 @dataclass
 class MeshInfo:
