@@ -900,7 +900,8 @@ class CyncDevice:
             if dev_type in self.DeviceTypes[dtype]:
                 dev_types[dtype] = True
             else:
-                dev_types[dtype] = False
+                # dev_types[dtype] = False
+                pass
         return dev_types
 
     def check_dev_capabilities(self, dev_type: int) -> Dict[str, bool]:
@@ -910,7 +911,8 @@ class CyncDevice:
             if dev_type in self.Capabilities[cap]:
                 dev_caps[cap] = True
             else:
-                dev_caps[cap] = False
+                # dev_caps[cap] = False
+                pass
         return dev_caps
 
     @property
