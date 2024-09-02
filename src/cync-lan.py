@@ -2994,7 +2994,7 @@ class MQTTClient:
                 )
                 try:
                     await self.client.disconnect()
-                except Exception:
+                except Exception as innr_exc:
                     pass
             else:
                 logger.debug("%s Connected to MQTT broker..." % lp)
