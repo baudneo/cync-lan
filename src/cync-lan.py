@@ -1038,26 +1038,32 @@ class CyncDevice:
         )
         # pick a random http device to send the command to
         # it should bridge the command over btle to the device ID
-        bridge_device = random.choice(list(g.server.http_devices.values()))
-        header.extend(bridge_device.queue_id)
-        header.extend(bytes([0x00, 0x00, 0x00]))
-        header.extend(_inner_struct)
-        b = bytes(header)
+        # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
+        raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
         logger.debug(
-            f"{self.lp} Changing power state: {self.state} to {state} // {bytes(header).hex(' ')}"
+            f"{self.lp} Changing power state: {self.state} to {state}{raw_dbg}"
         )
-        # testing a callback system that determines success or failure
-        cb = MessageCallback(msg_id_inc)
-        cb.original_message = b
-        cb.sent_at = time.time()
-        cb.callback = g.mqtt.parse_device_status
-        cb.args = []
-        cb.args.extend([self.id, new_state])
-        logger.debug(
-            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
-        )
-        bridge_device.messages.x73.append(cb)
-        await bridge_device.write(b)
+        await g.mqtt.parse_device_status(self.id, new_state)
+
+        # # testing a callback system that determines success or failure
+        # cb = MessageCallback(msg_id_inc)
+        # cb.original_message = b
+        # cb.sent_at = time.time()
+        # cb.callback = g.mqtt.parse_device_status
+        # cb.args = []
+        # cb.args.extend([self.id, new_state])
+        # logger.debug(
+        #     f"{self.lp} Adding x73 callback (id: {msg_id_inc}) to HTTP device: {bridge_device.address} -> {cb}"
+        # )
+        # bridge_device.messages.x73.append(cb)
+
+        # await bridge_device.write(b)
+        for device in g.server.http_devices.values():
+            header.extend(device.queue_id)
+            header.extend(bytes([0x00, 0x00, 0x00]))
+            header.extend(_inner_struct)
+            b = bytes(header)
+            await device.write(b)
 
     async def set_brightness(self, bri: int):
         """Send raw data to control device brightness"""
@@ -1105,26 +1111,29 @@ class CyncDevice:
             green=None,
             blue=None,
         )
-        # pick a random http device to send the command to
-        # it should bridge the command over btle to the device ID
-        bridge_device = random.choice(list(g.server.http_devices.values()))
-        header.extend(bridge_device.queue_id)
-        header.extend(bytes([0x00, 0x00, 0x00]))
-        header.extend(inner_struct)
-        b = bytes(header)
-        logger.debug(f"{self.lp} Changing brightness: {self._brightness} to {bri}")
-        # testing a callback system that determines success or failure
-        cb = MessageCallback(msg_id_inc)
-        cb.original_message = b
-        cb.sent_at = time.time()
-        cb.callback = g.mqtt.parse_device_status
-        cb.args = []
-        cb.args.extend([self.id, new_state])
-        logger.debug(
-            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
-        )
-        bridge_device.messages.x73.append(cb)
-        await bridge_device.write(b)
+        # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
+        raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
+        logger.debug(f"{self.lp} Changing brightness: {self._brightness} to {bri}{raw_dbg}")
+        await g.mqtt.parse_device_status(self.id, new_state)
+        # # testing a callback system that determines success or failure
+        # cb = MessageCallback(msg_id_inc)
+        # cb.original_message = b
+        # cb.sent_at = time.time()
+        # cb.callback = g.mqtt.parse_device_status
+        # cb.args = []
+        # cb.args.extend([self.id, new_state])
+        # logger.debug(
+        #     f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+        # )
+        # bridge_device.messages.x73.append(cb)
+
+        for device in g.server.http_devices.values():
+            header.extend(device.queue_id)
+            header.extend(bytes([0x00, 0x00, 0x00]))
+            header.extend(inner_struct)
+            b = bytes(header)
+            await device.write(b)
+        # await bridge_device.write(b)
 
     async def set_temperature(self, temp: int):
         """Send raw data to control device brightness"""
@@ -1176,26 +1185,29 @@ class CyncDevice:
         )
         # pick a random http device to send the command to
         # it should bridge the command over btle to the device ID
-        bridge_device = random.choice(list(g.server.http_devices.values()))
-        header.extend(bridge_device.queue_id)
-        header.extend(bytes([0x00, 0x00, 0x00]))
-        header.extend(inner_struct)
-        b = bytes(header)
+        # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
+        raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
         logger.debug(
-            f"{self.lp} Changing white temperature: {self.temperature} to {temp}"
+            f"{self.lp} Changing white temperature: {self.temperature} to {temp}{raw_dbg}"
         )
-        # testing a callback system that determines success or failure
-        cb = MessageCallback(msg_id_inc)
-        cb.original_message = b
-        cb.sent_at = time.time()
-        cb.callback = g.mqtt.parse_device_status
-        cb.args = []
-        cb.args.extend([self.id, new_state])
-        logger.debug(
-            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
-        )
-        bridge_device.messages.x73.append(cb)
-        await bridge_device.write(b)
+        await g.mqtt.parse_device_status(self.id, new_state)
+        # # testing a callback system that determines success or failure
+        # cb = MessageCallback(msg_id_inc)
+        # cb.original_message = b
+        # cb.sent_at = time.time()
+        # cb.callback = g.mqtt.parse_device_status
+        # cb.args = []
+        # cb.args.extend([self.id, new_state])
+        # logger.debug(
+        #     f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+        # )
+        # bridge_device.messages.x73.append(cb)
+        for device in g.server.http_devices.values():
+            header.extend(device.queue_id)
+            header.extend(bytes([0x00, 0x00, 0x00]))
+            header.extend(inner_struct)
+            b = bytes(header)
+            await device.write(b)
 
     async def set_rgb(self, red: int, green: int, blue: int):
         """
