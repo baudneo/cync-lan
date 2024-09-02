@@ -2171,7 +2171,7 @@ class CyncHTTPDevice:
                 await self.write(DEVICE_STRUCTS.responses.ping_ack)
                 # logger.debug(f"{lp}xd3: Client sent HEARTBEAT, replying...")
             elif pkt_type == DEVICE_STRUCTS.requests.xa3:
-                logger.debug(f"{lp} APP ANNOUNCEMENT packet, replying...")
+                logger.debug(f"{lp} APP ANNOUNCEMENT packet: {packet_data.hex(' ')}")
                 ack = DEVICE_STRUCTS.xab_generate_ack(queue_id, bytes(msg_id))
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
                 await self.write(ack)
