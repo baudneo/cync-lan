@@ -88,7 +88,7 @@ def ints2bytes(ints: List[int]) -> bytes:
     """Convert a list of integers to a byte string"""
     return bytes(ints)
 
-def parse_firmware_version(data_struct: bytes, lp: str) -> UnionTuple[str, int, str]:
+def parse_firmware_version(data_struct: bytes, lp: str) -> Optional[Tuple[str, int, str]]:
     """Parse the firmware version from binary hex data."""
     lp = f"{lp}firmware_version:"
     if data_struct[0] != 0x00:
