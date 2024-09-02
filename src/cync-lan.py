@@ -1262,26 +1262,30 @@ class CyncDevice:
         )
         # pick a random http device to send the command to
         # it should bridge the command over btle to the device ID
-        bridge_device = random.choice(list(g.server.http_devices.values()))
-        header.extend(bridge_device.queue_id)
-        header.extend(bytes([0x00, 0x00, 0x00]))
-        header.extend(inner_struct)
-        b = bytes(header)
+        # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
+        raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
         logger.debug(
-            f"{self.lp} Changing RGB: {self.red}, {self.green}, {self.blue} to {red}, {green}, {blue}"
+            f"{self.lp} Changing RGB: {self.red}, {self.green}, {self.blue} to {red}, {green}, {blue}{raw_dbg}"
         )
-        # testing a callback system that determines success or failure
-        cb = MessageCallback(msg_id_inc)
-        cb.original_message = b
-        cb.sent_at = time.time()
-        cb.callback = g.mqtt.parse_device_status
-        cb.args = []
-        cb.args.extend([self.id, new_state])
-        logger.debug(
-            f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
-        )
-        bridge_device.messages.x73.append(cb)
-        await bridge_device.write(b)
+        await g.mqtt.parse_device_status(self.id, new_state)
+        # # testing a callback system that determines success or failure
+        # cb = MessageCallback(msg_id_inc)
+        # cb.original_message = b
+        # cb.sent_at = time.time()
+        # cb.callback = g.mqtt.parse_device_status
+        # cb.args = []
+        # cb.args.extend([self.id, new_state])
+        # logger.debug(
+        #     f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+        # )
+        # bridge_device.messages.x73.append(cb)
+
+        for bridge_device in g.server.http_devices.values():
+            header.extend(bridge_device.queue_id)
+            header.extend(bytes([0x00, 0x00, 0x00]))
+            header.extend(inner_struct)
+            b = bytes(header)
+            await bridge_device.write(b)
 
     @property
     def online(self):
