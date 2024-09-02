@@ -2290,9 +2290,9 @@ class CyncHTTPDevice:
 
                     elif packet_data[0] == 0x7E:
                         # device self status, its internal status. state can be off and brightness set to a non 0.
-                        # signifies what brightness when state = on.
-                        # 83 00 00 00 25 37 96 24 69 00 05 00 7e 21 00 00  ....%7.$i...~!..
-                        #  00 {[fa db] 13} 00 (34 22) 11 05 00 [05] 00 db 11 02 01  .....4".........
+                        # signifies what brightness when state = on, meaning dont rely on brightness for on/off.
+                        # 83 00 00 00 25 37 96 24 69 00 05 00 7e {21 00 00  ....%7.$i...~!..
+                        #  00} {[fa db] 13} 00 (34 22) 11 05 00 [05] 00 db 11 02 01  .....4".........
                         #  [00 64 00 00 00 00] 00 00 b3 7e
                         ctrl_bytes = packet_data[5:7]
                         # This has self status but it appears to be a packet that replies to a control packet
