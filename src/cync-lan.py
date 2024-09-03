@@ -2853,7 +2853,7 @@ class CyncHTTPDevice:
             except Exception as e:
                 logger.error(f"{lp} EXCEPTION: {e}", exc_info=True)
 
-            # SHouldnt need to do this, the streams are dead anyways.
+            # SShouldn't need to do this, the streams are dead anyway.
             logger.debug(f"{lp} Closing device streams...")
             await self.close()
 
