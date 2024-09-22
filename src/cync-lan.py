@@ -30,7 +30,8 @@ from amqtt.mqtt.constants import QOS_0, QOS_1
 __version__: str = "0.0.5"
 CYNC_VERSION: str = __version__
 REPO_URL: str = "https://github.com/baudneo/cync-lan"
-LWT_MSG: bytes = b"offline"
+DEVICE_LWT_MSG: bytes = b"offline"
+
 # This will run an async task every x seconds to check if any device is offline or online.
 # Hopefully keeps devices in sync (seems to do pretty good).
 CYNC_MESH_CHECK_INTERVAL: int = int(os.environ.get("CYNC_MESH_CHECK", 30)) or 30
