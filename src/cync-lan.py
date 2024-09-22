@@ -27,7 +27,7 @@ import yaml
 from amqtt import client as amqtt_client
 from amqtt.mqtt.constants import QOS_0, QOS_1
 
-__version__: str = "0.0.3"
+__version__: str = "0.0.5"
 CYNC_VERSION: str = __version__
 REPO_URL: str = "https://github.com/baudneo/cync-lan"
 LWT_MSG: bytes = b"offline"
