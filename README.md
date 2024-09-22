@@ -19,6 +19,7 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and
 [juanboro](https://github.com/juanboro)
 
 ## Prerequisites
+- Python 3.8+ (Walrus operator used)
 - A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug, wired switch or an always powered wifi bulb - *The wifi device' can control BT only bulbs*
 - Cync account with devices added and configured
 - MQTT broker (I recommend EMQX)
