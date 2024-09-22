@@ -3545,6 +3545,11 @@ def parse_cli():
 
 
 if __name__ == "__main__":
+    if sys.version_info >= (3, 8):
+        pass
+    else:
+        sys.exit("Python version 3.8 or higher REQUIRED! you have version: %s" % sys.version)
+
     cli_args = parse_cli()
     if cli_args.debug and CYNC_DEBUG is False:
         logger.info("main: --debug flag - setting log level to DEBUG")
