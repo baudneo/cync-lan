@@ -92,7 +92,7 @@ def ints2bytes(ints: List[int]) -> bytes:
     """Convert a list of integers to a byte string"""
     return bytes(ints)
 
-def parse_firmware_version(data_struct: bytes, lp: str) -> Optional[Tuple[str, int, str]]:
+def parse_unbound_firmware_version(data_struct: bytes, lp: str) -> Optional[Tuple[str, int, str]]:
     """Parse the firmware version from binary hex data."""
     lp = f"{lp}firmware_version:"
     if data_struct[0] != 0x00:
@@ -2305,7 +2305,7 @@ class CyncHTTPDevice:
                     #  00 00 00 00 00 [8d] [7e]}                             ......~
                     # firmware packet may only be sent on startup / network reconnection
                     if packet_data[0] == 0x00:
-                        fw_type, fw_ver, fw_str = parse_firmware_version(packet_data, lp)
+                        fw_type, fw_ver, fw_str = parse_unbound_firmware_version(packet_data, lp)
                         if fw_type == 'device':
                             self.version = fw_ver
                             self.version_str = fw_str
