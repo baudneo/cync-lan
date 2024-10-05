@@ -19,19 +19,14 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and
 [juanboro](https://github.com/juanboro)
 
 ## Prerequisites
-- Python 3.8+ (Walrus operator used)
-- A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug, wired switch or an always powered wifi bulb - *The wifi device' can control BT only bulbs*
+- Python 3.8+ (Walrus [:=] operator used)
+- A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug, wired switch or an always powered Wi-Fi bulb - *The Wi-Fi devices can control BT only bulbs*
 - Cync account with devices added and configured
 - MQTT broker (I recommend EMQX)
 - [Create self-signed SSL certs](./docs/install.md#setup) using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
-- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export requires cync email, password and an OTP emailed to you.
+- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export requires account email, password and an OTP emailed to you.
 - [DNS override/redirection](./docs/DNS.md) for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`.
 - **Optional:** *[Firewall](#firewall) rules to allow cync devices to talk to `cync-lan`*
-
-The only way local control will work is by re-routing DNS traffic from the 
-Cync cloud server to your local network, you'll need some way to override 
-DNS - a local DNS server; OPNSense/pfSense running unbound, Pi-Hole, etc. 
-See the [DNS docs](docs/DNS.md) for more information.
 
 ## Installation
 Please see [Install docs](./docs/install.md) for more information.
@@ -46,12 +41,14 @@ There are detailed instructions for OPNSense and Pi-hole.
 See [DNS docs](docs/DNS.md) for more information.
 
 As long as your DNS is correctly re-routed, you should be able to start 
-the server and see devices connecting to it. If you do not see any Cync 
+the server and see devices connecting to it in the logs. If you do not see any Cync 
 devices connecting after power cycling them, you may need to check your 
-DNS re-routing **and** firewall rules (if applicable).
+DNS re-routing **and** firewall rules (if applicable). If your devices 
+are on a separate VLAN, you may need to allow them to talk to the 
+`cync-lan` server.
 
 ### Testing DNS override
->[!WARNING] 
+>[!NOTE] 
 > If you are using selective DNS override via `views` in
 > `unbound`, and you did not set up an override for the IP of the
 > machine running `dig` / `nslookup`, the command will return the Cync cloud IP, this is normal.
@@ -88,10 +85,10 @@ cm.gelighting.com.      3600    IN      A       10.0.1.9 <---- Overridden to a l
 
 ## Config file
 > [!IMPORTANT]
-> At the moment, the config file will override any environment variables set.
+> It is required to query the Cync cloud API to export all of your homes
+> and the devices in each home.
 
-**It is required to query the Cync cloud API to export all your homes
-and the devices in each home.** This requires your email, password and
+This requires your email, password and
 the code that will be emailed to you during export.
 
 If you add or remove devices, you *should* re-export the config file
@@ -115,7 +112,8 @@ ID number, YMMV. Be careful when manually adding devices.*
 
 >[!NOTE]
 > By manually adding, I mean you added a device via the app and 
-> did not re-export a new config.
+> did not re-export a new config. Thus, you must manually enter the
+> device into the config file (not recommended).
 
 ## CLI arguments
 You can always supply `--help` to the cync-lan.py script to get a 
@@ -186,5 +184,6 @@ If you are having issues, please see the
 [Troubleshooting docs](docs/troubleshooting.md) for more information.
 
 # Buy devices to be supported
-If you really want a device added, [purchase it from this Amazon wish list](https://www.amazon.ca/registries/gl/guest-view/270SHDZQLXRU8) and it will be sent to me. I will add support ASAP.
+If you really want a device added, [purchase it from this Amazon wish list](https://www.amazon.ca/registries/gl/guest-view/270SHDZQLXRU8), 
+and it will be sent to me. I will add support ASAP.
 
