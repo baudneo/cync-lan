@@ -899,6 +899,8 @@ class CyncDevice:
         if name is None:
             name = f"device_{cync_id}"
         self.name = name
+        self._status: DeviceStatus = DeviceStatus()
+        self._mesh_alive_byte: Union[int, str] = 0x00
         # state: 0:off 1:on
         self._state: int = 0
         # 0-100
@@ -1032,7 +1034,7 @@ class CyncDevice:
         msg_id_inc = self.get_incremental_number()
         checksum = ((msg_id_inc - 64) + state + self.id) % 256
         header = [0x73, 0x00, 0x00, 0x00, 0x1F]
-        _inner_struct = [
+        inner_struct = [
             0x7E,
             msg_id_inc,
             0x00,
@@ -1361,6 +1363,15 @@ class CyncDevice:
         ]
 
     @property
+    def status(self) -> DeviceStatus:
+        return self._status
+
+    @status.setter
+    def status(self, value: DeviceStatus):
+        if self._status != value:
+            self._status = value
+
+    @property
     def state(self):
         return self._state
 
@@ -1591,6 +1602,7 @@ class CyncLanServer:
                 f"or there is a bug!"
             )
             return
+        # set the device status, can be used when hass comes back online via last will message
 
         if connected_to_mesh == 0:
             # This usually happens when a device loses power/connection.
@@ -1612,7 +1624,7 @@ class CyncLanServer:
         else:
             device.online = True
             # create a status with existing data, change along the way for publishing over mqtt
-            new_state = DeviceStatus(
+            device.status = new_state = DeviceStatus(
                 state=device.state,
                 brightness=device.brightness,
                 temperature=device.temperature,
@@ -1629,7 +1641,7 @@ class CyncLanServer:
             # fixme: need to make a bulk_change method to prevent multiple mqtt messages
             curr_status = device.current_status
             if curr_status == [state, brightness, temp, r, _g, b]:
-                # logger.debug(f"{device.lp} NO CHANGES TO DEVICE STATUS")
+                logger.debug(f"{device.lp} NO CHANGES TO DEVICE STATUS") if CYNC_RAW is True else None
                 pass
             else:
                 # find the differences
@@ -1705,7 +1717,7 @@ class CyncLanServer:
                 http_dev_keys = list(self.http_devices.keys())
                 # ask all devices for their mesh info
                 logger.debug(
-                    f"{lp} Asking all ({len(http_dev_keys)}) HTTP devices for their "
+                    f"{lp} Asking all ({len(http_dev_keys)}) online HTTP devices for their "
                     f"mesh info: {', '.join(http_dev_keys).rstrip(',')}"
                 )
                 for dev_addy in http_dev_keys:
@@ -2024,13 +2036,8 @@ class CyncLAN:
                 cfg["name"] = f"mesh_{cfg_id}"
             # Create devices
             for cync_id, cync_device in cfg["devices"].items():
+                cync_device: dict
                 self._ids_from_config.append(cync_id)
-                device_type = cync_device["type"] if "type" in cync_device else None
-                # mac = cync_device["mac"] if "mac" in cync_device else None
-                # wifi_mac = (
-                #     cync_device["wifi_mac"] if "wifi_mac" in cync_device else None
-                # )
-                # ip = cync_device["ip"] if "ip" in cync_device else None
                 device_name = (
                     cync_device["name"]
                     if "name" in cync_device
@@ -2282,9 +2289,15 @@ class CyncHTTPDevice:
                         # there is no gurantee the version is sent before checking the timestamp, so use a gross hack.
                         if self.version and (self.version >= 30000 <= 40000):
                             ts_end_idx = -2
-                        ts = packet_data[ts_idx:ts_end_idx]
+                            ts = packet_data[ts_idx:ts_end_idx]
+
+                        ts_ascii = ts.decode("ascii", errors="replace")
+                        # gross hack
+                        if ts_ascii[-1] != ',':
+                            if not ts_ascii[-1].isdigit():
+                                ts_ascii = ts_ascii[:-1]
                         logger.debug(
-                            f"{lp} Device sent TIMESTAMP -> {ts.decode('ascii', errors='replace')} - replying..."
+                            f"{lp} Device sent TIMESTAMP -> {ts_ascii} - replying..."
                         )
                     else:
                         # 43 00 00 00 2d 39 87 c8 57 01 01 06| [(06 00 10) {03  C...-9..W.......
@@ -2378,42 +2391,39 @@ class CyncHTTPDevice:
                         # this seems to show it changed its device state in response to a control packet
                         if ctrl_bytes == bytes([0xFA, 0xDB]):
                             # 0x13 after ctrl bytes signifies self status or device status
-                            if packet_data[7] == 0x13:
-                                id_idx = 14
-                                connected_idx = 19
-                                state_idx = 20
-                                bri_idx = 21
-                                tmp_idx = 22
-                                r_idx = 23
-                                g_idx = 24
-                                b_idx = 25
-                                dev_id = packet_data[id_idx]
-                                state = packet_data[state_idx]
-                                bri = packet_data[bri_idx]
-                                tmp = packet_data[tmp_idx]
-                                _red = packet_data[r_idx]
-                                _green = packet_data[g_idx]
-                                _blue = packet_data[b_idx]
-                                connected_to_mesh = packet_data[connected_idx]
-                                raw_status: bytes = bytes(
-                                    [
-                                        dev_id,
-                                        state,
-                                        bri,
-                                        tmp,
-                                        _red,
-                                        _green,
-                                        _blue,
-                                        connected_to_mesh,
-                                    ]
-                                )
-                                logger.debug(
-                                    f"{lp} Internal STATUS for device ID: {dev_id} = {bytes2list(raw_status)}"
-                                )
-                                await g.server.parse_status(raw_status)
-                            if packet_data[7] == 0x14:
-                                # some sort of other message, we want to see the wrapped data
-                                pass
+                            id_idx = 14
+                            connected_idx = 19
+                            state_idx = 20
+                            bri_idx = 21
+                            tmp_idx = 22
+                            r_idx = 23
+                            g_idx = 24
+                            b_idx = 25
+                            dev_id = packet_data[id_idx]
+                            state = packet_data[state_idx]
+                            bri = packet_data[bri_idx]
+                            tmp = packet_data[tmp_idx]
+                            _red = packet_data[r_idx]
+                            _green = packet_data[g_idx]
+                            _blue = packet_data[b_idx]
+                            connected_to_mesh = packet_data[connected_idx]
+                            raw_status: bytes = bytes(
+                                [
+                                    dev_id,
+                                    state,
+                                    bri,
+                                    tmp,
+                                    _red,
+                                    _green,
+                                    _blue,
+                                    connected_to_mesh,
+                                ]
+                            )
+                            logger.debug(
+                                f"{lp} Internal STATUS for device ID: {dev_id} = {bytes2list(raw_status)}"
+                            )
+                            await g.server.parse_status(raw_status)
+
                 else:
                     logger.warning(
                         f"{lp} packet with no data????? After stripping header, queue and "
@@ -2433,13 +2443,14 @@ class CyncHTTPDevice:
                         # find next 0x7e and extract the inner struct
                         end_bndry_idx = packet_data[1:].find(0x7E) + 1
                         inner_struct = packet_data[1:end_bndry_idx]
+                        inner_struct_len = len(inner_struct)
                         # ctrl bytes 0xf9, 0x52 indicates this is a mesh info struct
-                        # some device firmwares respond with a message received poacket before replying with the data
+                        # some device firmwares respond with a message received packet before replying with the data
                         # example: 7e 1f 00 00 00 f9 52 01 00 00 53 7e (12 bytes, 0x7e bound. 10 bytes of data)
                         if ctrl_bytes == bytes([0xF9, 0x52]):
-                            # logger.debug(f"{lp} inner_struct length: {len(inner_struct)} // {inner_struct.hex(' ')}")
-                            if len(inner_struct) < 15:
-                                if len(inner_struct) == 10:
+                            # logger.debug(f"{lp} got a mesh info response (len: {inner_struct_len}): {inner_struct.hex(' ')}")
+                            if inner_struct_len < 15:
+                                if inner_struct_len == 10:
                                     # server sent mesh info request, this seems to be the ack?
                                     # 7e 1f 00 00 00 f9 52 01 00 00 53 7e
                                     # checksum (idx 10) = idx 6 + idx 7 % 256
@@ -2456,6 +2467,10 @@ class CyncHTTPDevice:
                                             logger.warning(
                                                 f"{lp} Mesh info request ACK checksum failed! {minfo_ack_chksum} != {calc_chksum}"
                                             )
+                                    else:
+                                        logger.warning(
+                                            f"{lp} Mesh info request ACK failed! success byte: {minfo_ack_succ}"
+                                        )
 
                                 else:
                                     logger.debug(f"{lp} inner_struct is less than 15 bytes: {inner_struct.hex(' ')}")
@@ -2488,7 +2503,7 @@ class CyncHTTPDevice:
                                     try:
                                         for i in range(
                                             minfo_start_idx,
-                                            len(inner_struct),
+                                            inner_struct_len,
                                             minfo_length,
                                         ):
                                             loop_num += 1
@@ -2552,7 +2567,6 @@ class CyncHTTPDevice:
                                                         self.device_types = cync_device.check_dev_type(dev_type_id)
                                                         # logger.debug(f"{lp} device type ({dev_type_id}) capabilities: {self.capabilities}")
                                                         # logger.debug(f"{lp} device type ({dev_type_id}): {self.device_types}")
-                                                        del cync_device
                                                     elif self.id and self.id != dev_id:
                                                         logger.warning(f"{lp} The first device reported in 0x83 is "
                                                                        f"usually the http device. current: {self.id} "
@@ -2570,39 +2584,37 @@ class CyncHTTPDevice:
                                                     f"defined in config file: "
                                                     f"{g.cync_lan.server.devices.keys()}"
                                                 )
-                                        # if ids_reported:
-                                        # logger.debug(
-                                        #     f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
-                                        #     f"{sorted(ids_reported)}"
-                                        # )
-                                        # if structs:
-                                        #     logger.debug(
-                                        #         f"{lp} from: {self.id} -  MESH INFO // STRUCTS: {structs}"
-                                        #     )
-
-                                        if self.parse_mesh_status is True:
-                                            logger.debug(
-                                                f"{lp} parsing mesh info // {_m} // {_raw_m}"
-                                            )
-                                            for status in _m:
-                                                await g.server.parse_status(
-                                                    bytes(status)
-                                                )
-
-                                        mesh_info["status"] = _m
-                                        mesh_info["id_from"] = self.id
-                                        # logger.debug(f"\n\n{lp} MESH INFO // {_raw_m}\n")
-                                        self.mesh_info = MeshInfo(**mesh_info)
-
+                                        # -- END OF mesh info response parsing loop --
                                     except IndexError:
                                         # ran out of data
+                                        logger.debug(f"{lp} IndexError parsing mesh info response") if CYNC_RAW is True else None
                                         pass
                                     except Exception as e:
                                         logger.error(
                                             f"{lp} MESH INFO for loop EXCEPTION: {e}"
                                         )
-                                    # Always clear parse mesh status
-                                    self.parse_mesh_status = False
+                                    # if ids_reported:
+                                    # logger.debug(
+                                    #     f"{lp} from: {self.id} - MESH INFO // Device IDs reported: "
+                                    #     f"{sorted(ids_reported)}"
+                                    # )
+                                    # if structs:
+                                    #     logger.debug(
+                                    #         f"{lp} from: {self.id} -  MESH INFO // STRUCTS: {structs}"
+                                    #     )
+                                    if self.parse_mesh_status is True:
+                                        logger.debug(
+                                            f"{lp} parse_mesh_status is TRUE, parsing mesh info // {_m} // {_raw_m}"
+                                        )
+                                        for status in _m:
+                                            await g.server.parse_status(
+                                                bytes(status)
+                                            )
+
+                                    mesh_info["status"] = _m
+                                    mesh_info["id_from"] = self.id
+                                    # logger.debug(f"\n\n{lp} MESH INFO // {_raw_m}\n")
+                                    self.mesh_info = MeshInfo(**mesh_info)
                                     # Send mesh status ack
                                     # 73 00 00 00 14 2d e4 b5 d2 15 2d 00 7e 1e 00 00
                                     #  00 f8 {af 02 00 af 01} 61 7e
@@ -2629,8 +2641,9 @@ class CyncHTTPDevice:
                                     )
                                     # logger.debug(f"{lp} Sending MESH INFO ACK -> {mesh_ack.hex(' ')}")
                                     await self.write(mesh_ack)
+                                    # Always clear parse mesh status
+                                    self.parse_mesh_status = False
                         else:
-
                             logger.debug(
                                 f"{lp} control bytes: {ctrl_bytes.hex(' ')} // packet data:  {packet_data.hex(' ')}") if CYNC_RAW else None
                             msg_cb_obj: Optional[MessageCallback] = None
@@ -3017,7 +3030,7 @@ class MQTTClient:
                 "auto_reconnect": True,
                 "will": {
                     "topic": f"{CYNC_TOPIC}/connected",
-                    "message": LWT_MSG,
+                    "message": DEVICE_LWT_MSG,
                     "qos": 0x01,
                     "retain": True,
                 },
@@ -3280,119 +3293,132 @@ class MQTTClient:
                     )
 
                     if len(topic) == 3:
-                        # command channel to send raw data to device
-                        if topic[1] == "cmnd":
-                            cmnd_type = topic[2]
-                            if cmnd_type == "int":
-                                # check if commas
-                                if b"," in payload:
-                                    # convert from string of comma separated ints to bytearray
-                                    payload = bytearray(
-                                        [int(x) for x in payload.split(b",")]
-                                    )
-                                else:
-                                    payload = bytearray(
-                                        [int(x) for x in payload.split(b" ")]
-                                    )
-                            elif cmnd_type == "bytes":
-                                payload = bytes(payload)
-                            elif cmnd_type == "hex":
-                                payload = bytes.fromhex(payload.decode())
+                        if topic[0] == CYNC_TOPIC:
+                            # command channel to send raw data to device
+                            if topic[1] == "cmnd":
+                                cmnd_type = topic[2]
+                                if cmnd_type == "int":
+                                    # check if commas
+                                    if b"," in payload:
+                                        # convert from string of comma separated ints to bytearray
+                                        payload = bytearray(
+                                            [int(x) for x in payload.split(b",")]
+                                        )
+                                    else:
+                                        payload = bytearray(
+                                            [int(x) for x in payload.split(b" ")]
+                                        )
+                                elif cmnd_type == "bytes":
+                                    payload = bytes(payload)
+                                elif cmnd_type == "hex":
+                                    payload = bytes.fromhex(payload.decode())
 
-                        elif topic[1] == "set":
-                            device_id = int(topic[2])
-                            if device_id not in g.server.devices:
-                                logger.warning(
-                                    f"{lp} Device ID {device_id} not found, have you deleted or added any "
-                                    f"devices recently?"
-                                )
-                                continue
-                            device = g.server.devices[device_id]
-                            if payload.startswith(b"{"):
-                                try:
-                                    json_data = json.loads(payload)
-                                except Exception as e:
-                                    logger.error(
-                                        "%s bad json message: {%s} EXCEPTION => %s"
-                                        % (lp, payload, e)
+                            elif topic[1] == "set":
+                                device_id = int(topic[2])
+                                if device_id not in g.server.devices:
+                                    logger.warning(
+                                        f"{lp} Device ID {device_id} not found, have you deleted or added any "
+                                        f"devices recently?"
                                     )
                                     continue
-
-                                if "state" in json_data and (
-                                    "brightness" not in json_data
-                                    or device.brightness < 1
-                                ):
-                                    if json_data["state"].upper() == "ON":
-                                        logger.debug(f"{lp} setting power to ON")
-                                        await device.set_power(1)
-                                    else:
-                                        logger.debug(f"{lp} setting power to OFF")
-                                        await device.set_power(0)
-                                if "brightness" in json_data:
-                                    lum = int(json_data["brightness"])
-                                    logger.debug(f"{lp} setting brightness to: {lum}")
-                                    if 5 > lum > 0:
-                                        lum = 5
+                                device = g.server.devices[device_id]
+                                if payload.startswith(b"{"):
                                     try:
-                                        await device.set_brightness(lum)
+                                        json_data = json.loads(payload)
                                     except Exception as e:
                                         logger.error(
-                                            f"{lp} set_brightness exception: {e}",
-                                            exc_info=True,
+                                            "%s bad json message: {%s} EXCEPTION => %s"
+                                            % (lp, payload, e)
                                         )
-                                if "color_temp" in json_data:
-                                    logger.debug(
-                                        f"{lp} setting color temp to: {json_data['color_temp']}"
-                                    )
-                                    await device.set_temperature(
-                                        self.hassct_to_tlct(
-                                            int(json_data["color_temp"])
-                                        )
-                                    )
-                                if "color" in json_data:
-                                    color = []
-                                    for rgb in ("r", "g", "b"):
-                                        if rgb in json_data["color"]:
-                                            color.append(int(json_data["color"][rgb]))
+                                        continue
+
+                                    if "state" in json_data and (
+                                        "brightness" not in json_data
+                                        or device.brightness < 1
+                                    ):
+                                        if json_data["state"].upper() == "ON":
+                                            logger.debug(f"{lp} setting power to ON")
+                                            await device.set_power(1)
                                         else:
-                                            color.append(0)
-                                    logger.debug(f"{lp} setting RGB to: {color}")
-                                    await device.set_rgb(*color)
-                            elif payload.upper() == b"ON":
-                                logger.debug(f"{lp} setting power to ON")
-                                await device.set_power(1)
-                            elif payload.upper() == b"OFF":
-                                logger.debug(f"{lp} setting power to OFF")
-                                await device.set_power(0)
-                            else:
-                                logger.warning(
-                                    f"{lp} Unknown payload: {payload}, skipping..."
-                                )
-                        # make sure next command doesn't come too fast
-                        await asyncio.sleep(0.1)
+                                            logger.debug(f"{lp} setting power to OFF")
+                                            await device.set_power(0)
+                                    if "brightness" in json_data:
+                                        lum = int(json_data["brightness"])
+                                        logger.debug(f"{lp} setting brightness to: {lum}")
+                                        # if 5 > lum > 0:
+                                        #     lum = 5
+                                        try:
+                                            await device.set_brightness(lum)
+                                        except Exception as e:
+                                            logger.error(
+                                                f"{lp} set_brightness exception: {e}",
+                                                exc_info=True,
+                                            )
+                                    if "color_temp" in json_data:
+                                        logger.debug(
+                                            f"{lp} setting color temp to: {json_data['color_temp']}"
+                                        )
+                                        await device.set_temperature(
+                                            self.hassct_to_tlct(
+                                                int(json_data["color_temp"])
+                                            )
+                                        )
+                                    if "color" in json_data:
+                                        color = []
+                                        for rgb in ("r", "g", "b"):
+                                            if rgb in json_data["color"]:
+                                                color.append(int(json_data["color"][rgb]))
+                                            else:
+                                                color.append(0)
+                                        logger.debug(f"{lp} setting RGB to: {color}")
+                                        await device.set_rgb(*color)
+                                elif payload.upper() == b"ON":
+                                    logger.debug(f"{lp} setting power to ON")
+                                    await device.set_power(1)
+                                elif payload.upper() == b"OFF":
+                                    logger.debug(f"{lp} setting power to OFF")
+                                    await device.set_power(0)
+                                else:
+                                    logger.warning(
+                                        f"{lp} Unknown payload: {payload}, skipping..."
+                                    )
+                                # make sure next command doesn't come too fast
+                                await asyncio.sleep(0.05)
 
                     elif len(topic) == 2:
-                        if topic[1] == "shutdown":
-                            logger.info(
-                                "sub worker - Shutdown requested, sending SIGTERM"
-                            )
-                            os.kill(os.getpid(), signal.SIGTERM)
-                        elif topic[1] == "devices" and payload.lower() == b"get":
-                            await self.publish_devices()
-                        elif topic[0] == self.ha_topic and topic[1] == "status":
-
-                            if payload.upper() == b"ONLINE":
+                        if topic[0] == CYNC_TOPIC:
+                            if topic[1] == "shutdown":
                                 logger.info(
-                                    f"{lp} HASS is signaling online, re-announce devices"
+                                    "sub worker - Shutdown requested, sending SIGTERM"
                                 )
-                                await self.homeassistant_discovery()
-                                await asyncio.sleep(1)
+                                os.kill(os.getpid(), signal.SIGTERM)
+                            elif topic[1] == "devices" and payload.lower() == b"get":
+                                await self.publish_devices()
+                        elif topic[0] == self.ha_topic:
+                            if topic[1] == CYNC_HASS_STATUS_TOPIC:
+                                if payload.decode().casefold() == CYNC_HASS_BIRTH_MSG.casefold():
+                                    logger.info(
+                                        f"{lp} HASS has announced online, re-announce device availability and status"
+                                    )
+                                    # register devices
+                                    await self.homeassistant_discovery()
+                                    await asyncio.sleep(0.07)
+                                    # set the device online/offline and set its status
+                                    for device in g.server.devices.values():
+                                        await self.pub_online(device.id, device.online)
+                                        await self.parse_device_status(device.id, DeviceStatus(
+                                            state=device.state,
+                                            brightness=device.brightness,
+                                            temperature=device.temperature,
+                                            red=device.red,
+                                            green=device.green,
+                                            blue=device.blue,
+                                        ))
 
-                                for device_id, device in g.server.devices.items():
-                                    availability = device.online
-                                    await self.pub_online(device_id, availability)
-                            elif payload.upper() == b"OFFLINE":
-                                logger.info(f"{lp} HASS is signaling offline!")
+                                elif payload.decode().casefold() == CYNC_HASS_WILL_MSG.casefold():
+                                    logger.info(f"{lp} HASS is offline, received Last Will and Testament msg")
+                                else:
+                                    logger.warning(f"{lp} Unknown HASS status message: {payload}")
 
             except Exception as e:
                 logger.error("%s sub_worker exception: %s" % (lp, e), exc_info=True)
