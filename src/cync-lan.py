@@ -1059,11 +1059,13 @@ class CyncDevice:
         # bridge_device.messages.x73.append(cb)
 
         # await bridge_device.write(b)
+
         for device in g.server.http_devices.values():
-            header.extend(device.queue_id)
-            header.extend(bytes([0x00, 0x00, 0x00]))
-            header.extend(_inner_struct)
-            b = bytes(header)
+            payload = list(header)
+            payload.extend(device.queue_id)
+            payload.extend(bytes([0x00, 0x00, 0x00]))
+            payload.extend(inner_struct)
+            b = bytes(payload)
             await device.write(b)
 
     async def set_brightness(self, bri: int):
@@ -1129,10 +1131,11 @@ class CyncDevice:
         # bridge_device.messages.x73.append(cb)
 
         for device in g.server.http_devices.values():
-            header.extend(device.queue_id)
-            header.extend(bytes([0x00, 0x00, 0x00]))
-            header.extend(inner_struct)
-            b = bytes(header)
+            payload = list(header)
+            payload.extend(device.queue_id)
+            payload.extend(bytes([0x00, 0x00, 0x00]))
+            payload.extend(inner_struct)
+            b = bytes(payload)
             await device.write(b)
         # await bridge_device.write(b)
 
@@ -1204,10 +1207,11 @@ class CyncDevice:
         # )
         # bridge_device.messages.x73.append(cb)
         for device in g.server.http_devices.values():
-            header.extend(device.queue_id)
-            header.extend(bytes([0x00, 0x00, 0x00]))
-            header.extend(inner_struct)
-            b = bytes(header)
+            payload = list(header)
+            payload.extend(device.queue_id)
+            payload.extend(bytes([0x00, 0x00, 0x00]))
+            payload.extend(inner_struct)
+            b = bytes(payload)
             await device.write(b)
 
     async def set_rgb(self, red: int, green: int, blue: int):
@@ -1281,12 +1285,13 @@ class CyncDevice:
         # )
         # bridge_device.messages.x73.append(cb)
 
-        for bridge_device in g.server.http_devices.values():
-            header.extend(bridge_device.queue_id)
-            header.extend(bytes([0x00, 0x00, 0x00]))
-            header.extend(inner_struct)
-            b = bytes(header)
-            await bridge_device.write(b)
+        for device in g.server.http_devices.values():
+            payload = list(header)
+            payload.extend(device.queue_id)
+            payload.extend(bytes([0x00, 0x00, 0x00]))
+            payload.extend(inner_struct)
+            b = bytes(payload)
+            await device.write(b)
 
     @property
     def online(self):
