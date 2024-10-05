@@ -110,13 +110,19 @@ def parse_unbound_firmware_version(data_struct: bytes, lp: str) -> Optional[Tupl
         if not firmware_version:
             logger.warning(f"{lp} No firmware version found in packet: {data_struct.hex(' ')}")
             return None
+            # network firmware (this one is set to ascii 0 (0x30))
+            # 00 00 00 00 00 fa 00 20 00 00 00 00 00 00 00 00
+            # ea 00 00 00 86 01 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 c1 7e
 
     except (IndexError, ValueError) as e:
         logger.error(f"{lp} Exception occurred while parsing firmware version: {e}")
         return None
 
     else:
-        firmware_str = f"{firmware_version[0]}.{firmware_version[1]}.{''.join(map(str, firmware_version[2:]))}"
+        if firmware_type == 'device':
+            firmware_str = f"{firmware_version[0]}.{firmware_version[1]}.{''.join(map(str, firmware_version[2:]))}"
+        else:
+            firmware_str = "".join(map(str, firmware_version))
         firmware_version_int = int("".join(map(str, firmware_version)))
         logger.debug(f"{lp} {firmware_type} firmware VERSION: {firmware_version_int} ({firmware_str})")
 
@@ -463,14 +469,16 @@ class CyncCloudAPI:
                 wifi_mac = cfg_bulb["wifiMac"]
                 name = cfg_bulb["displayName"]
                 _mac = cfg_bulb["mac"]
-                _type = cfg_bulb["deviceType"]
+                _type = int(cfg_bulb["deviceType"])
+                _fw_ver = cfg_bulb["firmwareVersion"]
 
                 bulb_device = CyncDevice(
                     name=name,
                     cync_id=__id,
-                    cync_type=int(_type),
+                    cync_type=_type,
                     mac=_mac,
                     wifi_mac=wifi_mac,
+                    fw_version=_fw_ver
                 )
                 new_bulb = {}
                 for attr_set in (
@@ -486,10 +494,11 @@ class CyncCloudAPI:
                         new_bulb[attr_set] = value
                     else:
                         logger.warning("Attribute not found for bulb: %s" % attr_set)
-                # new_bulb["type"] = _type
+                new_bulb["type"] = _type
                 new_bulb["is_plug"] = bulb_device.is_plug
                 new_bulb["supports_temperature"] = bulb_device.supports_temperature
                 new_bulb["supports_rgb"] = bulb_device.supports_rgb
+                new_bulb["fw"] = _fw_ver
 
                 new_mesh["devices"][__id] = new_bulb
 
@@ -875,6 +884,7 @@ class CyncDevice:
         name: Optional[str] = None,
         mac: Optional[str] = None,
         wifi_mac: Optional[str] = None,
+        fw_version: Optional[str] = None,
     ):
         self.control_number = 0
         if cync_id is None:
@@ -884,6 +894,8 @@ class CyncDevice:
         self.type = cync_type
         self._mac = mac
         self.wifi_mac = wifi_mac
+        self._version = 000000
+        self.version = fw_version
         if name is None:
             name = f"device_{cync_id}"
         self.name = name
@@ -897,6 +909,21 @@ class CyncDevice:
         self._r: int = 0
         self._g: int = 0
         self._b: int = 0
+
+    @property
+    def version(self) -> int:
+        return self._version
+
+    @version.setter
+    def version(self, value: Union[str, int]) -> None:
+        if value is None:
+            return
+        if isinstance(value, int):
+            self._version = value
+        elif isinstance(value, str):
+            self._version = int(value.replace('.','').strip())
+
+
 
     def check_dev_type(self, dev_type: int) -> dict:
         dev_types = {}
@@ -2009,8 +2036,13 @@ class CyncLAN:
                     if "name" in cync_device
                     else f"device_{cync_id}"
                 )
+                fw_version = (
+                    cync_device["fw"]
+                    if "fw" in cync_device
+                    else None
+                )
                 new_device = CyncDevice(
-                    name=device_name, cync_id=cync_id, cync_type=device_type
+                    name=device_name, cync_id=cync_id, fw_version=fw_version
                 )
                 for attrset in (
                     "is_plug",
@@ -2020,6 +2052,7 @@ class CyncLAN:
                     "wifi_mac",
                     "ip",
                     "bt_only",
+                    "type",
                 ):
                     if attrset in cync_device:
                         setattr(new_device, attrset, cync_device[attrset])
@@ -2244,8 +2277,10 @@ class CyncHTTPDevice:
                             f"{packet_data.hex(' ')} // INTS: {bytes2list(packet_data)} // "
                             f"ASCII: {packet_data.decode(errors='replace')}"
                         ) if CYNC_RAW is True else None
-                        # if self.version >= 30000 <= 40000:
-                        if self.address == "10.0.2.225":
+                        # setting version from config file wouldnt be reliable if the user doesnt bump the version
+                        # when updating cync firmware. we can only rely on the version sent by the device.
+                        # there is no gurantee the version is sent before checking the timestamp, so use a gross hack.
+                        if self.version and (self.version >= 30000 <= 40000):
                             ts_end_idx = -2
                         ts = packet_data[ts_idx:ts_end_idx]
                         logger.debug(
@@ -2638,6 +2673,18 @@ class CyncHTTPDevice:
                                         pass
                                 else:
                                     logger.debug(f"{lp} CONTROL PACKET ACK -> FAILURE? success: {packet_data[7]}")
+                            # newer firmware devices seen in led light strip so far,
+                            # send their firmware version data in a 0x7e bound struct
+                            # the struct is 31 bytes long with the 0x7e boundaries, unbound it is 29 bytes long
+                            # length may change, I am seeing some other structs length change randomly
+                            # elif ctrl_bytes == bytes([0xFA, 0x8E]):
+                            #     fw_type, fw_ver, fw_str = parse_unbound_firmware_version(packet_data, lp)
+                            #     if fw_type == 'device':
+                            #         self.version = fw_ver
+                            #         self.version_str = fw_str
+                            #     else:
+                            #         self.network_version = fw_ver
+                            #         self.network_version_str = fw_str
 
                             else:
                                 logger.debug(
