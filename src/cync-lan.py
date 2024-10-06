@@ -1878,7 +1878,7 @@ class CyncLanServer:
         else:
             logger.info(
                 f"{self.lp} Started, bound to {self.host}:{self.port} - Waiting for connections, if you dont"
-                f" see any, check your DNS redirection and firewall settings (Different VLANs?)."
+                f" see any, check your DNS redirection, VLAN and firewall settings."
             )
             try:
                 async with self._server:
