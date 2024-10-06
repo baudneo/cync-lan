@@ -1831,6 +1831,7 @@ class CyncLanServer:
     async def check_mqtt_tasks():
         mqtt_tasks = g.mqtt.tasks
         remove_idx = []
+        idx = 0
         for task in mqtt_tasks:
             if task.get_name() in ("pub_worker", "sub_worker"):
                 new_task = (
@@ -1850,9 +1851,12 @@ class CyncLanServer:
                     g.mqtt.tasks.append(
                         asyncio.create_task(new_task(new_queue), name=task.get_name())
                     )
+                    remove_idx.append(idx)
+            idx += 1
         if remove_idx:
             for idx in remove_idx:
-                del g.mqtt.tasks[idx]
+                z = g.mqtt.tasks.pop(idx)
+                del z
         else:
             # logger.debug(f"{lp} MQTT sub/pub tasks are still running")
             pass
