@@ -728,7 +728,7 @@ class CyncDevice:
             28,
             29,
             30,
-            31,  # BTLE only bulb?
+            31,
             32,
             33,
             34,
