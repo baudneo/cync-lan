@@ -2283,6 +2283,7 @@ class CyncHTTPDevice:
 
                         ts_idx = 3
                         ts_end_idx = -1
+                        ts: Optional[bytes] = None
                         logger.debug(
                             f"{lp} Device TIMESTAMP PACKET ({len(bytes.fromhex(packet_data.hex()))}) -> HEX: "
                             f"{packet_data.hex(' ')} // INTS: {bytes2list(packet_data)} // "
@@ -2295,14 +2296,17 @@ class CyncHTTPDevice:
                             ts_end_idx = -2
                             ts = packet_data[ts_idx:ts_end_idx]
 
-                        ts_ascii = ts.decode("ascii", errors="replace")
-                        # gross hack
-                        if ts_ascii[-1] != ',':
-                            if not ts_ascii[-1].isdigit():
-                                ts_ascii = ts_ascii[:-1]
-                        logger.debug(
-                            f"{lp} Device sent TIMESTAMP -> {ts_ascii} - replying..."
-                        )
+                        if ts:
+                            ts_ascii = ts.decode("ascii", errors="replace")
+                            # gross hack
+                            if ts_ascii[-1] != ',':
+                                if not ts_ascii[-1].isdigit():
+                                    ts_ascii = ts_ascii[:-1]
+                            logger.debug(
+                                f"{lp} Device sent TIMESTAMP -> {ts_ascii} - replying..."
+                            )
+                        else:
+                            logger.debug(f"{lp} Could not decode timestamp from: {packet_data.hex(' ')}")
                     else:
                         # 43 00 00 00 2d 39 87 c8 57 01 01 06| [(06 00 10) {03  C...-9..W.......
                         # 01 64 32 00 00 00 01} ff 07 00 00 00 00 00 00] 07  .d2.............
