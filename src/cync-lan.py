@@ -2289,8 +2289,8 @@ class CyncHTTPDevice:
                         # there is no gurantee the version is sent before checking the timestamp, so use a gross hack.
                         if self.version and (self.version >= 30000 <= 40000):
                             ts_end_idx = -2
-                            ts = packet_data[ts_idx:ts_end_idx]
 
+                        ts = packet_data[ts_idx:ts_end_idx]
                         ts_ascii = ts.decode("ascii", errors="replace")
                         # gross hack
                         if ts_ascii[-1] != ',':
