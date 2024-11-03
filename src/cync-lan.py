@@ -16,6 +16,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
+from json import JSONDecodeError
+from multiprocessing.context import AuthenticationError
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Callable, Coroutine, Any
 
@@ -34,6 +36,7 @@ DEVICE_LWT_MSG: bytes = b"offline"
 
 # This will run an async task every x seconds to check if any device is offline or online.
 # Hopefully keeps devices in sync (seems to do pretty good).
+CYNC_API_BASE: str = "https://api.gelighting.com/v2/"
 CYNC_MESH_CHECK_INTERVAL: int = int(os.environ.get("CYNC_MESH_CHECK", 30)) or 30
 CYNC_MQTT_URL = os.environ.get("CYNC_MQTT_URL", "mqtt://homeassistant.local:1883")
 CYNC_CERT = os.environ.get("CYNC_CERT", "certs/cert.pem")
@@ -356,6 +359,7 @@ class Messages:
 
 class CyncCloudAPI:
     api_timeout: int = 5
+    lp: str = "CyncCloudAPI"
 
     def __init__(self, **kwargs):
         self.api_timeout = kwargs.get("api_timeout", 5)
@@ -372,35 +376,79 @@ class CyncCloudAPI:
             )
         return _mesh_networks
 
-    def authenticate_2fa(self, *args, **kwargs):  # noqa
-        """Authenticate with the API and get a token."""
-        username = input("Enter Username/Email (or emailed OTP code):")
-        if re.match(r"^\d+$", username):
-            # if username is all digits, assume it's a OTP code
-            otp_code = str(username)
-            username = input("Enter Username/Email:")
-        else:
-            # Ask to be sent an email with OTP code
-            api_auth_url = "https://api.gelighting.com/v2/two_factor/email/verifycode"
-            auth_data = {"corp_id": CORP_ID, "email": username, "local_lang": "en-us"}
-            requests.post(api_auth_url, json=auth_data, timeout=self.api_timeout)
-            otp_code = input("Enter emailed OTP code:")
+    def authenticate_2fa(
+            self,
+            uname: Optional[str] = None,
+            password: Optional[str] = None,
+            otp_code: Optional[str] = None,
+    ):  # noqa
+        """
+        Authenticate with the Cync CLoud API and get a token.
 
-        password = getpass.getpass()
-        api_auth_url = "https://api.gelighting.com/v2/user_auth/two_factor"
+        Returns:
+            Tuple[str, str]: Access token and user ID
+        """
+        lp = f"{self.lp}:authenticate_2fa:"
+        if uname is None:
+            if cli_email:
+                uname = cli_email
+                logger.debug(f"{lp} No email provided, using CLI arg: {uname}")
+        else:
+            logger.debug(f"{lp} Using email from kwargs: {uname}")
+        # get user input if neither provided
+        if not uname:
+            uname = input("Enter Cync Account Username/Email:  ")
+
+
+        if not otp_code:
+            # Ask to be sent an email with OTP code
+            api_otp_url = f"{CYNC_API_BASE}two_factor/email/verifycode"
+            auth_data = {"corp_id": CORP_ID, "email": uname, "local_lang": "en-us"}
+            otp_r = requests.post(api_otp_url, json=auth_data, timeout=self.api_timeout)
+            try:
+                otp_r.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                logger.error(f"Failed to get OTP code: {e}")
+                raise e
+            otp_code = input("Enter emailed OTP code (check junk/spam):  ")
+        else:
+            logger.debug(f"{lp} Using OTP code from CLI arg: {otp_code}")
+
+        if not password:
+            # no kwargs password, check cli
+            if cli_password:
+                password = cli_password
+                logger.debug(f"{lp} No password provided, using CLI arg: {password}")
+            # no kwarg or cli password, get from user
+            else:
+                password = getpass.getpass()
+        api_auth_url = f"{CYNC_API_BASE}user_auth/two_factor"
         auth_data = {
             "corp_id": CORP_ID,
-            "email": username,
+            "email": uname,
             "password": password,
             "two_factor": otp_code,
             "resource": random_login_resource(),
         }
         r = requests.post(api_auth_url, json=auth_data, timeout=self.api_timeout)
-
         try:
-            return r.json()["access_token"], r.json()["user_id"]
-        except KeyError:
-            raise Exception("API authentication failed")
+            r.raise_for_status()
+            rjson = r.json()
+        except requests.exceptions.HTTPError as e:
+            logger.exception(f"Failed to authenticate: {e}")
+            raise e
+        except JSONDecodeError as je:
+            logger.exception(f"Failed to decode JSON: {je}")
+            raise je
+
+        except KeyError as ke:
+            logger.exception(f"Failed to get key from JSON: {ke}")
+            raise ke
+        else:
+            logger.info(f"API Auth Response: {rjson}")
+            return rjson["access_token"], rjson["user_id"]
+
+
 
     def get_devices(self, auth_token: str, user: str):
         """Get a list of devices for a particular user."""
@@ -409,7 +457,15 @@ class CyncCloudAPI:
         r = requests.get(
             api_devices_url.format(user=user), headers=headers, timeout=self.api_timeout
         )
-        return r.json()
+        ret = r.json()
+        # {'error': {'msg': 'Access-Token Expired', 'code': 4031021}}
+        if "error" in ret:
+            error_data = ret["error"]
+            if 'msg' in error_data and error_data['msg'] and error_data['msg'].lower() == 'access-token expired':
+                raise AuthenticationError("Access-Token expired, you need to re-authenticate.")
+                # logger.error("Access-Token expired, re-authenticating...")
+                # return self.get_devices(*self.authenticate_2fa())
+        return ret
 
     def get_properties(self, auth_token: str, product_id: str, device_id: str):
         """Get properties for a single device."""
@@ -420,7 +476,16 @@ class CyncCloudAPI:
             headers=headers,
             timeout=self.api_timeout,
         )
-        return r.json()
+        ret = r.json()
+        # {'error': {'msg': 'Access-Token Expired', 'code': 4031021}}
+        if "error" in ret:
+            error_data = ret["error"]
+            if 'msg' in error_data and error_data['msg'] and error_data['msg'].lower() == 'access-token expired':
+                raise AuthenticationError("Access-Token expired, you need to re-authenticate.")
+                # logger.error("Access-Token expired, re-authenticating...")
+                # return self.get_devices(*self.authenticate_2fa())
+        return ret
+
 
     @staticmethod
     def mesh_to_config(mesh_info):
@@ -506,7 +571,19 @@ class CyncCloudAPI:
 
         return config_dict
 
+type_2_str = {
+    31: "Full Color C by GE BTLE A19 Bulb",
+    68: "Indoor Direct Connect Plug",
+    113: "Wire-Free temp control dimmer switch",
+    133: "Full Color Direct Connect LED Light Strip Controller",
+    137: "Full Color Direct Connect A19 Bulb",
+    138: "Full Color Direct Connect BR30 Floodlight",
+    140: "Full Color Direct Connect Outdoor PAR38 Floodlight",
+    146: "Full Color Direct Connect Edison ST19 Bulb",
+    147: "Full Color Direct Connect Edison G25 Bulb",
+    148: "Dimmable Direct Connect Edison ST19 Bulb",
 
+}
 class CyncDevice:
     """
     A class to represent a Cync device imported from a config file. This class is used to manage the state of the device
@@ -885,6 +962,7 @@ class CyncDevice:
         mac: Optional[str] = None,
         wifi_mac: Optional[str] = None,
         fw_version: Optional[str] = None,
+        home_id: Optional[int] = None,
     ):
         self.control_number = 0
         if cync_id is None:
@@ -892,9 +970,11 @@ class CyncDevice:
         self.id = cync_id
         self.lp = f"CyncDevice:{cync_id}:"
         self.type = cync_type
+        self.home_id: Optional[int] = home_id
+        self.hass_id: str = f"{home_id}-{cync_id}"
         self._mac = mac
         self.wifi_mac = wifi_mac
-        self._version = 000000
+        self._version: Optional[str] = None
         self.version = fw_version
         if name is None:
             name = f"device_{cync_id}"
@@ -911,6 +991,8 @@ class CyncDevice:
         self._r: int = 0
         self._g: int = 0
         self._b: int = 0
+
+
 
     @property
     def version(self) -> int:
@@ -1744,11 +1826,14 @@ class CyncLanServer:
 
                 self.known_ids = list(set(self.known_ids))
                 availability_info = defaultdict(bool)
+                _ids_from_cfg = []
                 for cfg_id in ids_from_config:
-                    availability_info[cfg_id] = cfg_id in self.known_ids
-                    if not availability_info[cfg_id]:
-                        offline_ids.append(cfg_id)
-                    await g.mqtt.pub_online(cfg_id, availability_info[cfg_id])
+                    __dev_id = int(cfg_id.split("-")[1])
+                    _ids_from_cfg.append(__dev_id)
+                    availability_info[__dev_id] = __dev_id in self.known_ids
+                    if not availability_info[__dev_id]:
+                        offline_ids.append(__dev_id)
+                    await g.mqtt.pub_online(__dev_id, availability_info[__dev_id])
 
                 offline_str = (
                     f" offline ({len(offline_ids)}): {sorted(offline_ids)} //"
@@ -1757,18 +1842,18 @@ class CyncLanServer:
                 )
 
                 for known_id in self.known_ids:
-                    if known_id not in ids_from_config:
+                    if known_id not in _ids_from_cfg:
                         logger.warning(
                             f"{lp} Device {known_id} not found in config file! You may need to "
                             f"export the devices again OR there is a bug."
                         )
-                (
+                    (
                     logger.debug(
                         f"{lp} No known device IDs found in ANY HTTP devices: {self.http_devices.keys()}"
                     )
                     if not self.known_ids
                     else None
-                )
+                    )
 
                 diff_ = set(previous_online_ids) - set(self.known_ids)
                 (
@@ -1986,7 +2071,7 @@ class CyncLAN:
     def __init__(self, cfg_file: Path):
         global g
 
-        self._ids_from_config: List[Optional[int]] = []
+        self._ids_from_config: List[Optional[str]] = []
         g.cync_lan = self
         self.loop = uvloop.new_event_loop()
         if CYNC_DEBUG is True:
@@ -2030,30 +2115,37 @@ class CyncLAN:
             CYNC_PORT = raw_config["port"]
             logger.info(f"{self.lp} Port set by config file to: {CYNC_PORT}")
         for cfg_name, cfg in raw_config["account data"].items():
-            cfg_id = cfg["id"]
+            home_id = cfg["id"]
             if "devices" not in cfg:
                 logger.warning(
-                    f"{self.lp} No devices found in config for: {cfg_name} (ID: {cfg_id}), skipping..."
+                    f"{self.lp} No devices found in config for: {cfg_name} (ID: {home_id}), skipping..."
                 )
                 continue
             if "name" not in cfg:
-                cfg["name"] = f"mesh_{cfg_id}"
+                cfg["name"] = f"HomeID_{home_id}"
             # Create devices
             for cync_id, cync_device in cfg["devices"].items():
                 cync_device: dict
-                self._ids_from_config.append(cync_id)
                 device_name = (
                     cync_device["name"]
                     if "name" in cync_device
                     else f"device_{cync_id}"
                 )
+                if "enabled" in cync_device:
+                    if cync_device["enabled"] is False:
+                        logger.debug(
+                            f"{self.lp} Device '{device_name}' (ID: {cync_id}) is disabled in config, skipping..."
+                        )
+                        continue
+                self._ids_from_config.append(f"{home_id}-{cync_id}")
+
                 fw_version = (
                     cync_device["fw"]
                     if "fw" in cync_device
                     else None
                 )
                 new_device = CyncDevice(
-                    name=device_name, cync_id=cync_id, fw_version=fw_version
+                    name=device_name, cync_id=cync_id, fw_version=fw_version, home_id=home_id
                 )
                 for attrset in (
                     "is_plug",
@@ -2062,12 +2154,12 @@ class CyncLAN:
                     "mac",
                     "wifi_mac",
                     "ip",
-                    "bt_only",
                     "type",
                 ):
                     if attrset in cync_device:
                         setattr(new_device, attrset, cync_device[attrset])
                 devices[cync_id] = new_device
+                # logger.debug(f"{self.lp} Created device (hass_id: {new_device.hass_id}) (home_id: {new_device.home_id}) (device_id: {new_device.id}): {new_device}")
 
         return devices
 
@@ -2122,6 +2214,7 @@ class CyncHTTPDevice:
         self.network_version: Optional[int] = None
         self.device_types: Optional[dict] = None
         self.device_type_id: Optional[int] = None
+        self.device_timestamp: Optional[str] = None
         self.capabilities: Optional[dict] = None
         self.last_xc3_request: Optional[float] = None
         self.messages = Messages()
@@ -2273,6 +2366,7 @@ class CyncHTTPDevice:
                         # OLD can just read until end of packet_data
                         # "c7 90 2a 32 30 32 34 30 39 30 31 3a 31 38 35 39 3a 2d 34 32 2c 30 32 33 32 32 2c 30 30 30 30 34 2c 30 30 31 30 33 2c 30 30 30 36 33 2c" OLD
                         # "c7 90 2e 32 30 32 34 30 33 31 30 3a 31 31 31 30 3a 2d 35 39 2c 30 30 31 35 31 2c 30 30 32 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 43 db" NEW
+                        # is 0x2C the end of ts?
 
 
                         # [199, 144, 42, 50, 48, 50, 52, 48, 57, 48, 49, 58, 49, 56, 53, 57, 58, 45, 52, 50, 44, 48, 50, 51, 50, 50, 44, 48, 48, 48, 48, 52, 44, 48, 48, 49, 48, 51, 44, 48, 48, 48, 54, 51, 44]
@@ -2291,11 +2385,11 @@ class CyncHTTPDevice:
                         ) if CYNC_RAW is True else None
                         # setting version from config file wouldnt be reliable if the user doesnt bump the version
                         # when updating cync firmware. we can only rely on the version sent by the device.
-                        # there is no gurantee the version is sent before checking the timestamp, so use a gross hack.
+                        # there is no guarantee the version is sent before checking the timestamp, so use a gross hack.
                         if self.version and (self.version >= 30000 <= 40000):
                             ts_end_idx = -2
-                            ts = packet_data[ts_idx:ts_end_idx]
 
+                        ts = packet_data[ts_idx:ts_end_idx]
                         if ts:
                             ts_ascii = ts.decode("ascii", errors="replace")
                             # gross hack
@@ -2305,6 +2399,7 @@ class CyncHTTPDevice:
                             logger.debug(
                                 f"{lp} Device sent TIMESTAMP -> {ts_ascii} - replying..."
                             )
+                            self.device_timestamp = ts_ascii
                         else:
                             logger.debug(f"{lp} Could not decode timestamp from: {packet_data.hex(' ')}")
                     else:
@@ -2994,10 +3089,18 @@ class MQTTClient:
 
     async def pub_online(self, device_id: int, status: bool):
         lp = f"{self.lp}pub_online:"
+        if device_id not in g.server.devices:
+            logger.error(
+                f"{lp} Device ID {device_id} not found?! Have you deleted or added any devices recently? "
+                f"You may need to re-export devices from your Cync account!"
+            )
+            return
         availability = b"online" if status else b"offline"
+        device: CyncDevice = g.server.devices[device_id]
+        device_uuid = f"{device.home_id}-{device_id}"
         # logger.debug(f"{lp} Publishing availability: {availability}")
         _ = await self.client.publish(
-            f"{self.topic}/availability/{device_id}", availability, qos=QOS_0
+            f"{self.topic}/availability/{device_uuid}", availability, qos=QOS_0
         )
 
     def __init__(
@@ -3138,8 +3241,9 @@ class MQTTClient:
         logger.debug(f"{lp} Setting all devices offline...")
         for device_id, device in g.server.devices.items():
             availability = b"offline"
+            device_uuid = f"{device.home_id}-{device.id}"
             _ = await self.client.publish(
-                f"{self.topic}/availability/{device_id}", availability, qos=QOS_0
+                f"{self.topic}/availability/{device_uuid}", availability, qos=QOS_0
             )
         logger.info(f"{lp} Unsubscribing from MQTT topics...")
         await asyncio.sleep(0)
@@ -3204,22 +3308,20 @@ class MQTTClient:
     ) -> None:
         lp = f"{self.lp}parse status:"
         if device_id not in g.server.devices:
-            # logger.error(
-            #     f"{lp} Device ID {device_id} not found?! Have you deleted or added any devices recently? "
-            #     f"You may need to re-export devices from your Cync account!"
-            # )
+            logger.error(
+                f"{lp} Device ID {device_id} not found?! Have you deleted or added any devices recently? "
+                f"You may need to re-export devices from your Cync account!"
+            )
             return
+        device: CyncDevice = g.server.devices[device_id]
+        device_uuid = f"{device.home_id}-{device_id}"
         power_status = "OFF" if device_status.state == 0 else "ON"
         mqtt_dev_state = {"state": power_status}
+        tpc = f"{self.topic}/status/{device_uuid}"
 
-        device: CyncDevice = g.server.devices[device_id]
+
         if device.is_plug:
-            # logger.debug(
-            #     f"{lp} Converted HTTP status to MQTT switch => {self.topic}/status/{device_id}  {power_status}"
-            # )
-            _ = await self.client.publish(
-                f"{self.topic}/status/{device_id}", power_status.encode(), qos=QOS_0
-            )
+            pass
 
         else:
             if device_status.brightness is not None:
@@ -3258,24 +3360,23 @@ class MQTTClient:
                 mqtt_dev_state["color_temp"] = self.tlct_to_hassct(
                     device_status.temperature
                 )
-
-            # logger.debug(
-            #     f"{lp} Converting HTTP status to MQTT => {self.topic}/status/{device_id} "
-            #     + json.dumps(mqtt_dev_state)
-            # )
-            try:
-                await asyncio.wait_for(
-                    self.client.publish(
-                        f"{self.topic}/status/{device_id}",
-                        json.dumps(mqtt_dev_state).encode(),
-                        qos=QOS_0,
-                    ),
-                    timeout=3.0,
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"{lp} Timeout waiting for MQTT publish")
-            except Exception as e:
-                logger.error(f"{lp} publish exception: {e}")
+        # logger.debug(
+        #     f"{lp} Converting HTTP status to MQTT => {tpc} "
+        #     + json.dumps(mqtt_dev_state)
+        # )
+        try:
+            await asyncio.wait_for(
+                self.client.publish(
+                    tpc,
+                    json.dumps(mqtt_dev_state).encode(),
+                    qos=QOS_0,
+                ),
+                timeout=3.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"{lp} Timeout waiting for MQTT publish")
+        except Exception as e:
+            logger.error(f"{lp} publish exception: {e}")
 
     async def sub_worker(self, sub_queue: asyncio.Queue):
         """Process messages from MQTT"""
@@ -3322,7 +3423,7 @@ class MQTTClient:
                                     payload = bytes.fromhex(payload.decode())
 
                             elif topic[1] == "set":
-                                device_id = int(topic[2])
+                                device_id = int(topic[2].split("-")[1])
                                 if device_id not in g.server.devices:
                                     logger.warning(
                                         f"{lp} Device ID {device_id} not found, have you deleted or added any "
@@ -3439,9 +3540,10 @@ class MQTTClient:
     async def publish_devices(self):
         lp = f"{self.lp}publish_devices:"
         for device in g.server.devices.values():
+            device_uuid = f"{device.home_id}-{device.id}"
             device_config = {
                 "name": device.name,
-                "id": device.id,
+                "id": device_uuid,
                 "mac": device.mac,
                 "is_plug": device.is_plug,
                 "supports_rgb": device.supports_rgb,
@@ -3453,13 +3555,14 @@ class MQTTClient:
                 "blue": device.blue,
                 "color_temp": self.tlct_to_hassct(device.temperature),
             }
+            tpc = f"{self.ha_topic}/devices/{device_uuid}"
             try:
                 logger.debug(
-                    f"{lp} {self.ha_topic}/devices/{device.id}  "
+                    f"{lp} {tpc}  "
                     + json.dumps(device_config)
                 )
                 _ = await self.client.publish(
-                    f"{self.ha_topic}/devices/{device.id}",
+                    tpc,
                     json.dumps(device_config).encode(),
                     qos=QOS_1,
                 )
@@ -3473,91 +3576,90 @@ class MQTTClient:
         lp = f"{self.lp}hass:"
         logger.info(f"{lp} Starting discovery...")
         try:
-            for device_id, device in g.server.devices.items():
-                unique_id = device.mac.replace(":", "")
+            for device in g.server.devices.values():
+                device_uuid = f"{device.home_id}-{device.id}"
+                # unique_id = device.mac.replace(":", "").casefold()
+                unique_id = f"{device.home_id}_{device.id}"
+                obj_id = f"cync_lan_{unique_id}"
                 origin_struct = {
                     "name": "cync-lan",
                     "sw_version": CYNC_VERSION,
                     "support_url": REPO_URL,
                 }
-                obj_id = f"cync_lan_{device.name}"
+                dev_fw_version = str(device.version)
+                ver_str = "Unknown"
+                fw_len = len(dev_fw_version)
+                if fw_len == 5:
+                    if dev_fw_version != 00000:
+                        ver_str = f"{dev_fw_version[0]}.{dev_fw_version[1]}.{dev_fw_version[2:]}"
+                elif fw_len == 2:
+                    ver_str = f"{dev_fw_version[0]}.{dev_fw_version[1]}"
+                device_struct = {
+                    "identifiers": [unique_id],
+                    "manufacturer": "Savant",
+                    "connections": [("mac", device.mac.casefold() )],
+                    "name": device.name,
+                    "sw_version": ver_str,
+                    "model": type_2_str[device.type] or 'Unknown',
+                }
+                dev_config = {
+                    "object_id": obj_id,
+                    "name": device.name,
+                    "command_topic": "{0}/set/{1}".format(
+                        self.topic, device_uuid
+                    ),
+                    "state_topic": "{0}/status/{1}".format(
+                        self.topic, device_uuid
+                    ),
+                    "avty_t": "{0}/availability/{1}".format(
+                        self.topic, device_uuid
+                    ),
+                    "pl_avail": "online",
+                    "pl_not_avail": "offline",
+                    "unique_id": unique_id,
+                    "schema": "json",
+                    "origin": origin_struct,
+                    "device": device_struct,
+                }
+                dev_type = "light"
+                tpc_str_template = "{0}/{1}/{2}/config"
+
                 if device.is_plug:
-                    switch_cfg = {
-                        "object_id": obj_id,
-                        "name": device.name,
-                        "command_topic": "{0}/set/{1}".format(self.topic, device_id),
-                        "state_topic": "{0}/status/{1}".format(self.topic, device_id),
-                        "avty_t": "{0}/availability/{1}".format(self.topic, device_id),
-                        "pl_avail": "online",
-                        "pl_not_avail": "offline",
-                        "unique_id": unique_id,
-                        "origin": origin_struct,
-                    }
-                    # logger.debug(
-                    #     f"{lp} {self.ha_topic}/switch/{device_id}/config  "
-                    #     + json.dumps(switch_cfg)
-                    # )
-                    try:
-                        _ = await self.client.publish(
-                            f"{self.ha_topic}/switch/{device_id}/config",
-                            json.dumps(switch_cfg).encode(),
-                            qos=QOS_1,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "homeassistant discovery - Unable to publish mqtt message => %s"
-                            % e
-                        )
-
+                    dev_type = "switch"
                 else:
-                    try:
-                        light_config = {
-                            "object_id": obj_id,
-                            "name": device.name,
-                            "command_topic": "{0}/set/{1}".format(
-                                self.topic, device_id
-                            ),
-                            "state_topic": "{0}/status/{1}".format(
-                                self.topic, device_id
-                            ),
-                            "avty_t": "{0}/availability/{1}".format(
-                                self.topic, device_id
-                            ),
-                            "pl_avail": "online",
-                            "pl_not_avail": "offline",
-                            "unique_id": unique_id,
-                            "schema": "json",
-                            "brightness": True,
-                            "brightness_scale": 100,
-                            "origin": origin_struct,
-                        }
-                        if device.supports_temperature or device.supports_rgb:
-                            # hass has deprecated color-mode in device config
-                            # light_config["color_mode"] = True
-                            light_config["supported_color_modes"] = []
-                            if device.supports_temperature:
-                                light_config["supported_color_modes"].append(
-                                    "color_temp"
-                                )
-                                light_config["max_mireds"] = self.hass_maxct
-                                light_config["min_mireds"] = self.hass_minct
-                            if device.supports_rgb:
-                                light_config["supported_color_modes"].append("rgb")
+                    dev_config.update({
+                        "brightness": True,
+                        "brightness_scale": 100,
+                    })
+                    if device.supports_temperature or device.supports_rgb:
+                        # hass has deprecated color-mode in device config
+                        # light_config["color_mode"] = True
+                        dev_config["supported_color_modes"] = []
+                        if device.supports_temperature:
+                            dev_config["supported_color_modes"].append(
+                                "color_temp"
+                            )
+                            dev_config["max_mireds"] = self.hass_maxct
+                            dev_config["min_mireds"] = self.hass_minct
+                        if device.supports_rgb:
+                            dev_config["supported_color_modes"].append("rgb")
 
-                        # logger.debug(
-                        #     f"{lp} {self.ha_topic}/light/{device_id}/config  "
-                        #     + json.dumps(light_config)
-                        # )
-                        _ = await self.client.publish(
-                            f"{self.ha_topic}/light/{device_id}/config",
-                            json.dumps(light_config).encode(),
-                            qos=QOS_1,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "%s - Unable to publish mqtt message... skipped -> %s"
-                            % (lp, e)
-                        )
+                tpc = tpc_str_template.format(self.ha_topic, dev_type, device_uuid)
+                try:
+                    _ = await self.client.publish(
+                        tpc,
+                        json.dumps(dev_config).encode(),
+                        qos=QOS_1,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "%s - Unable to publish mqtt message... skipped -> %s"
+                        % (lp, e)
+                    )
+                # logger.debug(
+                #     f"{lp} {tpc}  "
+                #     + json.dumps(dev_cfg)
+                # )
         except Exception as e:
             logger.error(f"{lp} Discovery failed: {e}", exc_info=True)
         logger.debug(f"{lp} Discovery complete")
@@ -3608,6 +3710,13 @@ def parse_cli():
         help="Email address for Cync account, will send OTP to email provided",
         dest="email",
     )
+    sub_export.add_argument(
+        "--password",
+        "-P",
+        help="Password for Cync account",
+        dest="password",
+    )
+
     sub_export.add_argument(
         "--code" "--otp", "-o", "-c", help="One Time Password from email", dest="code"
     )
@@ -3688,8 +3797,9 @@ if __name__ == "__main__":
     elif cli_args.command == "export":
         logger.debug("main: Exporting Cync devices from cloud service...")
         cloud_api = CyncCloudAPI()
-        email: Optional[str] = cli_args.email
-        code: Optional[str] = cli_args.code
+        cli_email: Optional[str] = cli_args.email
+        cli_otp_code: Optional[str] = cli_args.code
+        cli_password: Optional[str] = cli_args.password
         save_auth: bool = cli_args.save_auth
         auth_output: Optional[Path] = cli_args.auth_file
         auth_file: Optional[Path] = cli_args.auth_file
@@ -3698,7 +3808,7 @@ if __name__ == "__main__":
 
         try:
             if not auth_file:
-                access_token, token_user = cloud_api.authenticate_2fa(email, code)
+                access_token, token_user = cloud_api.authenticate_2fa(uname=cli_email, otp_code=cli_otp_code)
             else:
                 raw_file_yaml = yaml.safe_load(auth_file.read_text())
                 access_token = raw_file_yaml["token"]
@@ -3709,7 +3819,7 @@ if __name__ == "__main__":
                 )
 
             logger.info(
-                f"main: Cync Cloud API auth data => user_id: {token_user} // token: {access_token}"
+                f"main: Cync Cloud API auth data => user: {token_user} // token: {access_token}"
             )
 
             mesh_networks = cloud_api.get_devices(
