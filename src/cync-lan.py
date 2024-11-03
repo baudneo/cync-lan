@@ -381,7 +381,7 @@ class CyncCloudAPI:
             uname: Optional[str] = None,
             password: Optional[str] = None,
             otp_code: Optional[str] = None,
-    ):  # noqa
+    ):
         """
         Authenticate with the Cync CLoud API and get a token.
 
@@ -452,7 +452,7 @@ class CyncCloudAPI:
 
     def get_devices(self, auth_token: str, user: str):
         """Get a list of devices for a particular user."""
-        api_devices_url = "https://api.gelighting.com/v2/user/{user}/subscribe/devices"
+        api_devices_url = f"{CYNC_API_BASE}user/{user}/subscribe/devices"
         headers = {"Access-Token": auth_token}
         r = requests.get(
             api_devices_url.format(user=user), headers=headers, timeout=self.api_timeout
