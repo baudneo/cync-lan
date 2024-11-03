@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import random
-import re
 import signal
 import ssl
 import struct
@@ -28,12 +27,16 @@ from amqtt import client as amqtt_client
 from amqtt.mqtt.constants import QOS_0, QOS_1
 
 __version__: str = "0.0.5"
+
+from requests import JSONDecodeError, HTTPError
+
 CYNC_VERSION: str = __version__
 REPO_URL: str = "https://github.com/baudneo/cync-lan"
 DEVICE_LWT_MSG: bytes = b"offline"
 
 # This will run an async task every x seconds to check if any device is offline or online.
 # Hopefully keeps devices in sync (seems to do pretty good).
+CYNC_API_BASE: str = "https://api.gelighting.com/v2/"
 CYNC_MESH_CHECK_INTERVAL: int = int(os.environ.get("CYNC_MESH_CHECK", 30)) or 30
 CYNC_MQTT_URL = os.environ.get("CYNC_MQTT_URL", "mqtt://homeassistant.local:1883")
 CYNC_CERT = os.environ.get("CYNC_CERT", "certs/cert.pem")
@@ -356,101 +359,155 @@ class Messages:
 
 class CyncCloudAPI:
     api_timeout: int = 5
+    lp: str = "CyncCloudAPI:"
 
     def __init__(self, **kwargs):
         self.api_timeout = kwargs.get("api_timeout", 5)
 
-    # https://github.com/unixpickle/cbyge/blob/main/login.go
-    def get_cloud_mesh_info(self):
-        """Get Cync devices from the cloud, all cync devices are bt or bt/wifi.
-        Meaning they will always have a BT mesh (as of March 2024)"""
-        (auth, userid) = self.authenticate_2fa()
-        _mesh_networks = self.get_devices(auth, userid)
-        for _mesh in _mesh_networks:
-            _mesh["properties"] = self.get_properties(
-                auth, _mesh["product_id"], _mesh["id"]
-            )
-        return _mesh_networks
+    def authenticate_2fa(
+            self,
+            uname: Optional[str] = None,
+            password: Optional[str] = None,
+            otp_code: Optional[str] = None,
+    ):
+        """
+        Authenticate with the Cync Cloud API and get a token.
 
-    def authenticate_2fa(self, *args, **kwargs):  # noqa
-        """Authenticate with the API and get a token."""
-        username = input("Enter Username/Email (or emailed OTP code):")
-        if re.match(r"^\d+$", username):
-            # if username is all digits, assume it's a OTP code
-            otp_code = str(username)
-            username = input("Enter Username/Email:")
-        else:
-            # Ask to be sent an email with OTP code
-            api_auth_url = "https://api.gelighting.com/v2/two_factor/email/verifycode"
-            auth_data = {"corp_id": CORP_ID, "email": username, "local_lang": "en-us"}
-            requests.post(api_auth_url, json=auth_data, timeout=self.api_timeout)
-            otp_code = input("Enter emailed OTP code:")
+        Returns:
+            Tuple[str, str]: Access token and user ID
+        """
+        lp = f"{self.lp}:auth:"
+        if not uname:
+            if cli_email:
+                uname = cli_email
+                logger.debug(f"{lp} No email provided, using CLI arg: {uname}")
+            else:
+                uname = input("Enter Cync Account Username/Email:  ")
 
-        password = getpass.getpass()
-        api_auth_url = "https://api.gelighting.com/v2/user_auth/two_factor"
+        if not otp_code:
+            if cli_otp_code:
+                otp_code = cli_otp_code
+                logger.debug(f"{lp} No OTP code provided, using CLI arg: {otp_code}")
+            else:
+                # Ask to be sent an email with OTP code
+                api_otp_url = f"{CYNC_API_BASE}two_factor/email/verifycode"
+                auth_data = {"corp_id": CORP_ID, "email": uname, "local_lang": "en-us"}
+                otp_r = requests.post(api_otp_url, json=auth_data, timeout=self.api_timeout)
+                try:
+                    otp_r.raise_for_status()
+                except requests.exceptions.HTTPError as e:
+                    logger.error(f"Failed to get OTP code: {e}")
+                    raise e
+                otp_code = input("Enter emailed OTP code (check junk/spam):  ")
+
+        if not password:
+            # no kwargs password, check cli
+            if cli_password:
+                password = cli_password
+                logger.debug(f"{lp} No password provided, using CLI arg: {password}")
+            # no kwarg or cli password, get from user
+            else:
+                password = getpass.getpass("Enter Cync Account Password:  ")
+
+        api_auth_url = f"{CYNC_API_BASE}user_auth/two_factor"
         auth_data = {
             "corp_id": CORP_ID,
-            "email": username,
+            "email": uname,
             "password": password,
             "two_factor": otp_code,
             "resource": random_login_resource(),
         }
         r = requests.post(api_auth_url, json=auth_data, timeout=self.api_timeout)
-
         try:
-            return r.json()["access_token"], r.json()["user_id"]
-        except KeyError:
-            raise Exception("API authentication failed")
+            r.raise_for_status()
+            rjson = r.json()
+        except requests.exceptions.HTTPError as e:
+            logger.exception(f"Failed to authenticate: {e}")
+            raise e
+        except JSONDecodeError as je:
+            logger.exception(f"Failed to decode JSON: {je}")
+            raise je
+
+        except KeyError as ke:
+            logger.exception(f"Failed to get key from JSON: {ke}")
+            raise ke
+        else:
+            logger.info(f"API Auth Response: {rjson}")
+            return rjson["access_token"], rjson["user_id"]
 
     def get_devices(self, auth_token: str, user: str):
         """Get a list of devices for a particular user."""
-        api_devices_url = "https://api.gelighting.com/v2/user/{user}/subscribe/devices"
+        lp = f"{self.lp}get_devices:"
+        api_devices_url = f"{CYNC_API_BASE}user/{user}/subscribe/devices"
         headers = {"Access-Token": auth_token}
         r = requests.get(
             api_devices_url.format(user=user), headers=headers, timeout=self.api_timeout
         )
-        return r.json()
+        try:
+            r.raise_for_status()
+            ret = r.json()
+        except requests.exceptions.HTTPError as e:
+            logger.exception(f"Failed to get devices: {e}")
+            raise e
+        except JSONDecodeError as je:
+            logger.exception(f"Failed to decode JSON: {je}")
+            raise je
+        # {'error': {'msg': 'Access-Token Expired', 'code': 4031021}}
+        if "error" in ret:
+            error_data = ret["error"]
+            if 'msg' in error_data and error_data['msg']:
+                if error_data['msg'].lower() == 'access-token expired':
+                    raise HTTPError(f"{lp} Access-Token expired, you need to re-authenticate.")
+                else:
+                    logger.error(f"{lp} Unknown error in response: {ret}")
+        return ret
 
     def get_properties(self, auth_token: str, product_id: str, device_id: str):
         """Get properties for a single device."""
-        api_device_info_url = "https://api.gelighting.com/v2/product/{product_id}/device/{device_id}/property"
+        lp = f"{self.lp}get_properties:"
+        api_device_info_url = f"{CYNC_API_BASE}product/{product_id}/device/{device_id}/property"
         headers = {"Access-Token": auth_token}
         r = requests.get(
-            api_device_info_url.format(product_id=product_id, device_id=device_id),
+            api_device_info_url,
             headers=headers,
             timeout=self.api_timeout,
         )
-        return r.json()
-
-    @staticmethod
-    def mesh_to_config(mesh_info):
-        mesh_conf = {}
-        logger.debug("Dumping raw config from Cync account to file: ./raw_mesh.cync")
         try:
-            with open("./raw_mesh.cync", "w") as _f:
-                _f.write(yaml.dump(mesh_info))
-        except Exception as file_exc:
-            logger.error("Failed to write raw mesh info to file: %s" % file_exc)
+            r.raise_for_status()
+            ret = r.json()
+        except requests.exceptions.HTTPError as e:
+            # logger.warning(f"{lp} Failed to get device properties: {e}")
+            pass
+        except JSONDecodeError as je:
+            pass
+        else:
+            return ret
+
+    def mesh_to_config(self, mesh_info: dict):
+        lp = f"{self.lp}mesh2conf:"
+        mesh_conf = {}
         for mesh_ in mesh_info:
             if "name" not in mesh_ or len(mesh_["name"]) < 1:
-                logger.warning("No name found for mesh, skipping...")
+                logger.warning(f"{lp} No name found for mesh, skipping...") if CYNC_RAW else None
                 continue
 
             if "properties" not in mesh_ or "bulbsArray" not in mesh_["properties"]:
                 logger.warning(
-                    "No properties found for mesh OR no 'bulbsArray' in properties, skipping..."
-                )
+                    f"{lp} No properties found for mesh OR no 'bulbsArray' in properties, skipping..."
+                ) if CYNC_RAW else None
                 continue
+
+            logger.debug(f"{lp} Properties and bulbsArray found for mesh, processing...")
             new_mesh = {
                 kv: mesh_[kv] for kv in ("access_key", "id", "mac") if kv in mesh_
             }
             mesh_conf[mesh_["name"]] = new_mesh
-
-            logger.debug("properties and bulbsArray found for mesh, processing...")
             new_mesh["devices"] = {}
-            for cfg_bulb in mesh_["properties"]["bulbsArray"]:
+
+            for _bulb_cfg in mesh_["properties"]["bulbsArray"]:
+                # check each bulb cfg entry from cloud
                 if any(
-                    checkattr not in cfg_bulb
+                    checkattr not in _bulb_cfg
                     for checkattr in (
                         "deviceID",
                         "displayName",
@@ -460,17 +517,17 @@ class CyncCloudAPI:
                     )
                 ):
                     logger.warning(
-                        "Missing required attribute in Cync bulb, skipping: %s"
-                        % cfg_bulb
+                        "%s Missing required attribute in Cync Device (only bulbs, plugs and switches seen so far)"
+                        ", skipping: %s" % (lp, _bulb_cfg)
                     )
                     continue
                 # last 3 digits of deviceID
-                __id = int(str(cfg_bulb["deviceID"])[-3:])
-                wifi_mac = cfg_bulb["wifiMac"]
-                name = cfg_bulb["displayName"]
-                _mac = cfg_bulb["mac"]
-                _type = int(cfg_bulb["deviceType"])
-                _fw_ver = cfg_bulb["firmwareVersion"]
+                __id = int(str(_bulb_cfg["deviceID"])[-3:])
+                wifi_mac = _bulb_cfg["wifiMac"]
+                name = _bulb_cfg["displayName"]
+                _mac = _bulb_cfg["mac"]
+                _type = int(_bulb_cfg["deviceType"])
+                _fw_ver = _bulb_cfg["firmwareVersion"]
 
                 bulb_device = CyncDevice(
                     name=name,
@@ -493,7 +550,7 @@ class CyncCloudAPI:
                     if value:
                         new_bulb[attr_set] = value
                     else:
-                        logger.warning("Attribute not found for bulb: %s" % attr_set)
+                        logger.warning("%s Attribute not found for bulb: %s" % (lp, attr_set))
                 new_bulb["type"] = _type
                 new_bulb["is_plug"] = bulb_device.is_plug
                 new_bulb["supports_temperature"] = bulb_device.supports_temperature
@@ -3602,6 +3659,7 @@ def parse_cli():
         help="Export Cync devices from the cloud service, Requires email and/or OTP from email",
     )
     sub_export.add_argument("output_file", type=Path, help="Path to the output file")
+    sub_export.add_argument("--password", "-P", help="Cync account password", dest="password")
     sub_export.add_argument(
         "--email",
         "-e",
@@ -3628,13 +3686,15 @@ def parse_cli():
     sub_export.add_argument(
         "--auth", help="Path to the auth token file", type=Path, dest="auth_file"
     )
+    sub_export.add_argument("--save-raw", help="Save the raw device data from the Cloud API call", action="store_true", dest="save_raw")
+    sub_export.add_argument("--raw-file", help="Path to save the raw device data", type=Path, dest="raw_file_output")
     sub_export.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
     return args
 
-
 if __name__ == "__main__":
+    __lp = "CyncLan:main:"
     if sys.version_info >= (3, 8):
         pass
     else:
@@ -3642,7 +3702,7 @@ if __name__ == "__main__":
 
     cli_args = parse_cli()
     if cli_args.debug and CYNC_DEBUG is False:
-        logger.info("main: --debug flag - setting log level to DEBUG")
+        logger.info(f"{__lp} --debug flag - setting log level to DEBUG")
         CYNC_DEBUG = True
 
     if CYNC_DEBUG is True:
@@ -3662,7 +3722,7 @@ if __name__ == "__main__":
         global_tasks = []
         cync = CyncLAN(config_file)
         loop: uvloop.Loop = cync.loop
-        logger.debug("main: Setting up event loop signal handlers")
+        logger.debug(f"{__lp} Setting up event loop signal handlers")
         loop.add_signal_handler(
             signal.SIGINT, partial(cync.signal_handler, signal.SIGINT)
         )
@@ -3673,56 +3733,98 @@ if __name__ == "__main__":
             cync.start()
             cync.loop.run_forever()
         except KeyboardInterrupt as ke:
-            logger.info("main: Caught KeyboardInterrupt in exception block!")
+            logger.info(f"{__lp} Caught KeyboardInterrupt in exception block!")
             raise KeyboardInterrupt from ke
 
         except Exception as e:
             logger.warning(
-                "main: Caught exception in __main__ cync.start() try block: %s" % e,
+                f"{__lp} Caught exception in __main__ cync.start() try block: %s" % e,
                 exc_info=True,
             )
         finally:
             if cync and not cync.loop.is_closed():
-                logger.debug("main: Closing loop...")
+                logger.debug(f"{__lp} Closing loop...")
                 cync.loop.close()
+
+    ############################
+    #           EXPORT         #
+    ############################
     elif cli_args.command == "export":
-        logger.debug("main: Exporting Cync devices from cloud service...")
+        logger.info(f"{__lp} Exporting Cync devices from cloud service...")
         cloud_api = CyncCloudAPI()
-        email: Optional[str] = cli_args.email
-        code: Optional[str] = cli_args.code
-        save_auth: bool = cli_args.save_auth
-        auth_output: Optional[Path] = cli_args.auth_file
-        auth_file: Optional[Path] = cli_args.auth_file
+        cli_email: Optional[str] = cli_args.email
+        cli_otp_code: Optional[str] = cli_args.code
+        cli_password: Optional[str] = cli_args.password
+
+        save_auth_to_file: bool = cli_args.save_auth
+        auth_output_file: Optional[Path] = cli_args.auth_output
+        auth_input_file: Optional[Path] = cli_args.auth_file
+        raw_output_file = cli_args.raw_file_output
+
         access_token = None
         token_user = None
 
         try:
-            if not auth_file:
-                access_token, token_user = cloud_api.authenticate_2fa(email, code)
+            if not auth_input_file:
+                access_token, token_user = cloud_api.authenticate_2fa(uname=cli_email, otp_code=cli_otp_code, password=cli_password)
             else:
-                raw_file_yaml = yaml.safe_load(auth_file.read_text())
+                logger.info(f"{__lp} --auth supplied, attempting to read credentials from: {auth_input_file.resolve().as_posix()}")
+                raw_file_yaml = yaml.safe_load(auth_input_file.read_text())
                 access_token = raw_file_yaml["token"]
                 token_user = raw_file_yaml["user"]
             if not access_token or not token_user:
                 raise ValueError(
-                    "main: Failed to authenticate, no token or user found. Check auth file or email/OTP"
+                    f"{__lp} Failed to authenticate, no token or user found. Check auth file or email/OTP"
                 )
 
-            logger.info(
-                f"main: Cync Cloud API auth data => user_id: {token_user} // token: {access_token}"
+            logger.debug(
+                f"{__lp} Cync Cloud API auth data => \nuser_id: {token_user}\ntoken: {access_token}\n"
             )
 
+            if save_auth_to_file:
+                if not auth_output_file:
+                    auth_output_file = Path.cwd() / ".cync-auth.yaml"
+
+                logger.info(
+                    f"{__lp} Attempting to save Cync Cloud Auth to file, PLEASE SECURE THIS FILE!"
+                )
+                try:
+                    with auth_output_file.open("w") as f:
+                        f.write(yaml.dump({"token": access_token, "user": token_user}))
+                except Exception as e:
+                    logger.exception(
+                        f"{__lp} Failed to save auth token to file (%s)" % auth_output_file.as_posix()
+                    )
+                else:
+                    logger.info(
+                        f"{__lp} Saved auth token to file: {auth_output_file.as_posix()}"
+                    )
+            logger.info(f"{__lp} Please wait for the device data to be retrieved from the cloud service...")
             mesh_networks = cloud_api.get_devices(
                 user=token_user, auth_token=access_token
             )
+
             for mesh in mesh_networks:
-                mesh["properties"] = cloud_api.get_properties(
+                m_props = cloud_api.get_properties(
                     access_token, mesh["product_id"], mesh["id"]
                 )
+                if m_props is None:
+                    continue
+                mesh["properties"] = m_props
+
+            if not raw_output_file:
+                raw_output_file = Path.cwd() / "raw_mesh.yaml"
+            logger.debug(f"{__lp} Dumping raw config from Cync account to file: {raw_output_file.as_posix()}")
+            try:
+                with open(raw_output_file, "w") as _f:
+                    _f.write(yaml.dump(mesh_networks))
+            except Exception as file_exc:
+                logger.exception("{%s} Failed to write raw mesh info to file: %s" % (__lp, raw_output_file.as_posix()))
+            else:
+                logger.info(f"{__lp} Saved raw mesh data to file: {raw_output_file.as_posix()}")
 
             mesh_config = cloud_api.mesh_to_config(mesh_networks)
             output_file: Path = cli_args.output_file
-            logger.info(f"about to dump cloud export to file: {mesh_config = }")
             with output_file.open("w") as f:
                 f.write(
                     "# BE AWARE - the config file will overwrite any env vars set!\n"
@@ -3732,26 +3834,6 @@ if __name__ == "__main__":
                 f.write(yaml.dump(mesh_config))
 
         except Exception as e:
-            logger.error(f"main: Export failed: {e}", exc_info=True)
+            logger.error(f"{__lp} Export failed: {e}", exc_info=True)
         else:
-            logger.info(f"main: Exported Cync devices to file: {cli_args.output_file}")
-
-        if save_auth:
-            if not auth_output:
-                auth_output = Path.cwd() / "cync_auth.yaml"
-
-            else:
-                logger.info(
-                    "main: Attempting to save Cync Cloud Auth to file, PLEASE SECURE THIS FILE!"
-                )
-                try:
-                    with auth_output.open("w") as f:
-                        f.write(yaml.dump({"token": access_token, "user": token_user}))
-                except Exception as e:
-                    logger.error(
-                        "Failed to save auth token to file: %s" % e, exc_info=True
-                    )
-                else:
-                    logger.info(
-                        f"Saved auth token to file: {Path.cwd()}/cync_auth.yaml"
-                    )
+            logger.info(f"{__lp} Exported Cync devices to file: {output_file.as_posix()}")
