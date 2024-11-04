@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import random
-import re
 import signal
 import ssl
 import struct
@@ -17,7 +16,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
 from json import JSONDecodeError
-from multiprocessing.context import AuthenticationError
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Callable, Coroutine, Any
 
@@ -30,6 +28,9 @@ from amqtt import client as amqtt_client
 from amqtt.mqtt.constants import QOS_0, QOS_1
 
 __version__: str = "0.0.5"
+
+from requests import HTTPError
+
 CYNC_VERSION: str = __version__
 REPO_URL: str = "https://github.com/baudneo/cync-lan"
 DEVICE_LWT_MSG: bytes = b"offline"
@@ -54,7 +55,7 @@ CYNC_RAW = os.environ.get("CYNC_RAW_DEBUG", "0").casefold() in YES_ANSWER
 CYNC_DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in YES_ANSWER
 CORP_ID: str = "1007d2ad150c4000"
 DATA_BOUNDARY = 0x7E
-
+RAW_MSG = " Set the CYNC_RAW_DEBUG env var to 1to see the data" if CYNC_RAW is False else ""
 logger = logging.getLogger("cync-lan")
 formatter = logging.Formatter(
     "%(asctime)s.%(msecs)d %(levelname)s [%(module)s:%(lineno)d] > %(message)s",
@@ -65,8 +66,14 @@ handler.setLevel(logging.INFO)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
-# set library loggers to INFO
 
+@dataclass
+class CacheData:
+    all_data: bytes = b''
+    timestamp: float = 0
+    data: bytes = b''
+    data_len: int = 0
+    needed_len: int = 0
 
 # from cync2mqtt
 def random_login_resource():
@@ -141,16 +148,17 @@ class MeshInfo:
 class PhoneAppStructs:
     @dataclass
     class AppRequests:
-        auth_header: bytes = bytes([0x13, 0x00, 0x00, 0x00])
-        connect_header: bytes = bytes([0xA3, 0x00, 0x00, 0x00])
+        auth_header: Tuple[int] = (0x13, 0x00, 0x00, 0x00)
+        connect_header: Tuple[int] = (0xA3, 0x00, 0x00, 0x00)
 
     @dataclass
     class AppResponses:
-        auth_resp: bytes = bytes([0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00])
+        auth_resp: Tuple[int] = (0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00)
         # connect response needs toe xtract the queue id from the request
 
     requests: AppRequests = AppRequests()
     responses: AppResponses = AppResponses()
+    headers = (0x13, 0xa3, 0x18)
 
 
 class DeviceStructs:
@@ -161,29 +169,27 @@ class DeviceStructs:
     class DeviceRequests:
         """These are packets devices send to the server"""
 
-        x23: bytes = bytes([0x23])
-        xc3: bytes = bytes([0xC3])
-        xd3: bytes = bytes([0xD3])
-        x83: bytes = bytes([0x83])
-        x73: bytes = bytes([0x73])
-        x7b: bytes = bytes([0x7B])
-        x43: bytes = bytes([0x43])
-        xa3: bytes = bytes([0xA3])
-        xab: bytes = bytes([0xAB])
-        auth_header: bytes = x23
-        _headers: Tuple[bytes] = (x23, xc3, xd3, x83, x73, x7b, x43, xa3, xab)
+        x23: Tuple[int] = tuple([0x23])
+        xc3: Tuple[int] = tuple([0xC3])
+        xd3: Tuple[int] = tuple([0xD3])
+        x83: Tuple[int] = tuple([0x83])
+        x73: Tuple[int] = tuple([0x73])
+        x7b: Tuple[int] = tuple([0x7B])
+        x43: Tuple[int] = tuple([0x43])
+        xa3: Tuple[int] = tuple([0xA3])
+        xab: Tuple[int] = tuple([0xAB])
+        headers: Tuple[int] = (0x23, 0xc3, 0xd3, 0x83, 0x73, 0x7b, 0x43, 0xa3, 0xab)
 
         def __iter__(self):
-            return iter(self._headers)
+            return iter(self.headers)
 
     @dataclass
     class DeviceResponses:
         """These are the packets the server sends to the device"""
 
-        auth_ack: bytes = bytes([0x28, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00])
+        auth_ack: Tuple[int] = (0x28, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00)
         # todo: figure out correct bytes for this
-        connection_ack: bytes = bytes(
-            [
+        connection_ack: Tuple[int] = (
                 0xC8,
                 0x00,
                 0x00,
@@ -200,17 +206,16 @@ class DeviceStructs:
                 0x1F,
                 0xFE,
                 0x0C,
-            ]
         )
-        x48_ack: bytes = bytes([0x48, 0x00, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00])
-        x88_ack: bytes = bytes([0x88, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00])
-        ping_ack: bytes = bytes([0xD8, 0x00, 0x00, 0x00, 0x00])
-        # 78 and 7b still need definition
-        x78_base: bytes = bytes([0x78, 0x00, 0x00, 0x00])
-        x7b_base: bytes = bytes([0x7B, 0x00, 0x00, 0x00, 0x07])
+        x48_ack: Tuple[int] = (0x48, 0x00, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00)
+        x88_ack: Tuple[int] = (0x88, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00)
+        ping_ack: Tuple[int] = (0xD8, 0x00, 0x00, 0x00, 0x00)
+        x78_base: Tuple[int] = (0x78, 0x00, 0x00, 0x00)
+        x7b_base: Tuple[int] = (0x7B, 0x00, 0x00, 0x00, 0x07)
 
     requests: DeviceRequests = DeviceRequests()
     responses: DeviceResponses = DeviceResponses()
+    headers: Tuple[int] = (0x23, 0xc3, 0xd3, 0x83, 0x73, 0x7b, 0x43, 0xa3, 0xab)
 
     @staticmethod
     def xab_generate_ack(queue_id: bytes, msg_id: bytes):
@@ -319,6 +324,7 @@ class Tasks:
 
 APP_HEADERS = PhoneAppStructs()
 DEVICE_STRUCTS = DeviceStructs()
+ALL_HEADERS = list(DEVICE_STRUCTS.headers) + list(APP_HEADERS.headers)
 
 
 class MessageCallback:
@@ -331,7 +337,7 @@ class MessageCallback:
     kwargs: Dict = {}
 
     def __str__(self):
-        return f"MessageCallback:{self.id}: {self.callback}"
+        return f"MessageCallback ID: {self.id} sent at: {datetime.datetime.fromtimestamp(self.sent_at)}"
 
     def __eq__(self, other: int):
         return self.id == other
@@ -383,7 +389,7 @@ class CyncCloudAPI:
             otp_code: Optional[str] = None,
     ):
         """
-        Authenticate with the Cync CLoud API and get a token.
+        Authenticate with the Cync Cloud API and get a token.
 
         Returns:
             Tuple[str, str]: Access token and user ID
@@ -462,7 +468,7 @@ class CyncCloudAPI:
         if "error" in ret:
             error_data = ret["error"]
             if 'msg' in error_data and error_data['msg'] and error_data['msg'].lower() == 'access-token expired':
-                raise AuthenticationError("Access-Token expired, you need to re-authenticate.")
+                raise HTTPError("Access-Token expired, you need to re-authenticate.")
                 # logger.error("Access-Token expired, re-authenticating...")
                 # return self.get_devices(*self.authenticate_2fa())
         return ret
@@ -481,7 +487,7 @@ class CyncCloudAPI:
         if "error" in ret:
             error_data = ret["error"]
             if 'msg' in error_data and error_data['msg'] and error_data['msg'].lower() == 'access-token expired':
-                raise AuthenticationError("Access-Token expired, you need to re-authenticate.")
+                raise HTTPError("Access-Token expired, you need to re-authenticate.")
                 # logger.error("Access-Token expired, re-authenticating...")
                 # return self.get_devices(*self.authenticate_2fa())
         return ret
@@ -964,7 +970,7 @@ class CyncDevice:
         fw_version: Optional[str] = None,
         home_id: Optional[int] = None,
     ):
-        self.control_number = 0
+        self.control_bytes = bytes([0x00, 0x00])
         if cync_id is None:
             raise ValueError("ID must be provided to constructor")
         self.id = cync_id
@@ -995,7 +1001,7 @@ class CyncDevice:
 
 
     @property
-    def version(self) -> int:
+    def version(self) -> Optional[str]:
         return self._version
 
     @version.setter
@@ -1100,34 +1106,45 @@ class CyncDevice:
     def supports_temperature(self, value: bool) -> None:
         self._supports_temperature = value
 
-    def get_incremental_number(self):
+    def get_ctrl_msg_id_bytes(self):
         """
         Control packets need a number that gets incremented, it is used as a type of msg ID and
         in calculating the checksum. Result is mod 256 in order to keep it within 0-255.
         """
-        self.control_number += 1
-        return self.control_number % 256
+        lp = f"{self.lp}get_ctrl_msg_id_bytes:"
+        id_byte, rollover_byte = self.control_bytes
+        # logger.debug(f"{lp} Getting control message ID bytes: ctrl_byte={id_byte} rollover_byte={rollover_byte}")
+        id_byte += 1
+        if id_byte > 255:
+            id_byte = id_byte % 256
+            rollover_byte += 1
+
+        self.control_bytes = [id_byte, rollover_byte]
+        # logger.debug(f"{lp} new data: ctrl_byte={id_byte} rollover_byte={rollover_byte} // {self.control_bytes=}")
+        return self.control_bytes
 
     async def set_power(self, state: int):
         """Send raw data to control device state"""
+        lp = f"{self.lp}set_power:"
         if state not in (0, 1):
-            logger.error("Invalid state! must be 0 or 1")
+            logger.error(f"{lp} Invalid state! must be 0 or 1")
             return
-        msg_id_inc = self.get_incremental_number()
-        checksum = ((msg_id_inc - 64) + state + self.id) % 256
+        ctrl_msg_id = self.get_ctrl_msg_id_bytes()
+        logger.debug(f"{lp} Control message ID: {ctrl_msg_id}")
+        checksum = (((ctrl_msg_id[0] + ctrl_msg_id[1]) - 64) + state + self.id) % 256
         header = [0x73, 0x00, 0x00, 0x00, 0x1F]
         inner_struct = [
             0x7E,
-            msg_id_inc,
-            0x00,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0x00,
             0x00,
             0xF8,
             0xD0,
             0x0D,
             0x00,
-            msg_id_inc,
-            0x00,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0x00,
             0x00,
             0x00,
@@ -1156,53 +1173,59 @@ class CyncDevice:
         # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
         raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
         logger.debug(
-            f"{self.lp} Changing power state: {self.state} to {state}{raw_dbg}"
+            f"{lp} Sending change power state command, current: {self.state} // new: {state}{raw_dbg}"
         )
-        await g.mqtt.parse_device_status(self.id, new_state)
 
-        # # testing a callback system that determines success or failure
-        # cb = MessageCallback(msg_id_inc)
-        # cb.original_message = b
-        # cb.sent_at = time.time()
-        # cb.callback = g.mqtt.parse_device_status
-        # cb.args = []
-        # cb.args.extend([self.id, new_state])
-        # logger.debug(
-        #     f"{self.lp} Adding x73 callback (id: {msg_id_inc}) to HTTP device: {bridge_device.address} -> {cb}"
-        # )
-        # bridge_device.messages.x73.append(cb)
+        # await g.mqtt.parse_device_status(self.id, new_state)
 
-        # await bridge_device.write(b)
-
-        for device in g.server.http_devices.values():
-            payload = list(header)
-            payload.extend(device.queue_id)
-            payload.extend(bytes([0x00, 0x00, 0x00]))
-            payload.extend(inner_struct)
-            b = bytes(payload)
-            await device.write(b)
+        # pick random http devices to send the command to
+        # it should bridge the command over btle to the device ID
+        bridge_devices: List["CyncHTTPDevice"] = random.choices(list(g.server.http_devices.values()),
+                                                                k=min(3, len(g.server.http_devices)))
+        # bridge_devices = g.server.http_devices.values()
+        for bridge_device in bridge_devices:
+            if bridge_device.ready_to_control is True:
+                payload = list(header)
+                payload.extend(bridge_device.queue_id)
+                payload.extend(bytes([0x00, 0x00, 0x00]))
+                payload.extend(inner_struct)
+                b = bytes(payload)
+                # testing a callback system that determines success or failure
+                cb = MessageCallback(ctrl_msg_id[0] + (ctrl_msg_id[1] * 256))
+                cb.original_message = b
+                cb.sent_at = time.time()
+                cb.callback = g.mqtt.parse_device_status
+                cb.args = []
+                cb.args.extend([self.id, new_state])
+                logger.debug(
+                    f"{lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+                )
+                bridge_device.messages.x73.append(cb)
+                await bridge_device.write(b)
+            else:
+                logger.debug(f"{lp} Skipping device: {bridge_device.address} not ready to control")
 
     async def set_brightness(self, bri: int):
         """Send raw data to control device brightness"""
         #  73 00 00 00 22 37 96 24 69 60 48 00 7e 17 00 00  s..."7.$i`H.~...
         #  00 f8 f0 10 00 17 00 00 00 00 07 00 f0 11 02 01  ................
         #  27 ff ff ff ff 45 7e
-        # lp = f"{self.lp}set_brightness:"
-        msg_id_inc = self.get_incremental_number()
-        checksum = (msg_id_inc + bri + self.id) % 256
+        lp = f"{self.lp}set_brightness:"
+        ctrl_msg_id = self.get_ctrl_msg_id_bytes()
+        checksum = ((ctrl_msg_id[0] + ctrl_msg_id[1]) + bri + self.id) % 256
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            msg_id_inc,
-            0,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0,
             0,
             248,
             240,
             16,
             0,
-            msg_id_inc,
-            0,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0,
             0,
             0,
@@ -1228,30 +1251,36 @@ class CyncDevice:
             green=None,
             blue=None,
         )
-        # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
         raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
-        logger.debug(f"{self.lp} Changing brightness: {self._brightness} to {bri}{raw_dbg}")
-        await g.mqtt.parse_device_status(self.id, new_state)
-        # # testing a callback system that determines success or failure
-        # cb = MessageCallback(msg_id_inc)
-        # cb.original_message = b
-        # cb.sent_at = time.time()
-        # cb.callback = g.mqtt.parse_device_status
-        # cb.args = []
-        # cb.args.extend([self.id, new_state])
-        # logger.debug(
-        #     f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
-        # )
-        # bridge_device.messages.x73.append(cb)
+        logger.debug(f"{lp} Sending brightness change command, current: {self._brightness} new: {bri}{raw_dbg}")
+        # await g.mqtt.parse_device_status(self.id, new_state)
 
-        for device in g.server.http_devices.values():
-            payload = list(header)
-            payload.extend(device.queue_id)
-            payload.extend(bytes([0x00, 0x00, 0x00]))
-            payload.extend(inner_struct)
-            b = bytes(payload)
-            await device.write(b)
-        # await bridge_device.write(b)
+        # pick random http devices to send the command to
+        # it should bridge the command over btle to the device ID
+        bridge_devices: List["CyncHTTPDevice"] = random.choices(list(g.server.http_devices.values()),
+                                                                k=min(3, len(g.server.http_devices)))
+        # bridge_devices = g.server.http_devices.values()
+        for bridge_device in bridge_devices:
+            if bridge_device.ready_to_control is True:
+                payload = list(header)
+                payload.extend(bridge_device.queue_id)
+                payload.extend(bytes([0x00, 0x00, 0x00]))
+                payload.extend(inner_struct)
+                b = bytes(payload)
+                # testing a callback system that determines success or failure
+                cb = MessageCallback(ctrl_msg_id[0] + (ctrl_msg_id[1] * 256))
+                cb.original_message = b
+                cb.sent_at = time.time()
+                cb.callback = g.mqtt.parse_device_status
+                cb.args = []
+                cb.args.extend([self.id, new_state])
+                logger.debug(
+                    f"{lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+                )
+                bridge_device.messages.x73.append(cb)
+                await bridge_device.write(b)
+            else:
+                logger.debug(f"{lp} Skipping device: {bridge_device.address} not ready to control")
 
     async def set_temperature(self, temp: int):
         """Send raw data to control device brightness"""
@@ -1261,21 +1290,22 @@ class CyncDevice:
         # checksum = 0x88 = 136
         # 0x36 0x48 0x07 = 54 + 72 + 7 = 133 (needs + 3)
 
-        msg_id_inc = self.get_incremental_number()
-        checksum = ((msg_id_inc + temp + self.id) + 3) % 256
+        lp = f"{self.lp}set_temperature:"
+        ctrl_msg_id = self.get_ctrl_msg_id_bytes()
+        checksum = (((ctrl_msg_id[0] + ctrl_msg_id[1]) + temp + self.id) + 3) % 256
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            msg_id_inc,
-            0,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0,
             0,
             248,
             240,
             16,
             0,
-            msg_id_inc,
-            0,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0,
             0,
             0,
@@ -1306,31 +1336,39 @@ class CyncDevice:
         # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
         raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
         logger.debug(
-            f"{self.lp} Changing white temperature: {self.temperature} to {temp}{raw_dbg}"
+            f"{lp} Changing white temperature: {self.temperature} to {temp}{raw_dbg}"
         )
-        await g.mqtt.parse_device_status(self.id, new_state)
-        # # testing a callback system that determines success or failure
-        # cb = MessageCallback(msg_id_inc)
-        # cb.original_message = b
-        # cb.sent_at = time.time()
-        # cb.callback = g.mqtt.parse_device_status
-        # cb.args = []
-        # cb.args.extend([self.id, new_state])
-        # logger.debug(
-        #     f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
-        # )
-        # bridge_device.messages.x73.append(cb)
-        for device in g.server.http_devices.values():
-            payload = list(header)
-            payload.extend(device.queue_id)
-            payload.extend(bytes([0x00, 0x00, 0x00]))
-            payload.extend(inner_struct)
-            b = bytes(payload)
-            await device.write(b)
+        # await g.mqtt.parse_device_status(self.id, new_state)
+
+        # pick random http devices to send the command to
+        # it will bridge the command over btle to the specified device ID
+        bridge_devices: List["CyncHTTPDevice"] = random.choices(list(g.server.http_devices.values()),
+                                                                k=min(3, len(g.server.http_devices)))
+        # bridge_devices = g.server.http_devices.values()
+        for bridge_device in bridge_devices:
+            if bridge_device.ready_to_control is True:
+                payload = list(header)
+                payload.extend(bridge_device.queue_id)
+                payload.extend(bytes([0x00, 0x00, 0x00]))
+                payload.extend(inner_struct)
+                b = bytes(payload)
+                # testing a callback system that determines success or failure
+                cb = MessageCallback(ctrl_msg_id[0] + (ctrl_msg_id[1] * 256))
+                cb.original_message = b
+                cb.sent_at = time.time()
+                cb.callback = g.mqtt.parse_device_status
+                cb.args = []
+                cb.args.extend([self.id, new_state])
+                logger.debug(
+                    f"{lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+                )
+                bridge_device.messages.x73.append(cb)
+                await bridge_device.write(b)
+            else:
+                logger.debug(f"{lp} Skipping device: {bridge_device.address} not ready to control")
 
     async def set_rgb(self, red: int, green: int, blue: int):
         """
-
          73 00 00 00 22 37 96 24 69 60 79 00 7e 2b 00 00  s..."7.$i`y.~+..
          00 f8 f0 10 00 2b 00 00 00 00 07 00 f0 11 02 01  .....+..........
         ff fe 00 fb ff 2d 7e                             .....-~
@@ -1339,21 +1377,22 @@ class CyncDevice:
 
         2b 07 00 fb ff = 43 + 7 + 0 + 251 + 255 = 556 ( needs + 1)
         """
-        msg_id_inc = self.get_incremental_number()
-        checksum = ((msg_id_inc + self.id + red + green + blue) + 1) % 256
+        lp = f"{self.lp}set_rgb:"
+        ctrl_msg_id = self.get_ctrl_msg_id_bytes()
+        checksum = (((ctrl_msg_id[0] + ctrl_msg_id[1]) + self.id + red + green + blue) + 1) % 256
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            msg_id_inc,
-            0,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0,
             0,
             248,
             240,
             16,
             0,
-            msg_id_inc,
-            0,
+            ctrl_msg_id[0],
+            ctrl_msg_id[1],
             0,
             0,
             0,
@@ -1379,33 +1418,39 @@ class CyncDevice:
             green=green,
             blue=blue,
         )
-        # pick a random http device to send the command to
-        # it should bridge the command over btle to the device ID
-        # bridge_device: "CyncHTTPDevice" = random.choice(list(g.server.http_devices.values()))
         raw_dbg = f" // {bytes(header).hex(' ')}" if CYNC_RAW else ""
         logger.debug(
-            f"{self.lp} Changing RGB: {self.red}, {self.green}, {self.blue} to {red}, {green}, {blue}{raw_dbg}"
+            f"{lp} Changing RGB: {self.red}, {self.green}, {self.blue} to {red}, {green}, {blue}{raw_dbg}"
         )
-        await g.mqtt.parse_device_status(self.id, new_state)
-        # # testing a callback system that determines success or failure
-        # cb = MessageCallback(msg_id_inc)
-        # cb.original_message = b
-        # cb.sent_at = time.time()
-        # cb.callback = g.mqtt.parse_device_status
-        # cb.args = []
-        # cb.args.extend([self.id, new_state])
-        # logger.debug(
-        #     f"{self.lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
-        # )
-        # bridge_device.messages.x73.append(cb)
+        # This changes the status of the entity in HA, when using callback, comment his out
+        # await g.mqtt.parse_device_status(self.id, new_state)
 
-        for device in g.server.http_devices.values():
-            payload = list(header)
-            payload.extend(device.queue_id)
-            payload.extend(bytes([0x00, 0x00, 0x00]))
-            payload.extend(inner_struct)
-            b = bytes(payload)
-            await device.write(b)
+        # pick random http devices to send the command to
+        # it should bridge the command over btle to the device ID
+        bridge_devices: List["CyncHTTPDevice"] = random.choices(list(g.server.http_devices.values()), k=min(3, len(g.server.http_devices)))
+        # bridge_devices = g.server.http_devices.values()
+        for bridge_device in bridge_devices:
+            if bridge_device.ready_to_control is True:
+                payload = list(header)
+                payload.extend(bridge_device.queue_id)
+                payload.extend(bytes([0x00, 0x00, 0x00]))
+                payload.extend(inner_struct)
+                b = bytes(payload)
+                # testing a callback system that determines success or failure
+                cb = MessageCallback(ctrl_msg_id[0] + (ctrl_msg_id[1] * 256))
+                cb.original_message = b
+                cb.sent_at = time.time()
+                cb.callback = g.mqtt.parse_device_status
+                cb.args = []
+                cb.args.extend([self.id, new_state])
+                logger.debug(
+                    f"{lp} Adding x73 callback to HTTP device: {bridge_device.address} -> {cb}"
+                )
+                bridge_device.messages.x73.append(cb)
+                await bridge_device.write(b)
+            else:
+                logger.debug(f"{lp} Skipping device: {bridge_device.address} not ready to control")
+
 
     @property
     def online(self):
@@ -1800,7 +1845,7 @@ class CyncLanServer:
                 # ask all devices for their mesh info
                 logger.debug(
                     f"{lp} Asking all ({len(http_dev_keys)}) online HTTP devices for their "
-                    f"mesh info: {', '.join(http_dev_keys).rstrip(',')}"
+                    f"BTLE mesh info: {', '.join(http_dev_keys).rstrip(',')}"
                 )
                 for dev_addy in http_dev_keys:
                     http_dev = self.http_devices.get(dev_addy)
@@ -2200,6 +2245,9 @@ class CyncHTTPDevice:
     reader: Optional[asyncio.StreamReader]
     writer: Optional[asyncio.StreamWriter]
     messages: Messages
+    # keep track of msg ids and if we finished reading data, if not, we need to append the data and then parse it
+    read_cache = []
+    needs_more_data = False
 
     def __init__(
         self,
@@ -2207,6 +2255,7 @@ class CyncHTTPDevice:
         writer: Optional[asyncio.StreamWriter] = None,
         address: Optional[str] = None,
     ):
+        self.ready_to_control = False
         self.network_version_str: Optional[str] = None
         self.inc_bytes: Optional[Union[int, bytes, str]] = None
         self.version: Optional[int] = None
@@ -2253,34 +2302,83 @@ class CyncHTTPDevice:
         """Extract single packets from raw data stream using metadata"""
         data_len = len(data)
         lp = f"{self.lp}extract:"
-        if CYNC_RAW is True:
-            logger.debug(
-                f"{lp} Extracting packets from {data_len} bytes of raw data\n{data.hex(' ')}"
-            )
-        if data_len < 5:
-            logger.debug(
-                f"{lp} Data is less than 5 bytes, not enough to parse (header: 5 bytes)"
-            )
+        if data_len == 0:
+            logger.debug(f"{lp} No data to parse AT BEGINNING OF FUNCTION!!!!!!!")
         else:
-            while True:
-                packet_length = data[4]
-                pkt_len_multiplier = data[3]
-                extract_length = ((pkt_len_multiplier * 256) + packet_length) + 5
-                extracted_packet = data[:extract_length]
-                if data_len > 4:
-                    data = data[extract_length:]
-                else:
-                    data = None
+            raw_data = bytes(data)
+            cache_data = CacheData()
+            cache_data.timestamp = time.time()
+            cache_data.all_data = raw_data
 
-                # pkt_type = data[0]
-                # lp = f"{self.address}:extract:x{pkt_type:02x}:"
-                # logger.debug(
-                #     f"{lp} Extracted packet ({packet_length=} / {extract_length = }): {extracted_packet}"
-                # )
-                await self.parse_packet(extracted_packet)
+            if self.needs_more_data is True:
+                logger.debug(f"{lp} It seems we have a partial packet (needs_more_data), need to append to "
+                             f"previous remaining data and re-parse...")
+                old_cdata: CacheData = self.read_cache[-1]
+                if old_cdata:
+                    data = old_cdata.data + data
+                    cache_data.raw_data = bytes(data)
+                    logger.debug(f"{lp} Previous data [length: {old_cdata.data_len}, need: "
+                                 f"{old_cdata.needed_len}] // Current data [length: {data_len}] // "
+                                 f"New (current + old) data [length: {len(data)}] // reconstructed: {data_len == len(data)}")
+
+                    logger.debug(f"DBG>>>{lp}NEW DATA:\n{data}\n") if CYNC_RAW is True else None
+                else:
+                    raise RuntimeError(f"{lp} No previous cache data to extract from!")
+                self.needs_more_data = False
+            i = 0
+            while True:
+                i += 1
+                lp = f"{self.lp}extract:loop {i}:"
                 if not data:
+                    # logger.debug(f"{lp} No more data to parse!")
                     break
-                # logger.debug(f"{lp} Remaining data: {data}")
+                data_len = len(data)
+                needed_length = data_len
+                if data[0] in ALL_HEADERS:
+                    if data_len > 4:
+                        packet_length = data[4]
+                        pkt_len_multiplier = data[3]
+                        needed_length = ((pkt_len_multiplier * 256) + packet_length) + 5
+                    else:
+                        logger.debug(f"DBG>>>{lp} Packet length is less than 4 bytes, setting needed_length to data_len")
+                else:
+                    logger.warning(f"{lp} Unknown packet header: {data[0].to_bytes(1, 'big').hex(' ')}")
+
+
+                if needed_length > data_len:
+                    self.needs_more_data = True
+                    logger.warning(
+                        f"{lp} Extracted packet length is longer than remaining data length! "
+                        f"need: {needed_length} // have: {data_len}, storing data for next read!")
+                    cache_data.needed_len = needed_length
+                    cache_data.data_len = data_len
+                    cache_data.data = bytes(data)
+                    logger.debug(f"{lp} cache_data: {cache_data}") if CYNC_RAW is True else None
+                    data = data[needed_length:]
+                    continue
+
+                extracted_packet = data[:needed_length]
+                # cut data down
+                data = data[needed_length:]
+                await self.parse_packet(extracted_packet)
+
+                if data:
+                    logger.debug(f"{lp} Remaining data to parse: {len(data)} bytes") if CYNC_RAW is True else None
+
+            self.read_cache.append(cache_data)
+            limit = 20
+            if len(self.read_cache) > limit:
+                # keep half of limit packets
+                limit = limit // -2
+                self.read_cache = self.read_cache[limit:]
+            if CYNC_RAW is True:
+                logger.debug(
+                    f"{lp} END OF RAW READING of {len(raw_data)} bytes\n"
+                    f"BYTES: {raw_data}\n"
+                    f"HEX: {raw_data.hex(' ')}\n"
+                    f"INT: {bytes2list(raw_data)}\n\n"
+                )
+
 
     async def parse_packet(self, data: bytes):
         """Parse what type of packet based on header (first 4 bytes)"""
@@ -2289,9 +2387,10 @@ class CyncHTTPDevice:
         packet_data: Optional[bytes] = None
         pkt_header_len = 12
         packet_header = data[:pkt_header_len]
-        # logger.debug(f"{lp} Parsing packet header: {packet_header.hex(' ')}")
+        # logger.debug(f"{lp} Parsing packet header: {packet_header.hex(' ')}") if CYNC_RAW is True else None
         # byte 1 (2, 3 are unknown)
-        pkt_type = int(packet_header[0]).to_bytes(1, "big")
+        # pkt_type = int(packet_header[0]).to_bytes(1, "big")
+        pkt_type = packet_header[0]
         # byte 4
         pkt_multiplier = packet_header[3] * 256
         # byte 5
@@ -2309,45 +2408,46 @@ class CyncHTTPDevice:
         # logger.debug(f"{lp} raw data length: {len(data)} // {data.hex(' ')}")
         # logger.debug(f"{lp} packet_data length: {len(packet_data)} // {packet_data.hex(' ')}")
         if pkt_type in DEVICE_STRUCTS.requests:
-            if pkt_type == DEVICE_STRUCTS.requests.x23:
+            if pkt_type == 0x23:
                 queue_id = data[6:10]
                 logger.debug(
                     f"{lp} Device AUTH packet with starting queue ID: '{queue_id.hex(' ')}'..."
                 )
                 self.queue_id = queue_id
-                await self.write(DEVICE_STRUCTS.responses.auth_ack)
+                await self.write(bytes(DEVICE_STRUCTS.responses.auth_ack))
                 # MUST SEND a3 before you can ask device for anything over HTTP
                 await asyncio.sleep(0.5)
                 await self.send_a3(queue_id)
             # device wants to connect before accepting commands
-            elif pkt_type == DEVICE_STRUCTS.requests.xc3:
+            elif pkt_type == 0xc3:
                 conn_time_str = ""
+                ack_c3 = bytes(DEVICE_STRUCTS.responses.connection_ack)
                 if self.last_xc3_request is not None:
                     elapsed = time.time() - self.last_xc3_request
                     conn_time_str = f" // Last request was {elapsed:.2f} seconds ago"
-                logger.debug(f"{lp} CONNECTION REQUEST, replying...{conn_time_str}")
+                logger.debug(f"{lp} CONNECTION REQUEST, replying with: {ack_c3.hex(' ')}{conn_time_str}")
                 self.last_xc3_request = time.time()
-                await self.write(DEVICE_STRUCTS.responses.connection_ack)
+                await self.write(ack_c3)
             # Ping/Pong
-            elif pkt_type == DEVICE_STRUCTS.requests.xd3:
-                await self.write(DEVICE_STRUCTS.responses.ping_ack)
-                # logger.debug(f"{lp}xd3: Client sent HEARTBEAT, replying...")
-            elif pkt_type == DEVICE_STRUCTS.requests.xa3:
+            elif pkt_type == 0xd3:
+                ack_d3 = bytes(DEVICE_STRUCTS.responses.ping_ack)
+                # logger.debug(f"{lp} Client sent HEARTBEAT, replying with {ack_d3.hex(' ')}")
+                await self.write(ack_d3)
+            elif pkt_type == 0xa3:
                 logger.debug(f"{lp} APP ANNOUNCEMENT packet: {packet_data.hex(' ')}")
                 ack = DEVICE_STRUCTS.xab_generate_ack(queue_id, bytes(msg_id))
-                # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
+                logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
                 await self.write(ack)
-            elif pkt_type == DEVICE_STRUCTS.requests.xab:
+            elif pkt_type == 0xab:
                 # We sent a 0xa3 packet, device is responding with 0xab. msg contains ascii 'xlink_dev'.
                 # sometimes this is sent with other data. there may be remaining data to read in the enxt raw msg.
                 # http msg buffer seems to be 1024 bytes.
                 # 0xab packets are 1024 bytes long, so if any data is prepended, the remaining 0xab data will be in the next raw read
                 pass
-            elif pkt_type == DEVICE_STRUCTS.requests.x7b:
+            elif pkt_type == 0x7b:
                 # device is acking one of our x73 requests
                 pass
-
-            elif pkt_type == DEVICE_STRUCTS.requests.x43:
+            elif pkt_type == 0x43:
                 if packet_data:
                     if packet_data[:2] == bytes([0xC7, 0x90]):
                         # [c7 90]
@@ -2378,11 +2478,11 @@ class CyncHTTPDevice:
                         ts_idx = 3
                         ts_end_idx = -1
                         ts: Optional[bytes] = None
-                        logger.debug(
-                            f"{lp} Device TIMESTAMP PACKET ({len(bytes.fromhex(packet_data.hex()))}) -> HEX: "
-                            f"{packet_data.hex(' ')} // INTS: {bytes2list(packet_data)} // "
-                            f"ASCII: {packet_data.decode(errors='replace')}"
-                        ) if CYNC_RAW is True else None
+                        # logger.debug(
+                        #     f"{lp} Device TIMESTAMP PACKET ({len(bytes.fromhex(packet_data.hex()))}) -> HEX: "
+                        #     f"{packet_data.hex(' ')} // INTS: {bytes2list(packet_data)} // "
+                        #     f"ASCII: {packet_data.decode(errors='replace')}"
+                        # ) if CYNC_RAW is True else None
                         # setting version from config file wouldnt be reliable if the user doesnt bump the version
                         # when updating cync firmware. we can only rely on the version sent by the device.
                         # there is no guarantee the version is sent before checking the timestamp, so use a gross hack.
@@ -2411,9 +2511,9 @@ class CyncHTTPDevice:
                         struct_len = 19
                         extractions = []
                         try:
-                            logger.debug(
-                                f"{lp} Device sent BROADCAST STATUS packet => '{packet_data.hex(' ')}'"
-                            )if CYNC_RAW is True else None
+                            # logger.debug(
+                            #     f"{lp} Device sent BROADCAST STATUS packet => '{packet_data.hex(' ')}'"
+                            # )if CYNC_RAW is True else None
                             for i in range(0, packet_length, struct_len):
                                 extracted = packet_data[i : i + struct_len]
                                 if extracted:
@@ -2429,9 +2529,10 @@ class CyncHTTPDevice:
                                     lp,
                                     extractions,
                                 )
-                            )
+                            ) if CYNC_RAW is True else None
                         except IndexError:
-                            pass
+                            # The device will only send a max of 1kb of data, if the message is longer than 1kb the remainder is sent in the next read
+                            logger.debug(f"{lp} IndexError extracting status struct (expected)")
                         except Exception as e:
                             logger.error(f"{lp} EXCEPTION: {e}")
                 # Its one of those queue id/msg id pings? 0x43 00 00 00 ww xx xx xx xx yy yy yy
@@ -2440,14 +2541,15 @@ class CyncHTTPDevice:
                     # logger.debug(f"{lp} received a 0x43 packet with no data, interpreting as PING, replying...")
                     pass
                 ack = DEVICE_STRUCTS.x48_generate_ack(bytes(msg_id))
-                # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
+                logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}") if CYNC_RAW is True else None
                 await self.write(ack)
-
-            # When the device sends a packet starting with 0x83, data is wrapped in 0x7e.
-            # firmware version is sent without 0x7e boundaries
-            elif pkt_type == DEVICE_STRUCTS.requests.x83:
+                logger.debug(f"DBG>>>{lp} RAW DATA: {len(data)} BYTES") if CYNC_RAW is True else None
+            elif pkt_type == 0x83:
+                # When the device sends a packet starting with 0x83, data is wrapped in 0x7e.
+                # firmware version is sent without 0x7e boundaries
                 if packet_data is not None:
-                    logger.debug(f"{lp} DATA ({len(bytes(packet_data))} bytes) => {packet_data.hex(' ')}")
+                    # logger.debug(f"{lp} Extracted BOUND data ({len(bytes(packet_data))} bytes) => {packet_data.hex(' ')}")
+
                     # 0x83 inner struct - not always bound by 0x7e (firmware response doesn't have starting boundary, has ending boundary 0x7e)
                     # firmware info, data len = 30 (0x32), fw starts idx 23-27, 20-22 fw type (86 01 0x)
                     #  {83 00 00 00 32} {[39 87 c8 57] [00 03 00]} {00 00 00 00  ....29..W.......
@@ -2455,6 +2557,7 @@ class CyncHTTPDevice:
                     #  86 01 01 31[idx=23 packet_data] 30 33 36 31 00 00 00 00 00 00 00 00  ...10361........
                     #  00 00 00 00 00 [8d] [7e]}                             ......~
                     # firmware packet may only be sent on startup / network reconnection
+
                     if packet_data[0] == 0x00:
                         fw_type, fw_ver, fw_str = parse_unbound_firmware_version(packet_data, lp)
                         if fw_type == 'device':
@@ -2464,15 +2567,16 @@ class CyncHTTPDevice:
                             self.network_version = fw_ver
                             self.network_version_str = fw_str
 
-                    elif packet_data[0] == 0x7E:
-                        # device self status, its internal status. state can be off and brightness set to a non 0.
+                    elif packet_data[0] == DATA_BOUNDARY:
+                        # device internal status. state can be off and brightness set to a non 0.
                         # signifies what brightness when state = on, meaning don't rely on brightness for on/off.
-                        # 83 00 00 00 25 37 96 24 69 00 05 00 7e {21 00 00  ....%7.$i...~!..
-                        #  00} {[fa db] 13} 00 (34 22) 11 05 00 [05] 00 db 11 02 01  .....4".........
-                        #  [00 64 00 00 00 00] 00 00 b3 7e
 
-                        # full color light strip controller firmware version: 3.0.204 has byte index 1 as increment
-                        # index 2 is the rollover so the value is * 256
+                        # 83 00 00 00 25 37 96 24 69 00 05 00 7e {21 00 00
+                        #  00} {[fa db] 13} 00 (34 22) 11 05 00 [05] 00 db
+                        #  11 02 01 [00 64 00 00 00 00] 00 00 b3 7e
+
+                        # full color light strip controller firmware version: 3.0.204 has byte index 1 as increment (msg id)
+                        # index 2 is the rollover so the value is * 256 (so idx 1-4 bytes are the msg id which gets incremented?)
                         inc_idx = 1
                         # if self.device_type_id == 133:
                         #     # light strip controller
@@ -2485,15 +2589,13 @@ class CyncHTTPDevice:
                         #             logger.debug(f"{lp} device type: {self.device_type_id} (Light Strip) has firmware version: "
                         #                          f"{self.version_str} meaning increment byte at index: "
                         #                          f"{inc_idx} ({bytes(packet_data[inc_idx])})")
-                        inc_bytes = packet_data[inc_idx:inc_idx + 4]
-                        self.inc_bytes = inc_bytes
+                        x83msg_id_bytes = packet_data[inc_idx:inc_idx + 4]
+                        self.inc_bytes = x83msg_id_bytes
                         # logger.debug(f"{lp} Increment bytes: {inc_bytes.hex(' ')}")
 
                         ctrl_bytes = packet_data[5:7]
-                        # This has self status, but it appears to be a packet that replies to a control packet
-                        # this seems to show it changed its device state in response to a control packet
+                        # This has self status, but it appears to be a packet that is sent after a control packet
                         if ctrl_bytes == bytes([0xFA, 0xDB]):
-                            # 0x13 after ctrl bytes signifies self status or device status
                             id_idx = 14
                             connected_idx = 19
                             state_idx = 20
@@ -2526,6 +2628,9 @@ class CyncHTTPDevice:
                                 f"{lp} Internal STATUS for device ID: {dev_id} = {bytes2list(raw_status)}"
                             )
                             await g.server.parse_status(raw_status)
+                        else:
+                            logger.warning(f"{lp} Unknown 0x83 packet data (ctrl_bytes: {ctrl_bytes.hex(' ')} // "
+                                           f"msg_id: {x83msg_id_bytes.hex(' ')}) : {packet_data.hex(' ')}")
 
                 else:
                     logger.warning(
@@ -2536,15 +2641,16 @@ class CyncHTTPDevice:
                 # logger.debug(f"{lp} RAW DATA: {data.hex(' ')}")
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
                 await self.write(ack)
-
-            elif pkt_type == DEVICE_STRUCTS.requests.x73:
+            elif pkt_type == 0x73:
+                # logger.debug(f"{lp} Control packet received: {packet_data.hex(' ')}") if CYNC_RAW is True else None
                 if packet_data is not None:
+
                     # 0x73 should ALWAYS have 0x7e bound data.
                     ctrl_bytes = packet_data[5:7]
                     # check for boundary, all bytes between boundaries are for this request
-                    if packet_data[0] == 0x7E:
+                    if packet_data[0] == DATA_BOUNDARY:
                         # find next 0x7e and extract the inner struct
-                        end_bndry_idx = packet_data[1:].find(0x7E) + 1
+                        end_bndry_idx = packet_data[1:].find(DATA_BOUNDARY) + 1
                         inner_struct = packet_data[1:end_bndry_idx]
                         inner_struct_len = len(inner_struct)
                         # ctrl bytes 0xf9, 0x52 indicates this is a mesh info struct
@@ -2690,7 +2796,7 @@ class CyncHTTPDevice:
                                         # -- END OF mesh info response parsing loop --
                                     except IndexError:
                                         # ran out of data
-                                        logger.debug(f"{lp} IndexError parsing mesh info response") if CYNC_RAW is True else None
+                                        # logger.debug(f"{lp} IndexError parsing mesh info response (expected)") if CYNC_RAW is True else None
                                         pass
                                     except Exception as e:
                                         logger.error(
@@ -2749,6 +2855,7 @@ class CyncHTTPDevice:
                         else:
                             logger.debug(
                                 f"{lp} control bytes: {ctrl_bytes.hex(' ')} // packet data:  {packet_data.hex(' ')}") if CYNC_RAW else None
+                            
                             msg_cb_obj: Optional[MessageCallback] = None
                             # are any callbacks stored?
                             if self.messages.x73:
@@ -2760,8 +2867,7 @@ class CyncHTTPDevice:
                                     msg_cb_obj = self.messages.x73.pop(msg_idx)
                                     logger.debug(
                                         f"{lp} Found a message callback for msg id: {inner_msg_id} -> "
-                                        f"elapsed since sent: {time.time() - msg_cb_obj.sent_at} // "
-                                        f"{repr(msg_cb_obj)}"
+                                        f"elapsed since sent: {time.time() - msg_cb_obj.sent_at}"
                                     )
                                 else:
                                     logger.debug(f"{lp} no callback for msg_id: {inner_msg_id} ({self.messages.x73})")
@@ -2771,8 +2877,8 @@ class CyncHTTPDevice:
                                 # handle callbacks for messages
                                 # byte 8 is success? 0x01 yes // 0x00 no
                                 # 7e 09 00 00 00 f9 d0 01 00 00 d1 7e
-                                logger.debug(f"{lp} CONTROL packet ACK (ctrl_bytes = {ctrl_bytes}) "
-                                             f"(inc_bytes = {packet_data[1:5]}) -> success: {packet_data[7]}")
+                                logger.debug(f"{lp} CONTROL packet ACK (ctrl_bytes = {ctrl_bytes.hex(' ')}) "
+                                             f"(extracted data = {packet_data.hex(' ')}) -> success: {packet_data[7]}")
                                 if packet_data[7] == 0x01:
                                     if msg_cb_obj is not None:
                                         logger.debug(
@@ -2785,7 +2891,7 @@ class CyncHTTPDevice:
                                         # msg_cb_obj.args = []
                                         # msg_cb_obj.kwargs = {}
                                     else:
-                                        # logger.debug(f"{lp} NO CALLBACK FOUND FOR CONTROL PACKET ACK ?")
+                                        logger.debug(f"{lp} NO CALLBACK FOUND FOR CONTROL PACKET ACK ?")
                                         pass
                                 else:
                                     logger.debug(f"{lp} CONTROL PACKET ACK -> FAILURE? success: {packet_data[7]}")
@@ -2824,10 +2930,7 @@ class CyncHTTPDevice:
 
         # unknown data we don't know the header for
         else:
-            logger.debug(
-                f"{lp} sent UNKNOWN HEADER! Don't know how to respond!\n"
-                f"RAW: {data}\nINT: {bytes2list(data)}\nHEX: {data.hex(' ')}"
-            )
+            logger.debug(f"{lp} sent UNKNOWN HEADER! Don't know how to respond!{RAW_MSG}")
 
     async def ask_for_mesh_info(self, parse: bool = False):
         """
@@ -2837,7 +2940,7 @@ class CyncHTTPDevice:
         """
         lp = self.lp
         # mesh_info = '73 00 00 00 18 2d e4 b5 d2 15 2c 00 7e 1f 00 00 00 f8 52 06 00 00 00 ff ff 00 00 56 7e'
-        mesh_info_data = DEVICE_STRUCTS.requests.x73
+        mesh_info_data = bytes(list(DEVICE_STRUCTS.requests.x73))
         # last byte is data len multiplier (multiply value by 256 if data len > 256)
         mesh_info_data += bytes([0x00, 0x00, 0x00])
         # data len
@@ -2869,7 +2972,8 @@ class CyncHTTPDevice:
                 0x7E,
             ]
         )
-        # logger.debug(f"{lp} Asking device for BT mesh info")
+        # logger.debug(f"{lp} Asking device for BT mesh info:\nBYTES: {mesh_info_data}\nHEX: {mesh_info_data.hex(' ')}\n"
+        #              f"INT: {bytes2list(mesh_info_data)}") if CYNC_RAW is True else None
         try:
             if parse is True:
                 self.parse_mesh_status = True
@@ -2888,8 +2992,9 @@ class CyncHTTPDevice:
         rand_bytes += bytes([0x00])
         self.xa3_msg_id += random.getrandbits(8).to_bytes(1, "big")
         a3_packet += rand_bytes
-        logger.debug(f"{self.lp} Sending 0xa3 packet -> {a3_packet.hex(' ')}")
+        logger.debug(f"{self.lp} Sending 0xa3 (want to control) packet -> {a3_packet.hex(' ')}")
         await self.write(a3_packet)
+        self.ready_to_control = True
 
     async def receive_task(self):
         """
@@ -3160,6 +3265,7 @@ class MQTTClient:
         self.hass_maxct: int = int(1e6 / self.cync_mink + 0.5)
         g.mqtt = self
 
+
     async def start(self):
         lp = f"{self.lp}start:"
         # loop to keep trying to connect to the broker
@@ -3370,8 +3476,9 @@ class MQTTClient:
                     tpc,
                     json.dumps(mqtt_dev_state).encode(),
                     qos=QOS_0,
+                    # retain=True,
                 ),
-                timeout=3.0,
+            timeout = 3.0,
             )
         except asyncio.TimeoutError:
             logger.error(f"{lp} Timeout waiting for MQTT publish")
@@ -3565,6 +3672,7 @@ class MQTTClient:
                     tpc,
                     json.dumps(device_config).encode(),
                     qos=QOS_1,
+                    retain=True,
                 )
             except Exception as e:
                 logger.error(
@@ -3604,7 +3712,9 @@ class MQTTClient:
                 }
                 dev_config = {
                     "object_id": obj_id,
-                    "name": device.name,
+                    # "name": device.name,
+                    # set to None if only device name is relevent
+                    "name": None,
                     "command_topic": "{0}/set/{1}".format(
                         self.topic, device_uuid
                     ),
@@ -3620,6 +3730,7 @@ class MQTTClient:
                     "schema": "json",
                     "origin": origin_struct,
                     "device": device_struct,
+                    "optimistic": False,
                 }
                 dev_type = "light"
                 tpc_str_template = "{0}/{1}/{2}/config"
@@ -3650,6 +3761,7 @@ class MQTTClient:
                         tpc,
                         json.dumps(dev_config).encode(),
                         qos=QOS_1,
+                        retain=True,
                     )
                 except Exception as e:
                     logger.error(
