@@ -55,7 +55,9 @@ CYNC_RAW = os.environ.get("CYNC_RAW_DEBUG", "0").casefold() in YES_ANSWER
 CYNC_DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in YES_ANSWER
 CORP_ID: str = "1007d2ad150c4000"
 DATA_BOUNDARY = 0x7E
-RAW_MSG = " Set the CYNC_RAW_DEBUG env var to 1to see the data" if CYNC_RAW is False else ""
+RAW_MSG = (
+    " Set the CYNC_RAW_DEBUG env var to 1to see the data" if CYNC_RAW is False else ""
+)
 logger = logging.getLogger("cync-lan")
 formatter = logging.Formatter(
     "%(asctime)s.%(msecs)d %(levelname)s [%(module)s:%(lineno)d] > %(message)s",
@@ -67,13 +69,15 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
+
 @dataclass
 class CacheData:
-    all_data: bytes = b''
+    all_data: bytes = b""
     timestamp: float = 0
-    data: bytes = b''
+    data: bytes = b""
     data_len: int = 0
     needed_len: int = 0
+
 
 # from cync2mqtt
 def random_login_resource():
@@ -102,13 +106,18 @@ def ints2bytes(ints: List[int]) -> bytes:
     """Convert a list of integers to a byte string"""
     return bytes(ints)
 
-def parse_unbound_firmware_version(data_struct: bytes, lp: str) -> Optional[Tuple[str, int, str]]:
+
+def parse_unbound_firmware_version(
+    data_struct: bytes, lp: str
+) -> Optional[Tuple[str, int, str]]:
     """Parse the firmware version from binary hex data."""
     # LED controller sends this data after cync app connects via BTLE
     # 1f 00 00 00 fa 8e 14 00 50 22 33 08 00 ff ff ea 11 02 08 a1 [01 03 01 00 00 00 00 00 f8
     lp = f"{lp}firmware_version:"
     if data_struct[0] != 0x00:
-        logger.error(f"{lp} Invalid first byte value: {data_struct[0]} should be 0x00 for firmware version data")
+        logger.error(
+            f"{lp} Invalid first byte value: {data_struct[0]} should be 0x00 for firmware version data"
+        )
 
     n_idx = 20  # Starting index for firmware information
     firmware_type = "device" if data_struct[n_idx + 2] == 0x01 else "network"
@@ -120,7 +129,9 @@ def parse_unbound_firmware_version(data_struct: bytes, lp: str) -> Optional[Tupl
             firmware_version.append(int(chr(data_struct[n_idx])))
             n_idx += 1
         if not firmware_version:
-            logger.warning(f"{lp} No firmware version found in packet: {data_struct.hex(' ')}")
+            logger.warning(
+                f"{lp} No firmware version found in packet: {data_struct.hex(' ')}"
+            )
             return None
             # network firmware (this one is set to ascii 0 (0x30))
             # 00 00 00 00 00 fa 00 20 00 00 00 00 00 00 00 00
@@ -131,12 +142,14 @@ def parse_unbound_firmware_version(data_struct: bytes, lp: str) -> Optional[Tupl
         return None
 
     else:
-        if firmware_type == 'device':
+        if firmware_type == "device":
             firmware_str = f"{firmware_version[0]}.{firmware_version[1]}.{''.join(map(str, firmware_version[2:]))}"
         else:
             firmware_str = "".join(map(str, firmware_version))
         firmware_version_int = int("".join(map(str, firmware_version)))
-        logger.debug(f"{lp} {firmware_type} firmware VERSION: {firmware_version_int} ({firmware_str})")
+        logger.debug(
+            f"{lp} {firmware_type} firmware VERSION: {firmware_version_int} ({firmware_str})"
+        )
 
     return firmware_type, firmware_version_int, firmware_str
 
@@ -160,7 +173,7 @@ class PhoneAppStructs:
 
     requests: AppRequests = AppRequests()
     responses: AppResponses = AppResponses()
-    headers = (0x13, 0xa3, 0x18)
+    headers = (0x13, 0xA3, 0x18)
 
 
 class DeviceStructs:
@@ -180,7 +193,7 @@ class DeviceStructs:
         x43: Tuple[int] = tuple([0x43])
         xa3: Tuple[int] = tuple([0xA3])
         xab: Tuple[int] = tuple([0xAB])
-        headers: Tuple[int] = (0x23, 0xc3, 0xd3, 0x83, 0x73, 0x7b, 0x43, 0xa3, 0xab)
+        headers: Tuple[int] = (0x23, 0xC3, 0xD3, 0x83, 0x73, 0x7B, 0x43, 0xA3, 0xAB)
 
         def __iter__(self):
             return iter(self.headers)
@@ -192,22 +205,22 @@ class DeviceStructs:
         auth_ack: Tuple[int] = (0x28, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00)
         # todo: figure out correct bytes for this
         connection_ack: Tuple[int] = (
-                0xC8,
-                0x00,
-                0x00,
-                0x00,
-                0x0B,
-                0x0D,
-                0x07,
-                0xE8,
-                0x03,
-                0x0A,
-                0x01,
-                0x0C,
-                0x04,
-                0x1F,
-                0xFE,
-                0x0C,
+            0xC8,
+            0x00,
+            0x00,
+            0x00,
+            0x0B,
+            0x0D,
+            0x07,
+            0xE8,
+            0x03,
+            0x0A,
+            0x01,
+            0x0C,
+            0x04,
+            0x1F,
+            0xFE,
+            0x0C,
         )
         x48_ack: Tuple[int] = (0x48, 0x00, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00)
         x88_ack: Tuple[int] = (0x88, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00)
@@ -217,7 +230,7 @@ class DeviceStructs:
 
     requests: DeviceRequests = DeviceRequests()
     responses: DeviceResponses = DeviceResponses()
-    headers: Tuple[int] = (0x23, 0xc3, 0xd3, 0x83, 0x73, 0x7b, 0x43, 0xa3, 0xab)
+    headers: Tuple[int] = (0x23, 0xC3, 0xD3, 0x83, 0x73, 0x7B, 0x43, 0xA3, 0xAB)
 
     @staticmethod
     def xab_generate_ack(queue_id: bytes, msg_id: bytes):
@@ -257,7 +270,9 @@ class DeviceStructs:
             "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 "
             "e3 4f 02 10"
         )
-        dlen = len(queue_id) + len(msg_id) + len(bytes.fromhex(hex_str.replace(' ', '')))
+        dlen = (
+            len(queue_id) + len(msg_id) + len(bytes.fromhex(hex_str.replace(" ", "")))
+        )
         _x += bytes([dlen])
         _x += queue_id
         _x += msg_id
@@ -385,10 +400,10 @@ class CyncCloudAPI:
         return _mesh_networks
 
     def authenticate_2fa(
-            self,
-            uname: Optional[str] = None,
-            password: Optional[str] = None,
-            otp_code: Optional[str] = None,
+        self,
+        uname: Optional[str] = None,
+        password: Optional[str] = None,
+        otp_code: Optional[str] = None,
     ):
         """
         Authenticate with the Cync Cloud API and get a token.
@@ -406,7 +421,6 @@ class CyncCloudAPI:
         # get user input if neither provided
         if not uname:
             uname = input("Enter Cync Account Username/Email:  ")
-
 
         if not otp_code:
             # Ask to be sent an email with OTP code
@@ -456,8 +470,6 @@ class CyncCloudAPI:
             logger.info(f"API Auth Response: {rjson}")
             return rjson["access_token"], rjson["user_id"]
 
-
-
     def get_devices(self, auth_token: str, user: str):
         """Get a list of devices for a particular user."""
         api_devices_url = f"{CYNC_API_BASE}user/{user}/subscribe/devices"
@@ -469,7 +481,11 @@ class CyncCloudAPI:
         # {'error': {'msg': 'Access-Token Expired', 'code': 4031021}}
         if "error" in ret:
             error_data = ret["error"]
-            if 'msg' in error_data and error_data['msg'] and error_data['msg'].lower() == 'access-token expired':
+            if (
+                "msg" in error_data
+                and error_data["msg"]
+                and error_data["msg"].lower() == "access-token expired"
+            ):
                 raise HTTPError("Access-Token expired, you need to re-authenticate.")
                 # logger.error("Access-Token expired, re-authenticating...")
                 # return self.get_devices(*self.authenticate_2fa())
@@ -488,12 +504,15 @@ class CyncCloudAPI:
         # {'error': {'msg': 'Access-Token Expired', 'code': 4031021}}
         if "error" in ret:
             error_data = ret["error"]
-            if 'msg' in error_data and error_data['msg'] and error_data['msg'].lower() == 'access-token expired':
+            if (
+                "msg" in error_data
+                and error_data["msg"]
+                and error_data["msg"].lower() == "access-token expired"
+            ):
                 raise HTTPError("Access-Token expired, you need to re-authenticate.")
                 # logger.error("Access-Token expired, re-authenticating...")
                 # return self.get_devices(*self.authenticate_2fa())
         return ret
-
 
     @staticmethod
     def mesh_to_config(mesh_info):
@@ -551,7 +570,7 @@ class CyncCloudAPI:
                     cync_type=_type,
                     mac=_mac,
                     wifi_mac=wifi_mac,
-                    fw_version=_fw_ver
+                    fw_version=_fw_ver,
                 )
                 new_bulb = {}
                 for attr_set in (
@@ -579,6 +598,7 @@ class CyncCloudAPI:
 
         return config_dict
 
+
 type_2_str = {
     31: "Full Color C by GE BTLE A19 Bulb",
     37: "Dimmer Switch with Motion and Ambient Light",
@@ -591,8 +611,9 @@ type_2_str = {
     146: "Full Color Direct Connect Edison ST19 Bulb",
     147: "Full Color Direct Connect Edison G25 Bulb",
     148: "Dimmable Direct Connect Edison ST19 Bulb",
-
 }
+
+
 class CyncDevice:
     """
     A class to represent a Cync device imported from a config file. This class is used to manage the state of the device
@@ -1001,8 +1022,6 @@ class CyncDevice:
         self._g: int = 0
         self._b: int = 0
 
-
-
     @property
     def version(self) -> Optional[str]:
         return self._version
@@ -1014,9 +1033,7 @@ class CyncDevice:
         if isinstance(value, int):
             self._version = value
         elif isinstance(value, str):
-            self._version = int(value.replace('.','').strip())
-
-
+            self._version = int(value.replace(".", "").strip())
 
     def check_dev_type(self, dev_type: int) -> dict:
         dev_types = {}
@@ -1136,7 +1153,7 @@ class CyncDevice:
         header = [0x73, 0x00, 0x00, 0x00, 0x1F]
         inner_struct = [
             0x7E,
-            'ctrl_byte',
+            "ctrl_byte",
             0x00,
             0x00,
             0x00,
@@ -1144,7 +1161,7 @@ class CyncDevice:
             0xD0,
             0x0D,
             0x00,
-            'ctrl_bye',
+            "ctrl_bye",
             0x00,
             0x00,
             0x00,
@@ -1157,14 +1174,15 @@ class CyncDevice:
             state,
             0x00,
             0x00,
-            'checksum',
+            "checksum",
             0x7E,
         ]
         # pick random http devices to send the command to
         # it should bridge the command over btle to the device ID
-        bridge_devices: List["CyncHTTPDevice"] = random.sample(list(g.server.http_devices.values()),
-                                                  k=min(3, len(g.server.http_devices)))
-        str_devices = ' '.join([x.address for x in bridge_devices])
+        bridge_devices: List["CyncHTTPDevice"] = random.sample(
+            list(g.server.http_devices.values()), k=min(3, len(g.server.http_devices))
+        )
+        str_devices = " ".join([x.address for x in bridge_devices])
         logger.debug(
             f"{lp} Sending power state command, current: {self.state} - new: {state} to "
             f"http devices: {str_devices}"
@@ -1186,8 +1204,9 @@ class CyncDevice:
                 # If the device receives the msg and changes state, http devices will send
                 # an 0x83 internal status packet, which we change device status on.
             else:
-                logger.debug(f"{lp} Skipping device: {bridge_device.address} not ready to control")
-
+                logger.debug(
+                    f"{lp} Skipping device: {bridge_device.address} not ready to control"
+                )
 
     async def set_brightness(self, bri: int):
         """Send raw data to control device brightness"""
@@ -1198,7 +1217,7 @@ class CyncDevice:
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            'ctrl_byte',
+            "ctrl_byte",
             0,
             0,
             0,
@@ -1206,7 +1225,7 @@ class CyncDevice:
             240,
             16,
             0,
-            'ctrl_byte',
+            "ctrl_byte",
             0,
             0,
             0,
@@ -1222,15 +1241,18 @@ class CyncDevice:
             255,
             255,
             255,
-            'checksum',
+            "checksum",
             126,
         ]
         # pick random http devices to send the command to
         # it should bridge the command over btle to the device ID
-        bridge_devices: List["CyncHTTPDevice"] = random.sample(list(g.server.http_devices.values()),
-                                                  k=min(3, len(g.server.http_devices)))
-        str_devices = ' '.join([x.address for x in bridge_devices])
-        logger.debug(f"{lp} Sending brightness command, current: {self._brightness} new: {bri} to http devices: {str_devices}")
+        bridge_devices: List["CyncHTTPDevice"] = random.sample(
+            list(g.server.http_devices.values()), k=min(3, len(g.server.http_devices))
+        )
+        str_devices = " ".join([x.address for x in bridge_devices])
+        logger.debug(
+            f"{lp} Sending brightness command, current: {self._brightness} new: {bri} to http devices: {str_devices}"
+        )
         for bridge_device in bridge_devices:
             if bridge_device.ready_to_control is True:
                 payload = list(header)
@@ -1246,8 +1268,9 @@ class CyncDevice:
                 b = bytes(payload)
                 await bridge_device.write(b)
             else:
-                logger.debug(f"{lp} Skipping device: {bridge_device.address} (id: {id(bridge_device)}) not ready to control")
-
+                logger.debug(
+                    f"{lp} Skipping device: {bridge_device.address} (id: {id(bridge_device)}) not ready to control"
+                )
 
     async def set_temperature(self, temp: int):
         """Send raw data to control device white temperature"""
@@ -1261,7 +1284,7 @@ class CyncDevice:
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            'ctrl_msg_id[0]',
+            "ctrl_msg_id[0]",
             0,
             0,
             0,
@@ -1269,7 +1292,7 @@ class CyncDevice:
             240,
             16,
             0,
-            'ctrl_msg_id[0]',
+            "ctrl_msg_id[0]",
             0,
             0,
             0,
@@ -1285,14 +1308,15 @@ class CyncDevice:
             0x00,
             0x00,
             0x00,
-            'checksum',
+            "checksum",
             126,
         ]
         # pick random http devices to send the command to
         # it will bridge the command over btle to the specified device ID
-        bridge_devices: List["CyncHTTPDevice"] = random.sample(list(g.server.http_devices.values()),
-                                                                k=min(3, len(g.server.http_devices)))
-        str_devices = ' '.join([x.address for x in bridge_devices])
+        bridge_devices: List["CyncHTTPDevice"] = random.sample(
+            list(g.server.http_devices.values()), k=min(3, len(g.server.http_devices))
+        )
+        str_devices = " ".join([x.address for x in bridge_devices])
         logger.debug(
             f"{lp} Sending white temperature command, current: {self.temperature} - new: {temp} to http devices: {str_devices}"
         )
@@ -1313,8 +1337,9 @@ class CyncDevice:
                 await bridge_device.write(b)
 
             else:
-                logger.debug(f"{lp} Skipping device: {bridge_device.address} not ready to control")
-
+                logger.debug(
+                    f"{lp} Skipping device: {bridge_device.address} not ready to control"
+                )
 
     async def set_rgb(self, red: int, green: int, blue: int):
         """
@@ -1330,7 +1355,7 @@ class CyncDevice:
         header = [115, 0, 0, 0, 34]
         inner_struct = [
             126,
-            'ctrl_msg_id[0]',
+            "ctrl_msg_id[0]",
             0,
             0,
             0,
@@ -1338,7 +1363,7 @@ class CyncDevice:
             240,
             16,
             0,
-            'ctrl_msg_id[0]',
+            "ctrl_msg_id[0]",
             0,
             0,
             0,
@@ -1354,13 +1379,15 @@ class CyncDevice:
             red,
             green,
             blue,
-            'checksum',
+            "checksum",
             126,
         ]
         # pick random http devices to send the command to
         # it should bridge the command over btle to the device ID
-        bridge_devices: List["CyncHTTPDevice"] = random.sample(list(g.server.http_devices.values()), k=min(3, len(g.server.http_devices)))
-        str_devices = ' '.join([x.address for x in bridge_devices])
+        bridge_devices: List["CyncHTTPDevice"] = random.sample(
+            list(g.server.http_devices.values()), k=min(3, len(g.server.http_devices))
+        )
+        str_devices = " ".join([x.address for x in bridge_devices])
         logger.debug(
             f"{lp} Sending RGB command, current: {self.red}, {self.green}, {self.blue} - new: {red}, {green}, {blue} to http devices {str_devices}"
         )
@@ -1379,8 +1406,9 @@ class CyncDevice:
                 b = bytes(payload)
                 await bridge_device.write(b)
             else:
-                logger.debug(f"{lp} Skipping device: {bridge_device.address} not ready to control")
-
+                logger.debug(
+                    f"{lp} Skipping device: {bridge_device.address} not ready to control"
+                )
 
     @property
     def online(self):
@@ -1700,7 +1728,11 @@ class CyncLanServer:
             # fixme: need to make a bulk_change method to prevent multiple mqtt messages
             curr_status = device.current_status
             if curr_status == [state, brightness, temp, r, _g, b]:
-                logger.debug(f"{device.lp} NO CHANGES TO DEVICE STATUS") if CYNC_RAW is True else None
+                (
+                    logger.debug(f"{device.lp} NO CHANGES TO DEVICE STATUS")
+                    if CYNC_RAW is True
+                    else None
+                )
             else:
                 # find the differences
                 if state != device.state:
@@ -1824,11 +1856,11 @@ class CyncLanServer:
                             f"export the devices again OR there is unknown data to decode."
                         )
                     (
-                    logger.debug(
-                        f"{lp} No known device IDs found in ANY HTTP devices: {self.http_devices.keys()}"
-                    )
-                    if not self.known_ids
-                    else None
+                        logger.debug(
+                            f"{lp} No known device IDs found in ANY HTTP devices: {self.http_devices.keys()}"
+                        )
+                        if not self.known_ids
+                        else None
                     )
 
                 diff_ = set(previous_online_ids) - set(self.known_ids)
@@ -2115,13 +2147,12 @@ class CyncLAN:
                         continue
                 self._ids_from_config.append(f"{home_id}-{cync_id}")
 
-                fw_version = (
-                    cync_device["fw"]
-                    if "fw" in cync_device
-                    else None
-                )
+                fw_version = cync_device["fw"] if "fw" in cync_device else None
                 new_device = CyncDevice(
-                    name=device_name, cync_id=cync_id, fw_version=fw_version, home_id=home_id
+                    name=device_name,
+                    cync_id=cync_id,
+                    fw_version=fw_version,
+                    home_id=home_id,
                 )
                 for attrset in (
                     "is_plug",
@@ -2217,9 +2248,7 @@ class CyncHTTPDevice:
         # Create a ref to the mqtt queues
         self.mqtt_pub_queue: asyncio.Queue = g.mqtt.pub_queue
         self.mqtt_sub_queue: asyncio.Queue = g.mqtt.sub_queue
-        logger.debug(
-            f"{self.lp} Created new device: {address}"
-        )
+        logger.debug(f"{self.lp} Created new device: {address}")
         self.lp = f"{self.address}:"
         self.control_bytes = [0x00, 0x00]
 
@@ -2261,19 +2290,27 @@ class CyncHTTPDevice:
             cache_data.all_data = raw_data
 
             if self.needs_more_data is True:
-                logger.debug(f"{lp} It seems we have a partial packet (needs_more_data), need to append to "
-                             f"previous remaining data and re-parse...")
+                logger.debug(
+                    f"{lp} It seems we have a partial packet (needs_more_data), need to append to "
+                    f"previous remaining data and re-parse..."
+                )
                 old_cdata: CacheData = self.read_cache[-1]
                 if old_cdata:
                     data = old_cdata.data + data
                     cache_data.raw_data = bytes(data)
                     # Previous data [length: 16, need: 42] // Current data [length: 530] //
                     #   New (current + old) data [length: 546] // reconstructed: False
-                    logger.debug(f"{lp} Previous data [length: {old_cdata.data_len}, need: "
-                                 f"{old_cdata.needed_len}] // Current data [length: {data_len}] // "
-                                 f"New (current + old) data [length: {len(data)}] // reconstructed: {data_len+old_cdata.data_len == len(data)}")
+                    logger.debug(
+                        f"{lp} Previous data [length: {old_cdata.data_len}, need: "
+                        f"{old_cdata.needed_len}] // Current data [length: {data_len}] // "
+                        f"New (current + old) data [length: {len(data)}] // reconstructed: {data_len+old_cdata.data_len == len(data)}"
+                    )
 
-                    logger.debug(f"DBG>>>{lp}NEW DATA:\n{data}\n") if CYNC_RAW is True else None
+                    (
+                        logger.debug(f"DBG>>>{lp}NEW DATA:\n{data}\n")
+                        if CYNC_RAW is True
+                        else None
+                    )
                 else:
                     raise RuntimeError(f"{lp} No previous cache data to extract from!")
                 self.needs_more_data = False
@@ -2292,20 +2329,28 @@ class CyncHTTPDevice:
                         pkt_len_multiplier = data[3]
                         needed_length = ((pkt_len_multiplier * 256) + packet_length) + 5
                     else:
-                        logger.debug(f"DBG>>>{lp} Packet length is less than 4 bytes, setting needed_length to data_len")
+                        logger.debug(
+                            f"DBG>>>{lp} Packet length is less than 4 bytes, setting needed_length to data_len"
+                        )
                 else:
-                    logger.warning(f"{lp} Unknown packet header: {data[0].to_bytes(1, 'big').hex(' ')}")
-
+                    logger.warning(
+                        f"{lp} Unknown packet header: {data[0].to_bytes(1, 'big').hex(' ')}"
+                    )
 
                 if needed_length > data_len:
                     self.needs_more_data = True
                     logger.warning(
                         f"{lp} Extracted packet length is longer than remaining data length! "
-                        f"need: {needed_length} // have: {data_len}, storing data for next read!")
+                        f"need: {needed_length} // have: {data_len}, storing data for next read!"
+                    )
                     cache_data.needed_len = needed_length
                     cache_data.data_len = data_len
                     cache_data.data = bytes(data)
-                    logger.debug(f"{lp} cache_data: {cache_data}") if CYNC_RAW is True else None
+                    (
+                        logger.debug(f"{lp} cache_data: {cache_data}")
+                        if CYNC_RAW is True
+                        else None
+                    )
                     data = data[needed_length:]
                     continue
 
@@ -2315,7 +2360,11 @@ class CyncHTTPDevice:
                 await self.parse_packet(extracted_packet)
 
                 if data:
-                    logger.debug(f"{lp} Remaining data to parse: {len(data)} bytes") if CYNC_RAW is True else None
+                    (
+                        logger.debug(f"{lp} Remaining data to parse: {len(data)} bytes")
+                        if CYNC_RAW is True
+                        else None
+                    )
 
             self.read_cache.append(cache_data)
             limit = 20
@@ -2330,7 +2379,6 @@ class CyncHTTPDevice:
                     f"HEX: {raw_data.hex(' ')}\n"
                     f"INT: {bytes2list(raw_data)}\n\n"
                 )
-
 
     async def parse_packet(self, data: bytes):
         """Parse what type of packet based on header (first 4 bytes)"""
@@ -2371,32 +2419,34 @@ class CyncHTTPDevice:
                 await asyncio.sleep(0.5)
                 await self.send_a3(queue_id)
             # device wants to connect before accepting commands
-            elif pkt_type == 0xc3:
+            elif pkt_type == 0xC3:
                 conn_time_str = ""
                 ack_c3 = bytes(DEVICE_STRUCTS.responses.connection_ack)
                 if self.last_xc3_request is not None:
                     elapsed = time.time() - self.last_xc3_request
                     conn_time_str = f" // Last request was {elapsed:.2f} seconds ago"
-                logger.debug(f"{lp} CONNECTION REQUEST, replying with: {ack_c3.hex(' ')}{conn_time_str}")
+                logger.debug(
+                    f"{lp} CONNECTION REQUEST, replying with: {ack_c3.hex(' ')}{conn_time_str}"
+                )
                 self.last_xc3_request = time.time()
                 await self.write(ack_c3)
             # Ping/Pong
-            elif pkt_type == 0xd3:
+            elif pkt_type == 0xD3:
                 ack_d3 = bytes(DEVICE_STRUCTS.responses.ping_ack)
                 # logger.debug(f"{lp} Client sent HEARTBEAT, replying with {ack_d3.hex(' ')}")
                 await self.write(ack_d3)
-            elif pkt_type == 0xa3:
+            elif pkt_type == 0xA3:
                 logger.debug(f"{lp} APP ANNOUNCEMENT packet: {packet_data.hex(' ')}")
                 ack = DEVICE_STRUCTS.xab_generate_ack(queue_id, bytes(msg_id))
                 logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
                 await self.write(ack)
-            elif pkt_type == 0xab:
+            elif pkt_type == 0xAB:
                 # We sent a 0xa3 packet, device is responding with 0xab. msg contains ascii 'xlink_dev'.
                 # sometimes this is sent with other data. there may be remaining data to read in the enxt raw msg.
                 # http msg buffer seems to be 1024 bytes.
                 # 0xab packets are 1024 bytes long, so if any data is prepended, the remaining 0xab data will be in the next raw read
                 pass
-            elif pkt_type == 0x7b:
+            elif pkt_type == 0x7B:
                 # device is acking one of our x73 requests
                 pass
             elif pkt_type == 0x43:
@@ -2419,7 +2469,6 @@ class CyncHTTPDevice:
                         # "c7 90 2a 32 30 32 34 30 39 30 31 3a 31 38 35 39 3a 2d 34 32 2c 30 32 33 32 32 2c 30 30 30 30 34 2c 30 30 31 30 33 2c 30 30 30 36 33 2c" OLD
                         # "c7 90 2e 32 30 32 34 30 33 31 30 3a 31 31 31 30 3a 2d 35 39 2c 30 30 31 35 31 2c 30 30 32 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 30 30 30 30 30 2c 43 db" NEW
                         # is 0x2C the end of ts?
-
 
                         # [199, 144, 42, 50, 48, 50, 52, 48, 57, 48, 49, 58, 49, 56, 53, 57, 58, 45, 52, 50, 44, 48, 50, 51, 50, 50, 44, 48, 48, 48, 48, 52, 44, 48, 48, 49, 48, 51, 44, 48, 48, 48, 54, 51, 44]
 
@@ -2445,7 +2494,7 @@ class CyncHTTPDevice:
                         if ts:
                             ts_ascii = ts.decode("ascii", errors="replace")
                             # gross hack
-                            if ts_ascii[-1] != ',':
+                            if ts_ascii[-1] != ",":
                                 if not ts_ascii[-1].isdigit():
                                     ts_ascii = ts_ascii[:-1]
                             logger.debug(
@@ -2453,7 +2502,9 @@ class CyncHTTPDevice:
                             )
                             self.device_timestamp = ts_ascii
                         else:
-                            logger.debug(f"{lp} Could not decode timestamp from: {packet_data.hex(' ')}")
+                            logger.debug(
+                                f"{lp} Could not decode timestamp from: {packet_data.hex(' ')}"
+                            )
                     else:
                         # 43 00 00 00 2d 39 87 c8 57 01 01 06| [(06 00 10) {03  C...-9..W.......
                         # 01 64 32 00 00 00 01} ff 07 00 00 00 00 00 00] 07  .d2.............
@@ -2472,19 +2523,24 @@ class CyncHTTPDevice:
                                     status_struct = extracted[3:11]
                                     # 14 00 10 01 00 00 64 00 00 00 01 15 15 00 00 00 00 00 00
                                     # // [1, 0, 0, 100, 0, 0, 0, 1]
-                                    extractions.append((extracted.hex(' '), bytes2list(status_struct)))
+                                    extractions.append(
+                                        (extracted.hex(" "), bytes2list(status_struct))
+                                    )
                                 # broadcast status data
                                 # await self.write(data, broadcast=True)
-                            logger.debug(
-                                "%s Extracted data and STATUS struct => %s"
-                                % (
-                                    lp,
-                                    extractions,
+                            (
+                                logger.debug(
+                                    "%s Extracted data and STATUS struct => %s"
+                                    % (lp, extractions)
                                 )
-                            ) if CYNC_RAW is True else None
+                                if CYNC_RAW is True
+                                else None
+                            )
                         except IndexError:
                             # The device will only send a max of 1kb of data, if the message is longer than 1kb the remainder is sent in the next read
-                            logger.debug(f"{lp} IndexError extracting status struct (expected)")
+                            logger.debug(
+                                f"{lp} IndexError extracting status struct (expected)"
+                            )
                         except Exception as e:
                             logger.error(f"{lp} EXCEPTION: {e}")
                 # Its one of those queue id/msg id pings? 0x43 00 00 00 ww xx xx xx xx yy yy yy
@@ -2495,7 +2551,11 @@ class CyncHTTPDevice:
                 ack = DEVICE_STRUCTS.x48_generate_ack(bytes(msg_id))
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}") if CYNC_RAW is True else None
                 await self.write(ack)
-                logger.debug(f"DBG>>>{lp} RAW DATA: {len(data)} BYTES") if CYNC_RAW is True else None
+                (
+                    logger.debug(f"DBG>>>{lp} RAW DATA: {len(data)} BYTES")
+                    if CYNC_RAW is True
+                    else None
+                )
             elif pkt_type == 0x83:
                 # When the device sends a packet starting with 0x83, data is wrapped in 0x7e.
                 # firmware version is sent without 0x7e boundaries
@@ -2511,8 +2571,10 @@ class CyncHTTPDevice:
                     # firmware packet may only be sent on startup / network reconnection
 
                     if packet_data[0] == 0x00:
-                        fw_type, fw_ver, fw_str = parse_unbound_firmware_version(packet_data, lp)
-                        if fw_type == 'device':
+                        fw_type, fw_ver, fw_str = parse_unbound_firmware_version(
+                            packet_data, lp
+                        )
+                        if fw_type == "device":
                             self.version = fw_ver
                             self.version_str = fw_str
                         else:
@@ -2544,10 +2606,14 @@ class CyncHTTPDevice:
                                 pass
                             elif len(inner_data) == 23:
                                 add_one = True
-                                logger.debug(f"{lp} Adding one to index for packet data as "
-                                             f"inner_data length = 23 and revising checksum calculation")
+                                logger.debug(
+                                    f"{lp} Adding one to index for packet data as "
+                                    f"inner_data length = 23 and revising checksum calculation"
+                                )
                             else:
-                                logger.warning(f"{lp} Unknown packet INNER data length: {len(inner_data)}")
+                                logger.warning(
+                                    f"{lp} Unknown packet INNER data length: {len(inner_data)}"
+                                )
                             if add_one is False:
                                 calc_chksum = sum(inner_data) % 256
                             else:
@@ -2571,22 +2637,24 @@ class CyncHTTPDevice:
                                     if calc_chksum != checksum:
                                         logger.warning(
                                             f"{lp} Checksum mismatch in INITIAL STATUS STREAM - FIRST packet data, "
-                                            f"calculated: {calc_chksum} // received: {checksum}")
+                                            f"calculated: {calc_chksum} // received: {checksum}"
+                                        )
 
                                 else:
                                     if checksum == self.first_83_packet_checksum:
-                                        logger.debug(f"{lp} INITIAL STATUS STREAM packet data (override "
-                                                     f"calculated checksum), old: {calc_chksum} // checksum: "
-                                                     f"{checksum} // saved: {self.first_83_packet_checksum}"
+                                        logger.debug(
+                                            f"{lp} INITIAL STATUS STREAM packet data (override "
+                                            f"calculated checksum), old: {calc_chksum} // checksum: "
+                                            f"{checksum} // saved: {self.first_83_packet_checksum}"
                                         )
                                         calc_chksum = self.first_83_packet_checksum
                                     else:
                                         self.first_83_packet_checksum = None
 
-
                             if calc_chksum != checksum:
                                 logger.warning(
-                                    f"{lp} Checksum mismatch in packet data, calculated: {calc_chksum} // received: {checksum}")
+                                    f"{lp} Checksum mismatch in packet data, calculated: {calc_chksum} // received: {checksum}"
+                                )
 
                             id_idx = 14 if add_one is False else 15
                             connected_idx = 19 if add_one is False else 20
@@ -2618,8 +2686,14 @@ class CyncHTTPDevice:
                             )
                             # get device name
                             dev___ = g.server.devices.get(dev_id)
-                            dev_name = f"\"{dev___.name}\" ({dev_id})" if dev___ else f"Device ID: {dev_id}"
-                            pktdata_int = [str(x) for x in bytes2list(packet_data[1:-1])]
+                            dev_name = (
+                                f'"{dev___.name}" ({dev_id})'
+                                if dev___
+                                else f"Device ID: {dev_id}"
+                            )
+                            pktdata_int = [
+                                str(x) for x in bytes2list(packet_data[1:-1])
+                            ]
                             # pktdata_int = ['00' if part == '0' else part for part in [str(x) for x in bytes2list(packet_data[1:-1])]]
                             pkthdr_int = [str(x) for x in bytes2list(packet_header)]
                             logger.debug(
@@ -2631,21 +2705,27 @@ class CyncHTTPDevice:
                             await g.server.parse_status(raw_status)
                         else:
                             if ctrl_bytes == bytes([0xFA, 0xAF]):
-                                logger.debug(f"{lp} This ctrl struct ({ctrl_bytes.hex(' ')} // checksum valid: "
-                                             f"{checksum == calc_chksum}) usually comes through "
-                                             f"when the cync phone app connects to the BTLE mesh. Unknown what it means, "
-                                             f"the only variable data is bytes 8-11 and the checksum at the end.\n\n"
-                                             f"HEX: {packet_data[1:-1].hex(' ')}\nINT: {bytes2list(packet_data[1:-1])}")
+                                logger.debug(
+                                    f"{lp} This ctrl struct ({ctrl_bytes.hex(' ')} // checksum valid: "
+                                    f"{checksum == calc_chksum}) usually comes through "
+                                    f"when the cync phone app connects to the BTLE mesh. Unknown what it means, "
+                                    f"the only variable data is bytes 8-11 and the checksum at the end.\n\n"
+                                    f"HEX: {packet_data[1:-1].hex(' ')}\nINT: {bytes2list(packet_data[1:-1])}"
+                                )
                             elif ctrl_bytes == bytes([0xFA, 0xD9]):
-                                logger.debug(f"{lp} Seen this ctrl struct ({ctrl_bytes.hex(' ')} // checksum valid: "
-                                             f"{checksum == calc_chksum}), unknown what it means.\n\n"
-                                             f"HEX: {packet_data[1:-1].hex(' ')}\nINT: {bytes2list(packet_data[1:-1])}")
+                                logger.debug(
+                                    f"{lp} Seen this ctrl struct ({ctrl_bytes.hex(' ')} // checksum valid: "
+                                    f"{checksum == calc_chksum}), unknown what it means.\n\n"
+                                    f"HEX: {packet_data[1:-1].hex(' ')}\nINT: {bytes2list(packet_data[1:-1])}"
+                                )
                             else:
-                                logger.warning(f"{lp} UNKNOWN packet data (ctrl_bytes: {ctrl_bytes.hex(' ')} // "
-                                               f"msg_id: {inner_header.hex(' ')} // checksum valid: "
-                                               f"{checksum == calc_chksum})\n\n"
-                                               f"HEX: {packet_data[1:-1].hex(' ')}\n"
-                                               f"INT: {bytes2list(packet_data[1:-1])}")
+                                logger.warning(
+                                    f"{lp} UNKNOWN packet data (ctrl_bytes: {ctrl_bytes.hex(' ')} // "
+                                    f"msg_id: {inner_header.hex(' ')} // checksum valid: "
+                                    f"{checksum == calc_chksum})\n\n"
+                                    f"HEX: {packet_data[1:-1].hex(' ')}\n"
+                                    f"INT: {bytes2list(packet_data[1:-1])}"
+                                )
 
                 else:
                     logger.warning(
@@ -2656,7 +2736,6 @@ class CyncHTTPDevice:
                 # logger.debug(f"{lp} RAW DATA: {data.hex(' ')}")
                 # logger.debug(f"{lp} Sending ACK -> {ack.hex(' ')}")
                 await self.write(ack)
-
 
             elif pkt_type == 0x73:
                 # logger.debug(f"{lp} Control packet received: {packet_data.hex(' ')}") if CYNC_RAW is True else None
@@ -2691,7 +2770,9 @@ class CyncHTTPDevice:
                                     succ_idx = 6
                                     minfo_ack_succ = inner_struct[succ_idx]
                                     minfo_ack_chksum = inner_struct[9]
-                                    calc_chksum = (inner_struct[5] + inner_struct[6]) % 256
+                                    calc_chksum = (
+                                        inner_struct[5] + inner_struct[6]
+                                    ) % 256
                                     if minfo_ack_succ == 0x01:
                                         # logger.debug(f"{lp} Mesh info request ACK received, success: {minfo_ack_succ}."
                                         #              f" checksum byte = {minfo_ack_chksum}) // Calculated checksum "
@@ -2706,7 +2787,9 @@ class CyncHTTPDevice:
                                         )
 
                                 else:
-                                    logger.debug(f"{lp} inner_struct is less than 15 bytes: {inner_struct.hex(' ')}")
+                                    logger.debug(
+                                        f"{lp} inner_struct is less than 15 bytes: {inner_struct.hex(' ')}"
+                                    )
                             else:
                                 # 15th OR 16th byte of inner struct is start of mesh info, 24 bytes long
                                 minfo_start_idx = 14
@@ -2790,20 +2873,32 @@ class CyncHTTPDevice:
                                                     # convert to int, and it is the same as deviceType from cloud.
                                                     if not self.id:
                                                         self.id = dev_id
-                                                        self.lp = (
-                                                            f"{self.address}[{self.id}]:"
+                                                        self.lp = f"{self.address}[{self.id}]:"
+                                                        cync_device = (
+                                                            g.cync_lan.cfg_devices[
+                                                                dev_id
+                                                            ]
                                                         )
-                                                        cync_device = g.cync_lan.cfg_devices[dev_id]
-                                                        logger.debug(f"{self.lp}parse:x{data[0]:02x}: setting HTTP"
-                                                                     f"Device ID: {self.id}")
-                                                        self.capabilities = cync_device.check_dev_capabilities(dev_type_id)
-                                                        self.device_types = cync_device.check_dev_type(dev_type_id)
+                                                        logger.debug(
+                                                            f"{self.lp}parse:x{data[0]:02x}: setting HTTP"
+                                                            f"Device ID: {self.id}"
+                                                        )
+                                                        self.capabilities = cync_device.check_dev_capabilities(
+                                                            dev_type_id
+                                                        )
+                                                        self.device_types = (
+                                                            cync_device.check_dev_type(
+                                                                dev_type_id
+                                                            )
+                                                        )
                                                         # logger.debug(f"{lp} device type ({dev_type_id}) capabilities: {self.capabilities}")
                                                         # logger.debug(f"{lp} device type ({dev_type_id}): {self.device_types}")
                                                     elif self.id and self.id != dev_id:
-                                                        logger.warning(f"{lp} The first device reported in 0x83 is "
-                                                                       f"usually the http device. current: {self.id} "
-                                                                       f"// proposed: {dev_id}")
+                                                        logger.warning(
+                                                            f"{lp} The first device reported in 0x83 is "
+                                                            f"usually the http device. current: {self.id} "
+                                                            f"// proposed: {dev_id}"
+                                                        )
                                                     lp = f"{self.lp}parse:x{data[0]:02x}:"
                                                     self.device_type_id = dev_type_id
 
@@ -2840,9 +2935,7 @@ class CyncHTTPDevice:
                                             f"{lp} parse_mesh_status is TRUE, parsing mesh info // {_m} // {_raw_m}"
                                         )
                                         for status in _m:
-                                            await g.server.parse_status(
-                                                bytes(status)
-                                            )
+                                            await g.server.parse_status(bytes(status))
 
                                     mesh_info["status"] = _m
                                     mesh_info["id_from"] = self.id
@@ -2877,10 +2970,13 @@ class CyncHTTPDevice:
                                     # Always clear parse mesh status
                                     self.parse_mesh_status = False
                         else:
-                            logger.debug(
-                                f"{lp} control bytes (checksum: {checksum}, verified: {checksum == calc_chksum}): {ctrl_bytes.hex(' ')} // packet data:  {packet_data.hex(' ')}") if CYNC_RAW else None
-
-
+                            (
+                                logger.debug(
+                                    f"{lp} control bytes (checksum: {checksum}, verified: {checksum == calc_chksum}): {ctrl_bytes.hex(' ')} // packet data:  {packet_data.hex(' ')}"
+                                )
+                                if CYNC_RAW
+                                else None
+                            )
 
                             if ctrl_bytes[0] == 0xF9 and ctrl_bytes[1] in (0xD0, 0xF0):
                                 # control packet ack - changed state.
@@ -2898,9 +2994,15 @@ class CyncHTTPDevice:
                             # the struct is 31 bytes long with the 0x7e boundaries, unbound it is 29 bytes long
                             elif ctrl_bytes == bytes([0xFA, 0x8E]):
                                 if packet_data[1] == 0x00:
-                                    logger.debug(f"{lp} Device sent ({ctrl_bytes.hex(' ')}) BOUND firmware version data")
-                                    fw_type, fw_ver, fw_str = parse_unbound_firmware_version(packet_data[1:-1], lp)
-                                    if fw_type == 'device':
+                                    logger.debug(
+                                        f"{lp} Device sent ({ctrl_bytes.hex(' ')}) BOUND firmware version data"
+                                    )
+                                    fw_type, fw_ver, fw_str = (
+                                        parse_unbound_firmware_version(
+                                            packet_data[1:-1], lp
+                                        )
+                                    )
+                                    if fw_type == "device":
                                         self.version = fw_ver
                                         self.version_str = fw_str
                                     else:
@@ -2911,7 +3013,8 @@ class CyncHTTPDevice:
                                         f"{lp} This ctrl struct ({ctrl_bytes.hex(' ')} // checksum valid: {checksum == calc_chksum}) usually comes through "
                                         f"when the cync phone app connects to the BTLE mesh. Unknown what it means, "
                                         f"the only variable data is bytes 8-11 and the checksum at the end before "
-                                        f"the closing boundary 0x7e.\n\nHEX: {packet_data[1:-1].hex(' ')}\nINT: {bytes2list(packet_data[1:-1])}")
+                                        f"the closing boundary 0x7e.\n\nHEX: {packet_data[1:-1].hex(' ')}\nINT: {bytes2list(packet_data[1:-1])}"
+                                    )
 
                             else:
                                 logger.debug(
@@ -2935,7 +3038,9 @@ class CyncHTTPDevice:
 
         # unknown data we don't know the header for
         else:
-            logger.debug(f"{lp} sent UNKNOWN HEADER! Don't know how to respond!{RAW_MSG}")
+            logger.debug(
+                f"{lp} sent UNKNOWN HEADER! Don't know how to respond!{RAW_MSG}"
+            )
 
     async def ask_for_mesh_info(self, parse: bool = False):
         """
@@ -2997,7 +3102,9 @@ class CyncHTTPDevice:
         rand_bytes += bytes([0x00])
         self.xa3_msg_id += random.getrandbits(8).to_bytes(1, "big")
         a3_packet += rand_bytes
-        logger.debug(f"{self.lp} Sending 0xa3 (want to control) packet -> {a3_packet.hex(' ')}")
+        logger.debug(
+            f"{self.lp} Sending 0xa3 (want to control) packet -> {a3_packet.hex(' ')}"
+        )
         await self.write(a3_packet)
         self.ready_to_control = True
 
@@ -3270,7 +3377,6 @@ class MQTTClient:
         self.hass_maxct: int = int(1e6 / self.cync_mink + 0.5)
         g.mqtt = self
 
-
     async def start(self):
         lp = f"{self.lp}start:"
         # loop to keep trying to connect to the broker
@@ -3430,7 +3536,6 @@ class MQTTClient:
         mqtt_dev_state = {"state": power_status}
         tpc = f"{self.topic}/status/{device_uuid}"
 
-
         if device.is_plug:
             try:
                 await asyncio.wait_for(
@@ -3495,7 +3600,7 @@ class MQTTClient:
                         qos=QOS_0,
                         # retain=True,
                     ),
-                timeout = 3.0,
+                    timeout=3.0,
                 )
             except asyncio.TimeoutError:
                 logger.exception(f"{lp} Timeout waiting for MQTT publish")
@@ -3577,7 +3682,9 @@ class MQTTClient:
                                             await device.set_power(0)
                                     if "brightness" in json_data:
                                         lum = int(json_data["brightness"])
-                                        logger.debug(f"{lp} setting brightness to: {lum}")
+                                        logger.debug(
+                                            f"{lp} setting brightness to: {lum}"
+                                        )
                                         # if 5 > lum > 0:
                                         #     lum = 5
                                         try:
@@ -3600,7 +3707,9 @@ class MQTTClient:
                                         color = []
                                         for rgb in ("r", "g", "b"):
                                             if rgb in json_data["color"]:
-                                                color.append(int(json_data["color"][rgb]))
+                                                color.append(
+                                                    int(json_data["color"][rgb])
+                                                )
                                             else:
                                                 color.append(0)
                                         logger.debug(f"{lp} setting RGB to: {color}")
@@ -3629,7 +3738,10 @@ class MQTTClient:
                                 await self.publish_devices()
                         elif topic[0] == self.ha_topic:
                             if topic[1] == CYNC_HASS_STATUS_TOPIC:
-                                if payload.decode().casefold() == CYNC_HASS_BIRTH_MSG.casefold():
+                                if (
+                                    payload.decode().casefold()
+                                    == CYNC_HASS_BIRTH_MSG.casefold()
+                                ):
                                     logger.info(
                                         f"{lp} HASS has announced online, re-announce device availability and status"
                                     )
@@ -3639,19 +3751,29 @@ class MQTTClient:
                                     # set the device online/offline and set its status
                                     for device in g.server.devices.values():
                                         await self.pub_online(device.id, device.online)
-                                        await self.parse_device_status(device.id, DeviceStatus(
-                                            state=device.state,
-                                            brightness=device.brightness,
-                                            temperature=device.temperature,
-                                            red=device.red,
-                                            green=device.green,
-                                            blue=device.blue,
-                                        ))
+                                        await self.parse_device_status(
+                                            device.id,
+                                            DeviceStatus(
+                                                state=device.state,
+                                                brightness=device.brightness,
+                                                temperature=device.temperature,
+                                                red=device.red,
+                                                green=device.green,
+                                                blue=device.blue,
+                                            ),
+                                        )
 
-                                elif payload.decode().casefold() == CYNC_HASS_WILL_MSG.casefold():
-                                    logger.info(f"{lp} HASS is offline, received Last Will and Testament msg")
+                                elif (
+                                    payload.decode().casefold()
+                                    == CYNC_HASS_WILL_MSG.casefold()
+                                ):
+                                    logger.info(
+                                        f"{lp} HASS is offline, received Last Will and Testament msg"
+                                    )
                                 else:
-                                    logger.warning(f"{lp} Unknown HASS status message: {payload}")
+                                    logger.warning(
+                                        f"{lp} Unknown HASS status message: {payload}"
+                                    )
 
             except Exception as e:
                 logger.error("%s sub_worker exception: %s" % (lp, e), exc_info=True)
@@ -3681,15 +3803,9 @@ class MQTTClient:
             }
             tpc = f"{self.ha_topic}/devices/{device_uuid}"
             try:
-                logger.debug(
-                    f"{lp} {tpc}  "
-                    + json.dumps(device_config)
-                )
+                logger.debug(f"{lp} {tpc}  " + json.dumps(device_config))
                 _ = await self.client.publish(
-                    tpc,
-                    json.dumps(device_config).encode(),
-                    qos=QOS_1,
-                    retain=True,
+                    tpc, json.dumps(device_config).encode(), qos=QOS_1, retain=True
                 )
             except Exception as e:
                 logger.error(
@@ -3722,25 +3838,19 @@ class MQTTClient:
                 device_struct = {
                     "identifiers": [unique_id],
                     "manufacturer": "Savant",
-                    "connections": [("mac", device.mac.casefold() )],
+                    "connections": [("mac", device.mac.casefold())],
                     "name": device.name,
                     "sw_version": ver_str,
-                    "model": type_2_str[device.type] or 'Unknown',
+                    "model": type_2_str[device.type] or "Unknown",
                 }
                 dev_config = {
                     "object_id": obj_id,
                     # "name": device.name,
                     # set to None if only device name is relevent
                     "name": None,
-                    "command_topic": "{0}/set/{1}".format(
-                        self.topic, device_uuid
-                    ),
-                    "state_topic": "{0}/status/{1}".format(
-                        self.topic, device_uuid
-                    ),
-                    "avty_t": "{0}/availability/{1}".format(
-                        self.topic, device_uuid
-                    ),
+                    "command_topic": "{0}/set/{1}".format(self.topic, device_uuid),
+                    "state_topic": "{0}/status/{1}".format(self.topic, device_uuid),
+                    "avty_t": "{0}/availability/{1}".format(self.topic, device_uuid),
                     "pl_avail": "online",
                     "pl_not_avail": "offline",
                     "state_on": "ON",
@@ -3757,18 +3867,13 @@ class MQTTClient:
                 if device.is_plug:
                     dev_type = "switch"
                 else:
-                    dev_config.update({
-                        "brightness": True,
-                        "brightness_scale": 100,
-                    })
+                    dev_config.update({"brightness": True, "brightness_scale": 100})
                     if device.supports_temperature or device.supports_rgb:
                         # hass has deprecated color-mode in device config
                         # light_config["color_mode"] = True
                         dev_config["supported_color_modes"] = []
                         if device.supports_temperature:
-                            dev_config["supported_color_modes"].append(
-                                "color_temp"
-                            )
+                            dev_config["supported_color_modes"].append("color_temp")
                             dev_config["max_mireds"] = self.hass_maxct
                             dev_config["min_mireds"] = self.hass_minct
                         if device.supports_rgb:
@@ -3777,15 +3882,11 @@ class MQTTClient:
                 tpc = tpc_str_template.format(self.ha_topic, dev_type, device_uuid)
                 try:
                     _ = await self.client.publish(
-                        tpc,
-                        json.dumps(dev_config).encode(),
-                        qos=QOS_1,
-                        retain=True,
+                        tpc, json.dumps(dev_config).encode(), qos=QOS_1, retain=True
                     )
                 except Exception as e:
                     logger.error(
-                        "%s - Unable to publish mqtt message... skipped -> %s"
-                        % (lp, e)
+                        "%s - Unable to publish mqtt message... skipped -> %s" % (lp, e)
                     )
                 # logger.debug(
                 #     f"{lp} {tpc}  "
@@ -3842,10 +3943,7 @@ def parse_cli():
         dest="email",
     )
     sub_export.add_argument(
-        "--password",
-        "-P",
-        help="Password for Cync account",
-        dest="password",
+        "--password", "-P", help="Password for Cync account", dest="password"
     )
 
     sub_export.add_argument(
@@ -3879,7 +3977,9 @@ if __name__ == "__main__":
     if sys.version_info >= (3, 8):
         pass
     else:
-        sys.exit("Python version 3.8 or higher REQUIRED! you have version: %s" % sys.version)
+        sys.exit(
+            "Python version 3.8 or higher REQUIRED! you have version: %s" % sys.version
+        )
 
     cli_args = parse_cli()
     if cli_args.debug and CYNC_DEBUG is False:
@@ -3940,7 +4040,9 @@ if __name__ == "__main__":
 
         try:
             if not auth_file:
-                access_token, token_user = cloud_api.authenticate_2fa(uname=cli_email, otp_code=cli_otp_code)
+                access_token, token_user = cloud_api.authenticate_2fa(
+                    uname=cli_email, otp_code=cli_otp_code
+                )
             else:
                 raw_file_yaml = yaml.safe_load(auth_file.read_text())
                 access_token = raw_file_yaml["token"]
