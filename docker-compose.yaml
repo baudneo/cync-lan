@@ -1,0 +1,43 @@
+version: '3'
+# Remember, you need to:
+# - Login and configure your Cync devices in the Cync app.
+# - downloaded cync-lan.py and run `cync-lan.py export` to generate cync_mesh.yaml
+# - Redirect DNS requests from: cm.gelighting.com to this machines IP address
+# - Optional: Create or edit firewall rules to allow cync devices to talk to the cync-lan container
+services:
+  cync-lan:
+    container_name: cync-lan
+    image: baudneo/cync-lan:latest
+    restart: unless-stopped
+#    build:
+#      dockerfile: ./Dockerfile
+#      context: .
+    ports:
+      - "23779:23779"
+    volumes:
+      # Create a ./config dir and place the exported config file in this directory
+      # to bind mount into the container.
+      - ./config:/root/cync-lan/config
+      # Want to run custom code or upgrade in place? Bind-mount the custom/upgraded cync-lan.py into the container!
+#      - ./cync-lan.py:/root/cync-lan/cync-lan.py
+    environment:
+      TZ: "America/Chicago"
+      # If you don't use auth you can remove user:pass@ from the CYNC_MQTT_URL
+      CYNC_MQTT_URL: "mqtt://user:pass@ip:port/"
+#      CYNC_CERT: "/root/cync-lan/certs/cert.pem"
+#      CYNC_KEY: "/root/cync-lan/certs/key.pem"
+#      CYNC_TOPIC: "cync_lan"
+#      CYNC_HASS_TOPIC: "homeassistant"
+#      CYNC_HOST: "0.0.0.0"
+#      CYNC_PORT: 23779
+    # Debug logging
+#      CYNC_DEBUG: 1
+#      CYNC_RAW_DEBUG: 1
+    # Interval between device online/offline and status check.
+#      CYNC_MESH_CHECK: 30
+    networks:
+      - cync-lan
+
+networks:
+    cync-lan:
+        driver: bridge

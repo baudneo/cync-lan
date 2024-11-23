@@ -1,3 +1,6 @@
-*.txt
 certs
-node_modules
+cync_data.json
+cync_mesh.yaml
+raw_mesh.cync
+raw_mesh.yaml
+/docs/debug.md

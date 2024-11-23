@@ -1,0 +1,26 @@
+name: Docker - publish multi-arch packages
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+on:
+  schedule:
+    - cron: '30 1 * * *'
+
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+        - name: Close Stale Issues
+          uses: actions/stale@v9.0.0
+          with:
+              days-before-stale: 30
+              days-before-close: 7
