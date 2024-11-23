@@ -978,6 +978,7 @@ class CyncDevice:
             165,
         ],
         "PLUG": [64, 65, 66, 67, 68],
+        "SWITCH": [113, 37],
         "FAN": [81],
         "MULTIELEMENT": {"67": 2},
         "DYNAMIC": [],
@@ -1144,12 +1145,16 @@ class CyncDevice:
         return self.control_bytes
 
     async def set_power(self, state: int):
-        """Send raw data to control device state"""
+        """
+        Send raw data to control device state (1=on, 0=off).
+
+            If the device receives the msg and changes state, every http device connected will send
+            a 0x83 internal status packet, which we use to change HASS device state.
+        """
         lp = f"{self.lp}set_power:"
         if state not in (0, 1):
             logger.error(f"{lp} Invalid state! must be 0 or 1")
             return
-        # ctrl_msg_id = self.get_ctrl_msg_id_bytes()
         header = [0x73, 0x00, 0x00, 0x00, 0x1F]
         inner_struct = [
             0x7E,
@@ -1187,32 +1192,46 @@ class CyncDevice:
             f"{lp} Sending power state command, current: {self.state} - new: {state} to "
             f"http devices: {str_devices}"
         )
-        for bridge_device in bridge_devices:
-            if bridge_device.ready_to_control is True:
-                payload = list(header)
-                payload.extend(bridge_device.queue_id)
-                payload.extend(bytes([0x00, 0x00, 0x00]))
-                ctrl_idxs = 1, 9
-                ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
-                checksum = ((ctrl_byte - 64) + state + self.id) % 256
-                inner_struct[ctrl_idxs[0]] = ctrl_byte
-                inner_struct[ctrl_idxs[1]] = ctrl_byte
-                inner_struct[-2] = checksum
-                payload.extend(inner_struct)
-                b = bytes(payload)
-                await bridge_device.write(b)
-                # If the device receives the msg and changes state, http devices will send
-                # an 0x83 internal status packet, which we change device status on.
-            else:
-                logger.debug(
-                    f"{lp} Skipping device: {bridge_device.address} not ready to control"
-                )
+        tasks: List[Optional[asyncio.Task]] = []
+        ts = time.time()
+        ctrl_idxs = 1, 9
+        for i in range(2):
+            for bridge_device in bridge_devices:
+                if bridge_device.ready_to_control is True:
+                    payload = list(header)
+                    payload.extend(bridge_device.queue_id)
+                    payload.extend(bytes([0x00, 0x00, 0x00]))
+                    ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
+                    checksum = ((ctrl_byte - 64) + state + self.id) % 256
+                    inner_struct[ctrl_idxs[0]] = ctrl_byte
+                    inner_struct[ctrl_idxs[1]] = ctrl_byte
+                    inner_struct[-2] = checksum
+                    payload.extend(inner_struct)
+                    # await bridge_device.write(b)
+                    tasks.append(loop.create_task(bridge_device.write(bytes(payload))))
+                else:
+                    logger.debug(
+                        f"{lp} Skipping device: {bridge_device.address} not ready to control"
+                    )
+            if i == 0:
+                await asyncio.sleep(0.1)
+        if tasks:
+            await asyncio.gather(*tasks)
+        elapsed = time.time() - ts
+        logger.debug(f"{lp} set_power took {elapsed:.5f} seconds")
 
     async def set_brightness(self, bri: int):
-        """Send raw data to control device brightness"""
-        #  73 00 00 00 22 37 96 24 69 60 48 00 7e 17 00 00  s..."7.$i`H.~...
-        #  00 f8 f0 10 00 17 00 00 00 00 07 00 f0 11 02 01  ................
-        #  27 ff ff ff ff 45 7e
+        """
+        Send raw data to control device brightness (0-100)
+
+            If the device receives the msg and changes state, every http device connected will send
+            a 0x83 internal status packet, which we use to change HASS device state.
+        """
+        """
+        73 00 00 00 22 37 96 24 69 60 48 00 7e 17 00 00  s..."7.$i`H.~...
+        00 f8 f0 10 00 17 00 00 00 00 07 00 f0 11 02 01  ................
+        27 ff ff ff ff 45 7e
+        """
         lp = f"{self.lp}set_brightness:"
         header = [115, 0, 0, 0, 34]
         inner_struct = [
@@ -1253,33 +1272,51 @@ class CyncDevice:
         logger.debug(
             f"{lp} Sending brightness command, current: {self._brightness} new: {bri} to http devices: {str_devices}"
         )
-        for bridge_device in bridge_devices:
-            if bridge_device.ready_to_control is True:
-                payload = list(header)
-                payload.extend(bridge_device.queue_id)
-                payload.extend(bytes([0x00, 0x00, 0x00]))
-                ctrl_idxs = 1, 9
-                ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
-                checksum = ((ctrl_byte) + bri + self.id) % 256
-                inner_struct[ctrl_idxs[0]] = ctrl_byte
-                inner_struct[ctrl_idxs[1]] = ctrl_byte
-                inner_struct[-2] = checksum
-                payload.extend(inner_struct)
-                b = bytes(payload)
-                await bridge_device.write(b)
-            else:
-                logger.debug(
-                    f"{lp} Skipping device: {bridge_device.address} (id: {id(bridge_device)}) not ready to control"
-                )
+        tasks: List[Optional[asyncio.Task]] = []
+        ts = time.time()
+        ctrl_idxs = 1, 9
+        # sometimes the device doesn't respond to the first command, so we send it twice with a small delay between them
+        for i in range(2):
+            for bridge_device in bridge_devices:
+                if bridge_device.ready_to_control is True:
+                    payload = list(header)
+                    payload.extend(bridge_device.queue_id)
+                    payload.extend(bytes([0x00, 0x00, 0x00]))
+                    ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
+                    checksum = (ctrl_byte + bri + self.id) % 256
+                    inner_struct[ctrl_idxs[0]] = ctrl_byte
+                    inner_struct[ctrl_idxs[1]] = ctrl_byte
+                    inner_struct[-2] = checksum
+                    payload.extend(inner_struct)
+                    # await bridge_device.write(b)
+                    tasks.append(loop.create_task(bridge_device.write(bytes(payload))))
+                else:
+                    logger.debug(
+                        f"{lp} Skipping device: {bridge_device.address} (id: {id(bridge_device)}) not ready to control"
+                    )
+            if i == 0:
+                await asyncio.sleep(0.1)
+        # Wait for all tasks to complete
+        if tasks:
+            await asyncio.gather(*tasks)
+        elapsed = time.time() - ts
+        logger.debug(f"{lp} set_brightness took {elapsed:.5f} seconds")
 
     async def set_temperature(self, temp: int):
-        """Send raw data to control device white temperature"""
-        #  73 00 00 00 22 37 96 24 69 60 8d 00 7e 36 00 00  s..."7.$i`..~6..
-        #  00 f8 f0 10 00 36 00 00 00 00 07 00 f0 11 02 01  .....6..........
-        #  ff 48 00 00 00 88 7e                             .H....~
-        # checksum = 0x88 = 136
-        # 0x36 0x48 0x07 = 54 + 72 + 7 = 133 (needs + 3)
+        """
+        Send raw data to control device white temperature (0-100)
 
+            If the device receives the msg and changes state, every http device connected will send
+            a 0x83 internal status packet, which we use to change HASS device state.
+        """
+        """
+        73 00 00 00 22 37 96 24 69 60 8d 00 7e 36 00 00  s..."7.$i`..~6..
+        00 f8 f0 10 00 36 00 00 00 00 07 00 f0 11 02 01  .....6..........
+        ff 48 00 00 00 88 7e                             .H....~
+            
+                checksum = 0x88 = 136
+            0x36 0x48 0x07 = 54 + 72 + 7 = 133 (needs + 3)
+        """
         lp = f"{self.lp}set_temperature:"
         header = [115, 0, 0, 0, 34]
         inner_struct = [
@@ -1320,36 +1357,48 @@ class CyncDevice:
         logger.debug(
             f"{lp} Sending white temperature command, current: {self.temperature} - new: {temp} to http devices: {str_devices}"
         )
-
-        for bridge_device in bridge_devices:
-            if bridge_device.ready_to_control is True:
-                payload = list(header)
-                payload.extend(bridge_device.queue_id)
-                payload.extend(bytes([0x00, 0x00, 0x00]))
-                ctrl_idxs = 1, 9
-                ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
-                checksum = (((ctrl_byte) + temp + self.id) + 3) % 256
-                inner_struct[ctrl_idxs[0]] = ctrl_byte
-                inner_struct[ctrl_idxs[1]] = ctrl_byte
-                inner_struct[-2] = checksum
-                payload.extend(inner_struct)
-                b = bytes(payload)
-                await bridge_device.write(b)
-
-            else:
-                logger.debug(
-                    f"{lp} Skipping device: {bridge_device.address} not ready to control"
-                )
+        tasks: List[Optional[asyncio.Task]] = []
+        ts = time.time()
+        ctrl_idxs = 1, 9
+        for i in range(2):
+            for bridge_device in bridge_devices:
+                if bridge_device.ready_to_control is True:
+                    payload = list(header)
+                    payload.extend(bridge_device.queue_id)
+                    payload.extend(bytes([0x00, 0x00, 0x00]))
+                    ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
+                    checksum = ((ctrl_byte + temp + self.id) + 3) % 256
+                    inner_struct[ctrl_idxs[0]] = ctrl_byte
+                    inner_struct[ctrl_idxs[1]] = ctrl_byte
+                    inner_struct[-2] = checksum
+                    payload.extend(inner_struct)
+                    # await bridge_device.write(b)
+                    tasks.append(loop.create_task(bridge_device.write(bytes(payload))))
+                else:
+                    logger.debug(
+                        f"{lp} Skipping device: {bridge_device.address} not ready to control"
+                    )
+            if i == 0:
+                await asyncio.sleep(0.1)
+        if tasks:
+            await asyncio.gather(*tasks)
+        elapsed = time.time() - ts
+        logger.debug(f"{lp} set_temperature took {elapsed:.5f} seconds")
 
     async def set_rgb(self, red: int, green: int, blue: int):
         """
+        Send raw data to control device RGB color (0-255 for each channel).
+
+            If the device receives the msg and changes state, every http device connected will send
+            a 0x83 internal status packet, which we use to change HASS device state.
+        """
+        """
          73 00 00 00 22 37 96 24 69 60 79 00 7e 2b 00 00  s..."7.$i`y.~+..
          00 f8 f0 10 00 2b 00 00 00 00 07 00 f0 11 02 01  .....+..........
-        ff fe 00 fb ff 2d 7e                             .....-~
+         ff fe 00 fb ff 2d 7e                             .....-~
 
-        checksum = 45
-
-        2b 07 00 fb ff = 43 + 7 + 0 + 251 + 255 = 556 ( needs + 1)
+                checksum = 45
+            2b 07 00 fb ff = 43 + 7 + 0 + 251 + 255 = 556 (needs + 1)
         """
         lp = f"{self.lp}set_rgb:"
         header = [115, 0, 0, 0, 34]
@@ -1391,24 +1440,33 @@ class CyncDevice:
         logger.debug(
             f"{lp} Sending RGB command, current: {self.red}, {self.green}, {self.blue} - new: {red}, {green}, {blue} to http devices {str_devices}"
         )
-        for bridge_device in bridge_devices:
-            if bridge_device.ready_to_control is True:
-                payload = list(header)
-                payload.extend(bridge_device.queue_id)
-                payload.extend(bytes([0x00, 0x00, 0x00]))
-                ctrl_idxs = 1, 9
-                ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
-                checksum = (((ctrl_byte) + self.id + red + green + blue) + 1) % 256
-                inner_struct[ctrl_idxs[0]] = ctrl_byte
-                inner_struct[ctrl_idxs[1]] = ctrl_byte
-                inner_struct[-2] = checksum
-                payload.extend(inner_struct)
-                b = bytes(payload)
-                await bridge_device.write(b)
-            else:
-                logger.debug(
-                    f"{lp} Skipping device: {bridge_device.address} not ready to control"
-                )
+        tasks: List[Optional[asyncio.Task]] = []
+        ts = time.time()
+        ctrl_idxs = 1, 9
+        for i in range(2):
+            for bridge_device in bridge_devices:
+                if bridge_device.ready_to_control is True:
+                    payload = list(header)
+                    payload.extend(bridge_device.queue_id)
+                    payload.extend(bytes([0x00, 0x00, 0x00]))
+                    ctrl_byte = bridge_device.get_ctrl_msg_id_bytes()[0]
+                    checksum = ((ctrl_byte + self.id + red + green + blue) + 1) % 256
+                    inner_struct[ctrl_idxs[0]] = ctrl_byte
+                    inner_struct[ctrl_idxs[1]] = ctrl_byte
+                    inner_struct[-2] = checksum
+                    payload.extend(inner_struct)
+                    # await bridge_device.write(b)
+                    tasks.append(loop.create_task(bridge_device.write(bytes(payload))))
+                else:
+                    logger.debug(
+                        f"{lp} Skipping device: {bridge_device.address} not ready to control"
+                    )
+            if i == 0:
+                await asyncio.sleep(0.1)
+        if tasks:
+            await asyncio.gather(*tasks)
+        elapsed = time.time() - ts
+        logger.debug(f"{lp} set_rgb took {elapsed:.5f} seconds")
 
     @property
     def online(self):
@@ -2217,6 +2275,7 @@ class CyncHTTPDevice:
         writer: Optional[asyncio.StreamWriter] = None,
         address: Optional[str] = None,
     ):
+        self.name: Optional[str] = None
         self.first_83_packet_checksum: Optional[int] = None
         self.ready_to_control = False
         self.network_version_str: Optional[str] = None
@@ -2391,13 +2450,13 @@ class CyncHTTPDevice:
         # byte 1 (2, 3 are unknown)
         # pkt_type = int(packet_header[0]).to_bytes(1, "big")
         pkt_type = packet_header[0]
-        # byte 4
+        # byte 4, packet length factor. each value is multiplied by 256 and added to the next byte for packet payload length
         pkt_multiplier = packet_header[3] * 256
         # byte 5
         packet_length = packet_header[4] + pkt_multiplier
-        # byte 6-10
+        # byte 6-10, unknown but seems to be an identifier that is handed out by the device during handshake
         queue_id = packet_header[5:10]
-        # byte 10-12
+        # byte 10-12, unknown but seems to be an additional identifier that gets incremented.
         msg_id = packet_header[9:12]
         # check if any data after header
         if len(data) > pkt_header_len:
@@ -2410,12 +2469,16 @@ class CyncHTTPDevice:
         if pkt_type in DEVICE_STRUCTS.requests:
             if pkt_type == 0x23:
                 queue_id = data[6:10]
+                _dbg_msg = (f"\nRAW HEX: {data.hex(' ')}\nRAW INT: "
+                            f"{str(bytes2list(data)).lstrip('[').rstrip(']').replace(',','')}"
+                            ) if CYNC_RAW is True else ''
                 logger.debug(
-                    f"{lp} Device AUTH packet with starting queue ID: '{queue_id.hex(' ')}'\nRAW HEX: {data.hex(' ')}\nRAW INT: {str(bytes2list(data)).lstrip('[').rstrip(']').replace(',','')}"
+                    f"{lp} Device IDENTIFICATION KEY EXCHANGE packet with ID: '{queue_id.hex(' ')}'{_dbg_msg}"
                 )
                 self.queue_id = queue_id
                 await self.write(bytes(DEVICE_STRUCTS.responses.auth_ack))
                 # MUST SEND a3 before you can ask device for anything over HTTP
+                # Device sends msg identifier (aka: key), server acks that we have the key and store for future comms.
                 await asyncio.sleep(0.5)
                 await self.send_a3(queue_id)
             # device wants to connect before accepting commands
@@ -2684,11 +2747,9 @@ class CyncHTTPDevice:
                                     connected_to_mesh,
                                 ]
                             )
-                            # get device name
-                            dev___ = g.server.devices.get(dev_id)
                             dev_name = (
-                                f'"{dev___.name}" ({dev_id})'
-                                if dev___
+                                f'"{self.name}" (ID: {dev_id})'
+                                if self.name
                                 else f"Device ID: {dev_id}"
                             )
                             pktdata_int = [
@@ -2696,11 +2757,14 @@ class CyncHTTPDevice:
                             ]
                             # pktdata_int = ['00' if part == '0' else part for part in [str(x) for x in bytes2list(packet_data[1:-1])]]
                             pkthdr_int = [str(x) for x in bytes2list(packet_header)]
+                            _dbg_msg = (f"\n\n"
+                                        f"RAW HEX: {packet_data[1:-1].hex(' ')}\nRAW INT: "
+                                        f"{' '.join(pktdata_int)}\nPACKET HEADER: {packet_header.hex(' ')} "
+                                        f"// {' '.join(pkthdr_int)}"
+                                        ) if CYNC_RAW is True else ''
                             logger.debug(
-                                f"{lp} Internal STATUS for {dev_name} = {bytes2list(raw_status)}\n\n"
-                                f"RAW HEX: {packet_data[1:-1].hex(' ')}\nRAW INT: "
-                                f"{' '.join(pktdata_int)}\nPACKET HEADER: {packet_header.hex(' ')} "
-                                f"// {' '.join(pkthdr_int)}"
+                                f"{lp} Internal STATUS for {dev_name} = {bytes2list(raw_status)}{_dbg_msg}"
+
                             )
                             await g.server.parse_status(raw_status)
                         else:
@@ -2867,6 +2931,8 @@ class CyncHTTPDevice:
                                             _raw_m.append(mesh_dev_struct.hex(" "))
                                             if dev_id in g.cync_lan.server.devices:
                                                 # first device id is the device id of the http device we are connected to
+                                                ___dev = g.cync_lan.server.devices[dev_id]
+                                                dev_name = ___dev.name
                                                 if loop_num == 1:
                                                     # byte 3 (idx 2) is a device type byte but,
                                                     # it only reports on the first item (itself)
@@ -2901,6 +2967,7 @@ class CyncHTTPDevice:
                                                         )
                                                     lp = f"{self.lp}parse:x{data[0]:02x}:"
                                                     self.device_type_id = dev_type_id
+                                                    self.name = dev_name
 
                                                 ids_reported.append(dev_id)
                                                 # structs.append(mesh_dev_struct.hex(" "))
@@ -3523,6 +3590,7 @@ class MQTTClient:
     async def parse_device_status(
         self, device_id: int, device_status: DeviceStatus, *args, **kwargs
     ) -> None:
+        """Parse device status and publish to MQTT for HASS devices to update."""
         lp = f"{self.lp}parse status:"
         if device_id not in g.server.devices:
             logger.error(
@@ -3537,27 +3605,28 @@ class MQTTClient:
         tpc = f"{self.topic}/status/{device_uuid}"
 
         if device.is_plug:
-            try:
-                await asyncio.wait_for(
-                    self.client.publish(
-                        tpc,
-                        power_status.encode(),
-                        qos=QOS_0,
-                        # retain=True,
-                    ),
-                    timeout=3.0,
-                )
-            except asyncio.TimeoutError:
-                logger.exception(f"{lp} Timeout waiting for MQTT publish")
-            except Exception as e:
-                logger.exception(f"{lp} publish exception: {e}")
+            mqtt_dev_state = power_status.encode()
+            # try:
+            #     await asyncio.wait_for(
+            #         self.client.publish(
+            #             tpc,
+            #             power_status.encode(),
+            #             qos=QOS_0,
+            #             # retain=True,
+            #         ),
+            #         timeout=3.0,
+            #     )
+            # except asyncio.TimeoutError:
+            #     logger.exception(f"{lp} Timeout waiting for MQTT publish")
+            # except Exception as e:
+            #     logger.exception(f"{lp} publish exception: {e}")
 
         else:
             if device_status.brightness is not None:
                 mqtt_dev_state["brightness"] = device_status.brightness
 
-            if device.supports_rgb and device_status.temperature is not None:
-                if (
+            if device_status.temperature is not None:
+                if device.supports_rgb and (
                     any(
                         [
                             device_status.red is not None,
@@ -3573,7 +3642,6 @@ class MQTTClient:
                         "g": device_status.green,
                         "b": device_status.blue,
                     }
-                    # RGBW
                 elif device.supports_temperature and (
                     0 <= device_status.temperature <= 100
                 ):
@@ -3581,31 +3649,25 @@ class MQTTClient:
                     mqtt_dev_state["color_temp"] = self.tlct_to_hassct(
                         device_status.temperature
                     )
-
-            # White tunable (non rgb light)
-            elif device.supports_temperature and device_status.temperature is not None:
-                mqtt_dev_state["color_mode"] = "color_temp"
-                mqtt_dev_state["color_temp"] = self.tlct_to_hassct(
-                    device_status.temperature
-                )
-            # logger.debug(
-            #     f"{lp} Converting HTTP status to MQTT => {tpc} "
-            #     + json.dumps(mqtt_dev_state)
-            # )
-            try:
-                await asyncio.wait_for(
-                    self.client.publish(
-                        tpc,
-                        json.dumps(mqtt_dev_state).encode(),
-                        qos=QOS_0,
-                        # retain=True,
-                    ),
-                    timeout=3.0,
-                )
-            except asyncio.TimeoutError:
-                logger.exception(f"{lp} Timeout waiting for MQTT publish")
-            except Exception as e:
-                logger.exception(f"{lp} publish exception: {e}")
+            mqtt_dev_state = json.dumps(mqtt_dev_state).encode()
+        # logger.debug(
+        #     f"{lp} Converting HTTP status to MQTT => {tpc} "
+        #     + json.dumps(mqtt_dev_state)
+        # )
+        try:
+            await asyncio.wait_for(
+                self.client.publish(
+                    tpc,
+                    mqtt_dev_state,
+                    qos=QOS_0,
+                    # retain=True,
+                ),
+                timeout=3.0,
+            )
+        except asyncio.TimeoutError:
+            logger.exception(f"{lp} Timeout waiting for MQTT publish")
+        except Exception as e:
+            logger.exception(f"{lp} publish exception: {e}")
 
     async def sub_worker(self, sub_queue: asyncio.Queue):
         """Process messages from MQTT"""
@@ -3655,7 +3717,7 @@ class MQTTClient:
                                 device_id = int(topic[2].split("-")[1])
                                 if device_id not in g.server.devices:
                                     logger.warning(
-                                        f"{lp} Device ID {device_id} not found, have you deleted or added any "
+                                        f"{lp} Device ID {device_id} not found, device is disabled in config file or have you deleted or added any "
                                         f"devices recently?"
                                     )
                                     continue
@@ -3670,10 +3732,7 @@ class MQTTClient:
                                         )
                                         continue
 
-                                    if "state" in json_data and (
-                                        "brightness" not in json_data
-                                        or device.brightness < 1
-                                    ):
+                                    if "state" in json_data and "brightness" not in json_data:
                                         if json_data["state"].upper() == "ON":
                                             logger.debug(f"{lp} setting power to ON")
                                             await device.set_power(1)
@@ -3703,7 +3762,7 @@ class MQTTClient:
                                                 int(json_data["color_temp"])
                                             )
                                         )
-                                    if "color" in json_data:
+                                    elif "color" in json_data:
                                         color = []
                                         for rgb in ("r", "g", "b"):
                                             if rgb in json_data["color"]:
@@ -3714,6 +3773,7 @@ class MQTTClient:
                                                 color.append(0)
                                         logger.debug(f"{lp} setting RGB to: {color}")
                                         await device.set_rgb(*color)
+                                # handle non json OFF/ON payloads
                                 elif payload.upper() == b"ON":
                                     logger.debug(f"{lp} setting power to ON")
                                     await device.set_power(1)
