@@ -6,7 +6,7 @@ make sure that all Cync devices can talk to the local IP of the machine running 
 ## OPNSense Firewall Example
 ![OPNSense Firewall Rules Example](./assets/opnsense_firewall_rules_example.png)
 
-# I can't add new devices! It always fails at the last step "Adding to Home"
+# I can't add new devices in the Cync phone App! It always fails at the last step "Adding to Home"
 **Disable the DNS redirect so your phone app / new device(s) can connect to**
 **the cloud, power cycle the new device(s) after disabling DNS redirect**
 
