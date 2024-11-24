@@ -62,7 +62,7 @@ local-data: "cm.gelighting.com. 90 IN A 10.0.1.9"
 > should use bluetooth for local control anyway. The new device must also not be redirected.
 
 >[!TIP]
-> If you have a decent (6+) amount of Cync WiFi devices, after you get things working correctly
+> If you have a decent (6+) amount of Cync WiFi devices, after you get things working correctly,
 > only DNS redirect Cync WiFi devices that are mostly always on, like plugs, mains powered switches / always on bulbs.
 > I have 30+ Cync devices and only have 5 always on devices connected to my `cync-lan` server.
 
