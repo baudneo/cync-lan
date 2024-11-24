@@ -1,4 +1,4 @@
-name: Docker - publish multi-arch packages
+name: Docker - Close Stale Issues
 
 # This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
