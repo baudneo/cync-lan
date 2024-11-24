@@ -58,13 +58,13 @@ local-data: "cm.gelighting.com. 90 IN A 10.0.1.9"
 ```
 
 >[!TIP]
-> Don't redirect your phone app. Let it talk to the cync cloud so you can add new devices, the phone app 
+> Don't redirect your phone app. Let it talk to the Cync cloud so you can add new devices, the phone app 
 > should use bluetooth for local control anyway. The new device must also not be redirected.
 
 >[!TIP]
 > If you have a decent (6+) amount of Cync WiFi devices, after you get things working correctly
-> Only DNS redirect Cync WiFi devices that are mostly always on, like plugs or mains powered switches and always on bulbs.
-> I have 30+ Cync devices and only have 5 always on devices connected to my cync-lan server.
+> only DNS redirect Cync WiFi devices that are mostly always on, like plugs, mains powered switches / always on bulbs.
+> I have 30+ Cync devices and only have 5 always on devices connected to my `cync-lan` server.
 
 # DNSCryptProxy
 As far as I know, you can only override a domain network wide, not selectively by device.
