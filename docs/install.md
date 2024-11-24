@@ -1,12 +1,14 @@
 # Installation
 
-:warning: **Either way you run this, you will need to setup the virtualenv in order to 
-export devices from the Cync cloud to a YAML file** :warning:
+> [!WARNING]
+> **Either way you run this, you will need to setup the virtualenv in order to 
+export devices from the Cync cloud to a YAML file**
 
 You can run this in a docker container or in a virtual environment on your system.
 
 ## virtualenv
-:warning: **This is required in order to export devices from the Cync cloud to a YAML file.** :warning:
+>[!WARNING]
+> **This is required in order to export devices from the Cync cloud to a YAML file.** :warning:
 
 ### System requirements
 System packages you will need (package names are from a debian based system):
@@ -68,7 +70,7 @@ deactivate
 
 ## Docker
 
-First, you **MUST** follow the [virtualenv installation](#virtualenv) to generate certs and export devices from the Cync cloud.
+First, you **MUST** follow the [virtualenv installation](#virtualenv) to export devices from the Cync cloud.
 
 - Create a dir for your docker setup. i.e. `mkdir -p ~/docker/cync-lan/config`
 - Copy the exported config file from the [virtualenv install](#virtualenv): `cp ~/cync-lan/cync_mesh.yaml ~/docker/cync-lan/config` 
