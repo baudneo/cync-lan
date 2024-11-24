@@ -1,5 +1,4 @@
 # Firmware differences
-:warning: There are changes in newer firmware! :warning: 
 
 Check your DNS logs and search for `xlink.cn`, if you see DNS requests 
 then you have some older devices. If you don't see any devices for `xlink.cn` search for `cm.gelighting.com`, 
@@ -29,12 +28,9 @@ To perform domain level DNS redirection (all devices that request `cm.gelighting
 - Power cycle cync devices.
 
 ### Selective DNS routing
-**Selective DNS routing means, only certain devies will have their DNS redirected, the rest of your network will not have their DNS redirected for thsoe specific domains**
+**Selective DNS routing means, only certain devies will have their DNS redirected, the rest of your network will not have their DNS redirected for those specific domains**
 
-You can use `views` to selectively route DNS requests based on the requesting device. 
-
-The following example will reroute DNS requests for `cm.gelighting.com` to local IP `10.0.1.9` **only for requesting devices** `10.0.1.167` and `10.0.1.112`.
-`local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no `.`!!.
+You can use `views` to selectively route DNS requests based on the requesting device.
 
 - First disable domain level redirection if you have already configured it. (all devices requesting a domain get redirected)
 - Go to `Services`>`Unbound DNS`>`Custom Options`.
@@ -43,7 +39,11 @@ The following example will reroute DNS requests for `cm.gelighting.com` to local
 ![Unbound DNS Restart](./assets/opnsense_unbound_restart.png)
 - Power cycle cync devices.
 
-:warning: NOTICE the trailing `.` after `cm.gelighting.com.` in `local-data:`. :warning:
+The following example will reroute DNS requests for `cm.gelighting.com` to local IP `10.0.1.9` (this is where `cync-lan` server should be running) **only for requesting device IPs** `10.0.1.167` and `10.0.1.112` (These should be Cync WiFi devices).
+`local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no leading `.` in `local-data`!!.
+
+>![WARNING]
+> NOTICE the trailing `.` after `cm.gelighting.com.` in `local-data:`.
 
 ```
 server:
@@ -54,6 +54,15 @@ name: "cync-override"
 local-zone: "homelab" static
 local-data: "cm.gelighting.com. 90 IN A 10.0.1.9"
 ```
+
+>[!TIP]
+> Don't redirect your phone app. Let it talk to the cync cloud so you can add new devices, the phone app 
+> should use bluetooth for local control anyway. The new device must also not be redirected.
+
+>[!TIP]
+> If you have a decent (6+) amount of Cync WiFi devices, after you get things working correctly
+> Only DNS redirect Cync WiFi devices that are mostly always on, like plugs or mains powered switches and always on bulbs.
+> I have 30+ Cync devices and only have 5 always on devices connected to my cync-lan server.
 
 # DNSCryptProxy
 As far as I know, you can only override a domain network wide, not selectively by device.
@@ -111,7 +120,8 @@ In the example above, `cm.gelighting.com` returns `10.0.1.14` which is the IP ad
 After power cycling Cync devices, the devices will ask pi-hole for the Cync cloud server IP and pi-hole will return `10.0.1.14`.
 After the device receives the IP, it will connect to the local server running cync-lan.
 
-:warning: **Don't forget to power cycle all your Wi-Fi Cync devices** :warning:
+>[!TIP]
+> **Don't forget to power cycle all your Wi-Fi Cync devices**
 
 # New devices can't be added while DNS override is in place
 You will not be able to add any new devices to the Cync app while a network wide DNS override is in place.
