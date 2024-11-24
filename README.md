@@ -7,6 +7,11 @@
 >[!IMPORTANT]
 > [DNS redirection REQUIRED](./docs/DNS.md)
 
+>[!WARNING]
+> Breaking Changes as of v0.1.0:
+> * All **automations, scenes, triggers, groups, dashboards**, etc. will need to be redone as the internal HASS names are changed (i.e: `light.cync_lan_kitchen_counter` will now be something like `light.cync_lan_<home id>_<device id>`).
+> * Switching from entities to devices.
+
 Async MQTT LAN controller for Cync/C by GE devices. **Local** only control
 of **most** Cync devices via Home Assistant (MQTT JSON payloads).
 
