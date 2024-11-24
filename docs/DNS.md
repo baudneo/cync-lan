@@ -40,10 +40,11 @@ You can use `views` to selectively route DNS requests based on the requesting de
 - Power cycle cync devices.
 
 The following example will reroute DNS requests for `cm.gelighting.com` to local IP `10.0.1.9` (this is where `cync-lan` server should be running) **only for requesting device IPs** `10.0.1.167` and `10.0.1.112` (These should be Cync WiFi devices).
-`local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no leading `.` in `local-zone`!!.
+
 
 >[!WARNING]
 > NOTICE the trailing `.` after `cm.gelighting.com.` in `local-data:`.
+> `local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no leading `.` in `local-zone`!!.
 
 ```
 server:
