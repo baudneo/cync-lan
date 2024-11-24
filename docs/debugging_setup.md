@@ -35,7 +35,8 @@ rather than selective (the requesting device IP determines the response), The so
 mess and you will have to sift through them to find the device you are looking for.
 
 ## Example scenario
-:warning: **TURN OFF BLUETOOTH ON YOUR PHONE, we want to force HTTP communication** :warning:
+>[!WARNING] 
+> **TURN OFF BLUETOOTH ON YOUR PHONE, we want to force HTTP communication**
 
 ### Unbound setup
 ```text
@@ -68,10 +69,10 @@ local-data: "cm.gelighting.com. 90 IN A 10.0.2.103"
 
 
 ### Devices/Mobile App setup
-- Dev 1: a bulb with IP: 10.0.3.10, DNS overridden to: 10.0.2.100 - connects to machine 1
-- Dev 2: a plug with IP: 10.0.3.11, DNS overridden to: 10.0.2.101 - connects to machine 2
-- Dev 3: a bulb with IP: 10.0.3.12, DNS overridden to: 10.0.2.102 - connects to machine 3
-- App 1:   android with IP: 10.0.1.20, DNS overridden to: 10.0.2.103 - connects to machine 4
+- Dev 1: a bulb with IP: 10.0.3.10, `cm.gelighting.com` DNS overridden to: 10.0.2.100 - connects to machine 1
+- Dev 2: a plug with IP: 10.0.3.11, `cm.gelighting.com` DNS overridden to: 10.0.2.101 - connects to machine 2
+- Dev 3: a bulb with IP: 10.0.3.12, `cm.gelighting.com` DNS overridden to: 10.0.2.102 - connects to machine 3
+- App 1:   android with IP: 10.0.1.20, `cm.gelighting.com` DNS overridden to: 10.0.2.103 - connects to machine 4
 
 Machine/VM/LXC/container setup:
 - Machine 1: `socat` running on 10.0.2.100 - Port: 23779
@@ -81,21 +82,21 @@ Machine/VM/LXC/container setup:
 
 When device 1 (IP: `10.0.3.10`) requests the IP of domain `cm.gelighting.com` from my opnsense router, 
 the router will return the overridden DNS record of `10.0.2.100`. Device 1 will then attempt to connect to machine 1. 
-Machine 1 will MITM traffic and log it.
+Machine 1 will MITM traffic between Cync cloud and the device and log it.
 
 When device 2 (IP: `10.0.3.11`) requests the IP of domain `cm.gelighting.com` from my opnsense router,
 the router will return the overridden DNS record of `10.0.2.101`. Device 2 will then attempt to connect to machine 2. 
-Machine 2 will MITM traffic and log it.
+Machine 2 will MITM traffic between Cync cloud and the device and log it.
 
 When device 3 (IP: `10.0.3.12`) requests the IP of domain `cm.gelighting.com` from my opnsense router,
 the router will return the overridden DNS record of `10.0.2.102`. Device 3 will then attempt to connect to machine 3. 
-Machine 3 will MITM traffic and log it.
+Machine 3 will MITM traffic between Cync cloud and the device and log it.
 
 When the Cync app (IP: `10.0.1.20`) requests the IP of domain `cm.gelighting.com` from my opnsense router,
 the router will return the overridden DNS record of `10.0.2.103`. The Cync app will then attempt to connect to machine 4.
-Machine 4 will MITM traffic and log it.
+Machine 4 will MITM traffic between Cync cloud and the device and log it.
 
-At the end of this, there will be 4 `dump.txt` files, each containing the traffic of 1 device/app. 
+At the end of this, there will be a total of 4 `dump.txt` files on each machine, each containing the traffic between the Cync cloud and 1 device or the app. 
 This will make it easier to debug and follow. I would rename all the `dump.txt` files to something more descriptive like 
 `bulb1.txt`, `plug1.txt`, `bulb2.txt`, `app1.txt`. Zip them up and submit them in an issue so I can attempt to debug.
 
@@ -104,6 +105,3 @@ This will make it easier to debug and follow. I would rename all the `dump.txt` 
 If you do not add comments to the logs to tell me what command was issued or some sort of explanation of 
 what the session is accomplishing, please record a session and only do power on and power off, zip it up and name 
 the zip something descriptive like `wired_switch_toggle_power.zip`.
-
-Record another session of walking past the wired switch motion sensor, zip it up and name it something descriptive like
-`wired_switch_motion.zip`.
