@@ -44,6 +44,7 @@ The following example will reroute DNS requests for `cm.gelighting.com` to local
 
 >[!WARNING]
 > NOTICE the trailing `.` after `cm.gelighting.com.` in `local-data:`.
+> 
 > `local-zone` is your DNS domain (.local, .lan, .whatever). Notice there is no leading `.` in `local-zone`!!.
 
 ```
