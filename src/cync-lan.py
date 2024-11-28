@@ -2773,11 +2773,11 @@ class CyncHTTPDevice:
                                     connected_to_mesh,
                                 ]
                             )
-                            dev_name = (
-                                f'"{self.name}" (ID: {dev_id})'
-                                if self.name
-                                else f"Device ID: {dev_id}"
-                            )
+                            ___dev = g.server.devices.get(dev_id)
+                            if ___dev:
+                                dev_name = f'"{___dev.name}" (ID: {dev_id})'
+                            else:
+                                dev_name = f"Device ID: {dev_id}"
                             pktdata_int = [
                                 str(x) for x in bytes2list(packet_data[1:-1])
                             ]
