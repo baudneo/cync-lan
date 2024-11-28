@@ -549,12 +549,17 @@ class CyncCloudAPI:
             if "name" not in mesh_ or len(mesh_["name"]) < 1:
                 logger.debug("No name found for mesh, skipping...")
                 continue
-
-            if "properties" not in mesh_ or "bulbsArray" not in mesh_["properties"]:
+            if "properties" not in mesh_:
                 logger.debug(
-                    "No properties found for mesh OR no 'bulbsArray' in properties, skipping..."
+                    "No properties found for mesh, skipping..."
                 )
                 continue
+            elif "bulbsArray" not in mesh_["properties"]:
+                logger.debug(
+                    "No 'bulbsArray' in properties, skipping..."
+                )
+                continue
+
             new_mesh = {
                 kv: mesh_[kv] for kv in ("access_key", "id", "mac") if kv in mesh_
             }
@@ -571,6 +576,7 @@ class CyncCloudAPI:
                         "mac",
                         "deviceType",
                         "wifiMac",
+                        "firmwareVersion"
                     )
                 ):
                     logger.warning(
@@ -578,6 +584,7 @@ class CyncCloudAPI:
                         % cfg_bulb
                     )
                     continue
+                new_dev_dict = {}
                 # last 3 digits of deviceID
                 __id = int(str(cfg_bulb["deviceID"])[-3:])
                 wifi_mac = cfg_bulb["wifiMac"]
@@ -585,36 +592,43 @@ class CyncCloudAPI:
                 _mac = cfg_bulb["mac"]
                 _type = int(cfg_bulb["deviceType"])
                 _fw_ver = cfg_bulb["firmwareVersion"]
+                # data from: https://github.com/baudneo/cync-lan/issues/8
+                # { "hvacSystem": { "changeoverMode": 0, "auxHeatStages": 1, "auxFurnaceType": 1, "stages": 1, "furnaceType": 1, "type": 2, "powerLines": 1 },
+                # "thermostatSensors": [ { "pin": "025572", "name": "Living Room", "type": "savant" }, { "pin": "044604", "name": "Bedroom Sensor", "type": "savant" }, { "pin": "022724", "name": "Thermostat sensor 3", "type": "savant" } ] } ]
+                hvac_cfg = None
+                if 'hvacSystem' in cfg_bulb:
+                    hvac_cfg = cfg_bulb["hvacSystem"]
+                    if "thermostatSensors" in cfg_bulb:
+                        hvac_cfg["thermostatSensors"] = cfg_bulb["thermostatSensors"]
+                    logger.debug(f"Found HVAC device '{name}' (ID: {__id}): {hvac_cfg}")
+                    new_dev_dict["hvac"] = hvac_cfg
 
-                bulb_device = CyncDevice(
+                cync_device = CyncDevice(
                     name=name,
                     cync_id=__id,
                     cync_type=_type,
                     mac=_mac,
                     wifi_mac=wifi_mac,
                     fw_version=_fw_ver,
+                    hvac=hvac_cfg,
                 )
-                new_bulb = {}
                 for attr_set in (
                     "name",
-                    # "is_plug",
-                    # "supports_temperature",
-                    # "supports_rgb",
                     "mac",
                     "wifi_mac",
                 ):
-                    value = getattr(bulb_device, attr_set)
+                    value = getattr(cync_device, attr_set)
                     if value:
-                        new_bulb[attr_set] = value
+                        new_dev_dict[attr_set] = value
                     else:
                         logger.warning("Attribute not found for bulb: %s" % attr_set)
-                new_bulb["type"] = _type
-                new_bulb["is_plug"] = bulb_device.is_plug
-                new_bulb["supports_temperature"] = bulb_device.supports_temperature
-                new_bulb["supports_rgb"] = bulb_device.supports_rgb
-                new_bulb["fw"] = _fw_ver
+                new_dev_dict["type"] = _type
+                new_dev_dict["is_plug"] = cync_device.is_plug
+                new_dev_dict["supports_temperature"] = cync_device.supports_temperature
+                new_dev_dict["supports_rgb"] = cync_device.supports_rgb
+                new_dev_dict["fw"] = _fw_ver
 
-                new_mesh["devices"][__id] = new_bulb
+                new_mesh["devices"][__id] = new_dev_dict
 
         config_dict = {"account data": mesh_conf}
 
@@ -633,6 +647,8 @@ type_2_str = {
     146: "Full Color Direct Connect Edison ST19 Bulb",
     147: "Full Color Direct Connect Edison G25 Bulb",
     148: "Dimmable Direct Connect Edison ST19 Bulb",
+
+    224: "Direct Connect Thermostat",
 }
 
 
@@ -649,8 +665,10 @@ class CyncDevice:
     _supports_rgb: Optional[bool] = None
     _supports_temperature: Optional[bool] = None
     _is_plug: Optional[bool] = None
+    _is_hvac: Optional[bool] = None
     _mac: Optional[str] = None
     wifi_mac: Optional[str] = None
+    hvac: Optional[dict] = None
     _online: bool = False
     DeviceTypes: Dict[str, List[int]] = {
         "BULB": [31, 137, 146, 148],
@@ -660,8 +678,13 @@ class CyncDevice:
         "STRIP": [133],
         "PLUG": [64, 65, 66, 67, 68],
         "EDISON": [146, 148],
+        "THERMOSTAT": [224],
     }
     Capabilities = {
+        "HEAT": [224],
+        "COOL": [224],
+        "TEMPERATURE": [224],
+
         "ONOFF": [
             1,
             5,
@@ -1016,6 +1039,7 @@ class CyncDevice:
         wifi_mac: Optional[str] = None,
         fw_version: Optional[str] = None,
         home_id: Optional[int] = None,
+        hvac: Optional[dict] = None,
     ):
         self.control_bytes = bytes([0x00, 0x00])
         if cync_id is None:
@@ -1044,6 +1068,22 @@ class CyncDevice:
         self._r: int = 0
         self._g: int = 0
         self._b: int = 0
+        if hvac is not None:
+            self.hvac = hvac
+            self._is_hvac = True
+
+    @property
+    def is_hvac(self) -> bool:
+        if self._is_hvac is not None:
+            return self._is_hvac
+        if self.type is None:
+            return False
+        return self.type in self.Capabilities["HEAT"] or self.type in self.Capabilities["COOL"] or self.type in self.DeviceTypes["THERMOSTAT"]
+
+    @is_hvac.setter
+    def is_hvac(self, value: bool) -> None:
+        if isinstance(value, bool):
+            self._is_hvac = value
 
     @property
     def version(self) -> Optional[str]:
@@ -1057,10 +1097,15 @@ class CyncDevice:
             self._version = value
         elif isinstance(value, str):
             if value == '':
-                # it is empty
-                logger.debug(f"{self.lp} in CyncDevice.version(), the passed value is an empty string!")
+                logger.debug(f"{self.lp} in CyncDevice.version().setter, the firmwareVersion "
+                             f"extracted from the cloud is an empty string!")
             else:
-                self._version = int(value.replace(".", "").replace('\0', '').strip())
+                try:
+                    _x = int(value.replace(".", "").replace('\0', '').strip())
+                except ValueError as ve:
+                    logger.exception(f"{self.lp} Failed to convert firmware version to int: {ve}")
+                else:
+                    self._version = _x
 
     def check_dev_type(self, dev_type: int) -> dict:
         dev_types = {}
@@ -1208,8 +1253,8 @@ class CyncDevice:
             "checksum",
             0x7E,
         ]
-        # pick random http devices to send the command to
-        # it should bridge the command over btle to the device ID
+        # pick unique, random http devices to send the command to
+        # it will bridge the command over to the btle mesh
         bridge_devices: List["CyncHTTPDevice"] = random.sample(
             list(g.server.http_devices.values()), k=min(3, len(g.server.http_devices))
         )
