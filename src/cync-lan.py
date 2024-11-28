@@ -492,7 +492,7 @@ class CyncCloudAPI:
         return ret
 
     def get_properties(self, auth_token: str, product_id: str, device_id: str):
-        """Get properties for a single device."""
+        """Get properties for a single device. Properties contains device list (bulbsArray), groups (groupsArray), and saved light effects (lightShows)."""
         api_device_info_url = "https://api.gelighting.com/v2/product/{product_id}/device/{device_id}/property"
         headers = {"Access-Token": auth_token}
         r = requests.get(
