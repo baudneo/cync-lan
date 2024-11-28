@@ -1056,7 +1056,11 @@ class CyncDevice:
         if isinstance(value, int):
             self._version = value
         elif isinstance(value, str):
-            self._version = int(value.replace(".", "").strip())
+            if value == '':
+                # it is empty
+                logger.debug(f"{self.lp} in CyncDevice.version(), the passed value is an empty string!")
+            else:
+                self._version = int(value.replace(".", "").strip())
 
     def check_dev_type(self, dev_type: int) -> dict:
         dev_types = {}
