@@ -535,20 +535,23 @@ class CyncCloudAPI:
 
     @staticmethod
     def mesh_to_config(mesh_info):
+        """Take exported cloud data and format it to write to file"""
         mesh_conf = {}
-        logger.debug("Dumping raw config from Cync account to file: ./raw_mesh.cync")
+
         try:
             with open("./raw_mesh.cync", "w") as _f:
                 _f.write(yaml.dump(mesh_info))
         except Exception as file_exc:
             logger.error("Failed to write raw mesh info to file: %s" % file_exc)
+        else:
+            logger.debug("Dumped raw config from Cync account to file: ./raw_mesh.cync")
         for mesh_ in mesh_info:
             if "name" not in mesh_ or len(mesh_["name"]) < 1:
-                logger.warning("No name found for mesh, skipping...")
+                logger.debug("No name found for mesh, skipping...")
                 continue
 
             if "properties" not in mesh_ or "bulbsArray" not in mesh_["properties"]:
-                logger.warning(
+                logger.debug(
                     "No properties found for mesh OR no 'bulbsArray' in properties, skipping..."
                 )
                 continue
