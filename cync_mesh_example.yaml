@@ -12,57 +12,72 @@
 
 account data:
   # each of these are a "home" in the app. This one is named "Home"
+  # work in progress to import several homes, import groups and light show effects.
   Home:
+    # Some Cync Home identifiers. ID is how the cloud ids it: <home id><device id: 3 digits, 1 = 001 / 13 = 013> = 123456789001 / 123456789013.
     id: 123456789
+    # identifier passed in device<->server handshakes
     access_key: 123456
+    # This is what all BT devices will broadcast as their name after joining this home.
+    # When you do a BT scan, you'll see a bunch of devices with this name.
     mac: ABCDEF1234567890
 
     devices:
       1:
-        # mac is the BT MAC
-        mac: 78:6D:EB:28:EA:A4
         name: Office Lamp
+        # mac is the BT MAC, used in HASS MQTT device page and as a unique identifier.
+        mac: 78:6D:EB:28:EA:A4
+        # WiFi mac is used in HASS MQTT device page, but not as a unique identifier because BT only devices have this set to 00:01:02:03:04:05.
+        wifi_mac: 78:6D:EB:28:EA:A5
+        # Set this to true if the device is a plug, can also be used for switches if switches dont support brightness / white temp commands, i.e. on/off only.
+        is_plug: false
+        # does this device support RGB and / or white temperature?
         supports_rgb: true
         supports_temperature: true
+        # Cloud stores fw version as it was at the time of adding the device
+        # you'll need to edit this if your device receives firmware updates to reflect this data in HASS MQTT device page.
+        fw: 1.3.160
+        # cync device type, allows to display device model in HASS MQTT device page like: Full Color Direct Connect Edison G25 Bulb
+        type: 147
+        # any other key besides the ones above are not parsed
+        # the below keys are only for user reference
+        description: Cync Full color direct connect decorative edison bulb (Globe)
+        ip: 10.0.3.20
       2:
-        mac: 78:6D:EB:28:EA:40
         name: Overhead Right
+        mac: 78:6D:EB:28:EA:40
+        wifi_mac: 78:6D:EB:28:EB:40
         supports_rgb: true
         supports_temperature: true
+        fw: 1.3.160
+        is_plug: false
+        type: 147
       3:
-        mac: 78:6D:EB:28:D6:D1
         name: Overhead Left
+        mac: 78:6D:EB:28:D6:D1
+        wifi_mac: 78:6D:EB:28:D6:D2
         supports_rgb: true
         supports_temperature: true
+        fw: 1.3.160
+        is_plug: false
+        type: 147
       4:
-        is_plug: true
-        mac: 34:13:43:70:D7:5E
         name: Living Room Plug
+        mac: 34:13:43:70:D7:5E
+        wifi_mac: 34:13:43:78:D9:2E
+        is_plug: true
+        type: 68
+        fw: 1.0.298
       5:
-        is_plug: true
+        name: Living Room Motion Dimmer
+        # since it has a dimmer, we keep it as a bulb to control brightness (tested in 'cync bulb only' load mode)
+        is_plug: false
+        # supports color and temp are set to false by default. This switch only controls on/off and brightness.
         mac: 34:13:43:70:D8:A4
-        name: Office Plug
-      6:
-        is_plug: true
-        mac: 34:13:43:70:CF:AD
-        name: Basement Plug
-      7:
-        mac: 78:6D:EB:E0:1B:73
-        name: Bathroom Light 4 (Test bulb 1)
-        supports_rgb: true
-        supports_temperature: true
-      8:
-        mac: 78:6D:EB:A8:47:24
-        name: Bathroom Light 1 (Test bulb 2)
-        supports_rgb: true
-        supports_temperature: true
-      9:
-        mac: 78:6D:EB:DE:67:3F
-        name: Bathroom Light 2
-        supports_rgb: true
-        supports_temperature: true
-      10:
-        mac: 78:6D:EB:DE:F3:13
-        name: Bathroom Light 3
-        supports_rgb: true
-        supports_temperature: true
+        wifi_mac: 34:13:43:78:D9:A4
+        type: 37
+        fw: 1.0.072
+        ip: 10.0.2.238
+        description: Dimmer with Motion and Ambient Light Sensor
+        # motion / lux are NOT exposed, email cync and ask them to expose it in the phone app and to google home / alexa,
+        # DO NOT mention this project to them. If they expose it in the phone app, it should also have device status broadcasts that we can listen to.
