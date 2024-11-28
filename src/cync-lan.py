@@ -3924,11 +3924,13 @@ class MQTTClient:
                 device_struct = {
                     "identifiers": [unique_id],
                     "manufacturer": "Savant",
-                    "connections": [("mac", device.mac.casefold())],
+                    "connections": [("bluetooth", device.mac.casefold())],
                     "name": device.name,
                     "sw_version": ver_str,
                     "model": type_2_str[device.type] or "Unknown",
                 }
+                if not device.is_bt_only():
+                    device_struct["connections"].append(("mac", str(device.wifi_mac).casefold()))
                 dev_config = {
                     "object_id": obj_id,
                     # "name": device.name,
