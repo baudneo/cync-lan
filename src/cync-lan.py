@@ -502,16 +502,35 @@ class CyncCloudAPI:
         )
         ret = r.json()
         # {'error': {'msg': 'Access-Token Expired', 'code': 4031021}}
+        logit = False
         if "error" in ret:
             error_data = ret["error"]
             if (
                 "msg" in error_data
                 and error_data["msg"]
-                and error_data["msg"].lower() == "access-token expired"
             ):
-                raise HTTPError("Access-Token expired, you need to re-authenticate.")
-                # logger.error("Access-Token expired, re-authenticating...")
-                # return self.get_devices(*self.authenticate_2fa())
+                if error_data["msg"].lower() == "access-token expired":
+                    raise HTTPError("Access-Token expired, you need to re-authenticate.")
+                    # logger.error("Access-Token expired, re-authenticating...")
+                    # return self.get_devices(*self.authenticate_2fa())
+                else:
+                    logit = True
+
+                if 'code' in error_data:
+                    cync_err_code = error_data['code']
+                    if cync_err_code == 4041009:
+                        # no properties for this home ID
+                        # I've noticed lots of empty homes in the returned data,
+                        # we only parse homes with an assigned name and a 'bulbsArray'
+                        logit = False
+                    else:
+                        logger.debug(f"DBG>>> error code != 4041009 (int) ---> {type(cync_err_code) = } -- {cync_err_code =} /// setting logit = True")
+                        logit = True
+                else:
+                    logger.debug(f"DBG>>> no 'code' in error data, setting logit = True")
+                    logit = True
+            if logit is True:
+                logger.warning(f"Cync Cloud API Error: {error_data}")
         return ret
 
     @staticmethod
