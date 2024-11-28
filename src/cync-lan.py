@@ -1060,7 +1060,7 @@ class CyncDevice:
                 # it is empty
                 logger.debug(f"{self.lp} in CyncDevice.version(), the passed value is an empty string!")
             else:
-                self._version = int(value.replace(".", "").strip())
+                self._version = int(value.replace(".", "").replace('\0', '').strip())
 
     def check_dev_type(self, dev_type: int) -> dict:
         dev_types = {}
