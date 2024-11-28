@@ -3932,7 +3932,7 @@ class MQTTClient:
                 dev_config = {
                     "object_id": obj_id,
                     # "name": device.name,
-                    # set to None if only device name is relevent
+                    # set to None if only device name is relevant
                     "name": None,
                     "command_topic": "{0}/set/{1}".format(self.topic, device_uuid),
                     "state_topic": "{0}/status/{1}".format(self.topic, device_uuid),
