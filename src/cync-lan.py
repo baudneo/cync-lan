@@ -640,6 +640,7 @@ type_2_str = {
     37: "Dimmer Switch with Motion and Ambient Light",
     68: "Indoor Direct Connect Plug",
     113: "Wire-Free White Temperature Dimmer Switch",
+    131: "Full Color Direct Connect A19 Bulb",
     133: "Full Color Direct Connect LED Light Strip Controller",
     137: "Full Color Direct Connect A19 Bulb",
     138: "Full Color Direct Connect BR30 Floodlight",
@@ -671,7 +672,7 @@ class CyncDevice:
     hvac: Optional[dict] = None
     _online: bool = False
     DeviceTypes: Dict[str, List[int]] = {
-        "BULB": [31, 137, 146, 148],
+        "BULB": [31, 131, 137, 146, 148],
         "SWITCH": [113],
         "BATTERY": [113],
         "DIMMER": [113],
