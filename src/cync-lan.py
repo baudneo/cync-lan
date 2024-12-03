@@ -27,7 +27,7 @@ import yaml
 from amqtt import client as amqtt_client
 from amqtt.mqtt.constants import QOS_0, QOS_1
 
-__version__: str = "0.0.5"
+__version__: str = "0.1.3"
 
 from requests import HTTPError
 
