@@ -80,8 +80,8 @@ breakdown. Please see the
 | `CYNC_MQTT_URL`          | **LEGACY** URL of MQTT broker           | `mqtt://homeassistant.local:1883/` |
 | `CYNC_MQTT_HOST`         | Host of MQTT broker                     | `homeassistant.local`              |
 | `CYNC_MQTT_PORT`         | Port of MQTT broker                     | `1883`                             |
-| `CYNC_MQTT_USER`         | Username for MQTT broker                | `homeassistant`                    |
-| `CYNC_MQTT_PASS`         | Password for MQTT broker                | `password`                         |
+| `CYNC_MQTT_USER`         | Username for MQTT broker                |                                    |
+| `CYNC_MQTT_PASS`         | Password for MQTT broker                |                                    |
 | `CYNC_DEBUG`             | Enable debug logging                    | `0`                                |
 | `CYNC_RAW_DEBUG`         | Enable raw binary message debug logging | `0`                                |
 | `CYNC_CERT`              | Path to cert file                       | `certs/server.pem`                 |
