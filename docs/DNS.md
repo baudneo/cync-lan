@@ -132,3 +132,39 @@ You will need to disable the DNS override, add the device(s), then re-enable the
 It will let you get all the way to the end of adding the device and fail on the last step of 'Adding to your home'.
 
 *If you are using `unbound` and `views:` to selectively route DNS for only a few Cync devices, you should be able to add new devices*
+
+# Testing DNS override
+>[!NOTE] 
+> If you are using selective DNS override via `views` in
+> `unbound`, and you did not set up an override for the IP of the
+> machine running `dig` / `nslookup`, the command will return the Cync cloud IP, this is normal.
+
+you can use `dig`, `nslookup`, `dog`, etc. to test if the DNS override is working correctly. 
+
+ ```bash
+# Older firmware
+dig cm-ge.xlink.cn
+
+# Newer firmware
+dig cm.gelighting.com
+
+# Example output with a local A record returned
+; <<>> DiG 9.18.24 <<>> cm.gelighting.com
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56237
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;cm.gelighting.com.             IN      A
+
+;; ANSWER SECTION:
+cm.gelighting.com.      3600    IN      A       10.0.1.9 <---- Overridden to a local machine running cync-lan
+
+;; Query time: 0 msec
+;; SERVER: 10.0.1.1#53(10.0.1.1) (UDP)
+;; WHEN: Fri Mar 29 08:26:51 MDT 2024
+;; MSG SIZE  rcvd: 62
+```
