@@ -12,11 +12,11 @@
 > * All **automations, scenes, triggers, groups, dashboards**, etc. will need to be redone as the internal HASS names are changed (i.e: `light.cync_lan_kitchen_counter` will now be something like `light.cync_lan_<home id>_<device id>`).
 > * Switching from entities to devices.
 
-Async MQTT LAN controller for Cync/C by GE devices. **Local** only control
-of **most** Cync devices via Home Assistant (MQTT JSON payloads).
+Async HTTP/MQTT LAN controller for Cync/C by GE devices. **Local** only control
+of **most** Cync devices via MQTT JSON payloads following the Home Assistant MQTT JSON schema.
 
 **This is a work in progress, and may not work for all devices.** 
-See [known devices](docs/known_devices.md) for more information.
+See [known devices](docs/known_devices.md) for more information. Battery powered devices are currently *not* supported due to them being BTLE only.
 
 Forked from [cync-lan](https://github.com/iburistu/cync-lan) and 
 [cync2mqtt](https://github.com/juanboro/cync2mqtt) - All credit to 
@@ -25,16 +25,19 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and
 
 ## Prerequisites
 - Python 3.8+ (Walrus [:=] operator used)
-- A minimum of 1, non battery powered, Wi-Fi Cync device to act as the TCP <-> BT bridge. I recommend a plug, wired switch or an always powered Wi-Fi bulb - *The Wi-Fi devices can control BT only bulbs*
-- Cync account with devices added and configured
+- A minimum of 1, non battery powered, Wi-Fi (*Direct Connect*) Cync / C by GE device to act as the TCP <-> BT bridge (always on)
+- Cync account with devices added
 - MQTT broker (I recommend EMQX)
-- [Create self-signed SSL certs](./docs/install.md#setup) using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script.
-- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export requires account email, password and an OTP emailed to you.
-- [DNS override/redirection](./docs/DNS.md) for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`.
-- **Optional:** *[Firewall](#firewall) rules to allow cync devices to talk to `cync-lan`*
+- [Export devices](./docs/command_line_sub_commands.md#export) from the Cync cloud to a YAML file; first export requires account email, password and an OTP emailed to you
+- [DNS override/redirection](./docs/DNS.md) for `cm.gelighting.com` or `cm-ge.xlink.cn` to a local host that will run `cync-lan`
+- **Non Docker:** [Create self-signed SSL certs](./docs/install.md#setup) using `CN=*.xlink.cn` for the server. You can use the `create_certs.sh` script
+- **Optional:** *[Firewall](#firewall) rules to allow cync devices to talk to `cync-lan`* **(VLANs?)**
 
+>[!IMPORTANT]
+> You still need to use your Cync account to add new devices as you acquire them.
+ 
 ## Installation
-Please see [Install docs](./docs/install.md) for more information.
+Docker and local script supported! Please see [Install docs](./docs/install.md) for more information.
 
 ## Re-routing / Overriding DNS
 >[!WARNING] 
@@ -45,53 +48,10 @@ Please see [Install docs](./docs/install.md) for more information.
 There are detailed instructions for OPNSense and Pi-hole. 
 See [DNS docs](docs/DNS.md) for more information.
 
-As long as your DNS is correctly re-routed, you should be able to start 
-the server and see devices connecting to it in the logs. If you do not see any Cync 
-devices connecting after power cycling them, you may need to check your 
-DNS re-routing **and** firewall rules (if applicable). If your devices 
-are on a separate VLAN, you may need to allow them to talk to the 
-`cync-lan` server.
-
-### Testing DNS override
->[!NOTE] 
-> If you are using selective DNS override via `views` in
-> `unbound`, and you did not set up an override for the IP of the
-> machine running `dig` / `nslookup`, the command will return the Cync cloud IP, this is normal.
-
-you can use `dig` or `nslookup` to test if the DNS override is working correctly. 
-
- ```bash
-# Older firmware
-dig cm-ge.xlink.cn
-
-# Newer firmware
-dig cm.gelighting.com
-
-# Example output with a local A record returned
-; <<>> DiG 9.18.24 <<>> cm.gelighting.com
-;; global options: +cmd
-;; Got answer:
-;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56237
-;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
-
-;; OPT PSEUDOSECTION:
-; EDNS: version: 0, flags:; udp: 1232
-;; QUESTION SECTION:
-;cm.gelighting.com.             IN      A
-
-;; ANSWER SECTION:
-cm.gelighting.com.      3600    IN      A       10.0.1.9 <---- Overridden to a local machine running cync-lan
-
-;; Query time: 0 msec
-;; SERVER: 10.0.1.1#53(10.0.1.1) (UDP)
-;; WHEN: Fri Mar 29 08:26:51 MDT 2024
-;; MSG SIZE  rcvd: 62
-```
-
 ## Config file
 > [!IMPORTANT]
-> It is required to query the Cync cloud API to export all of your homes
-> and the devices in each home.
+> It is required to query the Cync cloud API to export all of
+> the devices in each 'home'.
 
 This requires your email, password and
 the code that will be emailed to you during export.
@@ -105,39 +65,35 @@ See the example [config file](./cync_mesh_example.yaml)
 There is an `export` [sub command](./docs/command_line_sub_commands.md#export) 
 that will query the Cync cloud API and export all homes and each homes devices to a YAML file.
 
-
-### Manually adding devices
-To manually add devices to the config file, look at the example and follow 
-the template. From what I have seen the device ID starts at 1 and increments 
-by 1 for each device added to the "home" (it follows the order you added 
-the bulbs).
-
-*It is unknown how removing a device from the cloud and adding a device may affect the
-ID number, YMMV. Be careful when manually adding devices.*
-
->[!NOTE]
-> By manually adding, I mean you added a device via the app and 
-> did not re-export a new config. Thus, you must manually enter the
-> device into the config file (not recommended).
-
 ## CLI arguments
 You can always supply `--help` to the cync-lan.py script to get a 
 breakdown. Please see the 
 [sub-command docs](./docs/command_line_sub_commands.md) for more information.
 
 ## Env Vars
-| Variable          | Description                                  | Default                            |
-|-------------------|----------------------------------------------|------------------------------------|
-| `CYNC_MQTT_URL`   | URL of MQTT broker                           | `mqtt://homeassistant.local:1883/` |
-| `CYNC_DEBUG`      | Enable debug logging                         | `0`                                |
-| `CYNC_RAW_DEBUG`  | Enable raw binary message debug logging      | `0`                                |
-| `CYNC_CERT`       | Path to cert file                            | `certs/server.pem`                 |
-| `CYNC_KEY`        | Path to key file                             | `certs/server.key`                 |
-| `CYNC_PORT`       | Port to listen on                            | `23779`                            |
-| `CYNC_HOST`       | Host to listen on                            | `0.0.0.0`                          |
-| `CYNC_TOPIC`      | MQTT topic                                   | `cync_lan`                         |
-| `CYNC_HASS_TOPIC` | Home Assistant topic                         | `homeassistant`                    |
-| `CYNC_MESH_CHECK` | Interval to check for online/offline devices | `30`                               |
+> [!NOTE]
+> The `CYNC_MQTT_URL` variable is **deprecated** and will be removed in a future release.
+> For now, it will be parsed into `CYNC_MQTT_HOST`, `CYNC_MQTT_PORT`, `CYNC_MQTT_USER`, and `CYNC_MQTT_PASS`.
+
+| Variable                 | Description                             | Default                            |
+|--------------------------|-----------------------------------------|------------------------------------|
+| `CYNC_MQTT_URL`          | **LEGACY** URL of MQTT broker           | `mqtt://homeassistant.local:1883/` |
+| `CYNC_MQTT_HOST`         | Host of MQTT broker                     | `homeassistant.local`              |
+| `CYNC_MQTT_PORT`         | Port of MQTT broker                     | `1883`                             |
+| `CYNC_MQTT_USER`         | Username for MQTT broker                | `homeassistant`                    |
+| `CYNC_MQTT_PASS`         | Password for MQTT broker                | `password`                         |
+| `CYNC_DEBUG`             | Enable debug logging                    | `0`                                |
+| `CYNC_RAW_DEBUG`         | Enable raw binary message debug logging | `0`                                |
+| `CYNC_CERT`              | Path to cert file                       | `certs/server.pem`                 |
+| `CYNC_KEY`               | Path to key file                        | `certs/server.key`                 |
+| `CYNC_PORT`              | Port to listen on                       | `23779`                            |
+| `CYNC_HOST`              | Host to listen on                       | `0.0.0.0`                          |
+| `CYNC_TOPIC`             | MQTT topic                              | `cync_lan`                         |
+| `CYNC_HASS_TOPIC`        | Home Assistant topic                    | `homeassistant`                    |
+| `CYNC_HASS_STATUS_TOPIC` | HASS status topic for birth / will      | `status`                           |
+| `CYNC_HASS_BIRTH_MSG`    | HASS birth message                      | `online`                           |
+| `CYNC_HASS_WILL_MSG`     | HASS will message                       | `offline`                          |
+| `CYNC_MESH_CHECK`        | Interval to check request device state  | `30`                               |
 
 ## Controlling devices
 Devices are controlled by JSON MQTT messages. This was designed to be used 
@@ -151,7 +107,7 @@ date with the latest Home Assistant MQTT JSON schema.
 ## Home Assistant
 This script uses the MQTT discovery mechanism in Home Assistant to 
 automatically add devices. You can control the Home Assistant MQTT 
-topic via the environment variable `CYNC_HASS_TOPIC`.
+topic via the environment variable `CYNC_HASS_TOPIC` (default: `homeassistant`).
 
 ## Debugging / socat
 If your devices are not responding to commands, it's likely that the TCP
@@ -161,6 +117,7 @@ and I can walk you through getting good debug logs, or you can use
 cloud server in real-time yourself by running:
 
 ```bash
+# make sure to create the self signed certs first
 # Older firmware devices
 socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:34.73.130.191:23779,verify=0
 # Newer firmware devices (Notice the last IP change)

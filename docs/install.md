@@ -34,8 +34,7 @@ wget https://raw.githubusercontent.com/baudneo/cync-lan/python/create_certs.sh
 bash ./create_certs.sh
 
 # install python deps
-pip install pyyaml requests uvloop wheel
-pip install git+https://github.com/Yakifo/amqtt.git
+pip install pyyaml requests uvloop wheel aiomqtt
 
 # wget file
 wget https://raw.githubusercontent.com/baudneo/cync-lan/python/src/cync-lan.py
@@ -75,7 +74,7 @@ First, you **MUST** follow the [virtualenv installation](#virtualenv) to export 
 - Create a dir for your docker setup. i.e. `mkdir -p ~/docker/cync-lan/config`
 - Copy the exported config file from the [virtualenv install](#virtualenv): `cp ~/cync-lan/cync_mesh.yaml ~/docker/cync-lan/config` 
 - Download the example docker-compose file: `cd ~/docker/cync-lan && wget https://raw.githubusercontent.com/baudneo/cync-lan/python/docker-compose.yaml`
-- Edit `docker-compose.yaml` and change `CYNC_MQTT_URL` env var to match your MQTT broker details (Optional: enable DEBUG logs)
+- Edit `docker-compose.yaml` and change `CYNC_MQTT_HOST` env var to match your MQTT broker details (`CYNC_MQTT_USER` and `CYNC_MQTT_PASS` if needed)
 - Run `docker compose up -d --force-recreate` to bring the container up
 - Optional: check logs using `docker compose logs -f` (Ctrl+C to exit)
 
@@ -86,5 +85,6 @@ First, you **MUST** follow the [virtualenv installation](#virtualenv) to export 
 
 ### Build image yourself
 ```bash
+# clone repo, cd into dir
 docker build -t cync-lan:custom-tag .
 ```
