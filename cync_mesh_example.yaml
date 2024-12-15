@@ -1,10 +1,18 @@
 # The config file will overwrite environment variables. Be aware!
 
-# MQTT broker URL
+# MQTT broker URL (LEGACY, but will be parsed to migrate to new style)
 # auth: "mqtt://user:password@address:port/
 # no auth: "mqtt://address:port/"
 
 #mqtt_url: "mqtt://homeassistant.local:1883/"
+# New MQTT style
+mqtt:
+  host: 1.2.3.4
+  port: 1883
+  username: cynclan
+  password: SuperSecretPassPhrase
+
+# CyncLAN server options
 #cert: "certs/cert.pem"
 #key: "certs/key.pem"
 #host: "0.0.0.0"
