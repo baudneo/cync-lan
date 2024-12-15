@@ -9,9 +9,9 @@ services:
     container_name: cync-lan
     image: baudneo/cync-lan:latest
     restart: unless-stopped
-#    build:
-#      dockerfile: ./Dockerfile
-#      context: .
+    build:
+      dockerfile: ./Dockerfile
+      context: .
     ports:
       - "23779:23779"
     volumes:
@@ -23,11 +23,19 @@ services:
     environment:
       TZ: "America/Chicago"
       # If you don't use auth you can remove user:pass@ from the CYNC_MQTT_URL
+      # CYNC_MQTT_URL is legacy, but will be parsed to migrate to new style
       CYNC_MQTT_URL: "mqtt://user:pass@ip:port/"
-#      CYNC_CERT: "/root/cync-lan/certs/cert.pem"
-#      CYNC_KEY: "/root/cync-lan/certs/key.pem"
+      # new style MQTT config
+#      CYNC_MQTT_HOST: "ip of broker"
+#      CYNC_MQTT_PORT: 1833
+#      CYNC_MQTT_USER: "username"
+#      CYNC_MQTT_PASS: "password"
 #      CYNC_TOPIC: "cync_lan"
 #      CYNC_HASS_TOPIC: "homeassistant"
+
+      # CyncLAN server options
+#      CYNC_CERT: "/root/cync-lan/certs/cert.pem"
+#      CYNC_KEY: "/root/cync-lan/certs/key.pem"
 #      CYNC_HOST: "0.0.0.0"
 #      CYNC_PORT: 23779
     # Debug logging
