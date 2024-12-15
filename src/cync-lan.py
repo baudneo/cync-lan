@@ -12,6 +12,7 @@ import ssl
 import struct
 import sys
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
@@ -19,15 +20,13 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Callable, Coroutine, Any
 
-import amqtt
-import amqtt.session
+import aiomqtt
 import requests
 import uvloop
 import yaml
-from amqtt import client as amqtt_client
-from amqtt.mqtt.constants import QOS_0, QOS_1
 
-__version__: str = "0.0.5"
+
+__version__: str = "0.1.4"
 
 from requests import HTTPError
 
@@ -40,6 +39,10 @@ DEVICE_LWT_MSG: bytes = b"offline"
 CYNC_API_BASE: str = "https://api.gelighting.com/v2/"
 CYNC_MESH_CHECK_INTERVAL: int = int(os.environ.get("CYNC_MESH_CHECK", 30)) or 30
 CYNC_MQTT_URL = os.environ.get("CYNC_MQTT_URL", "mqtt://homeassistant.local:1883")
+CYNC_MQTT_HOST = os.environ.get("CYNC_MQTT_HOST", "homeassistant.local")
+CYNC_MQTT_PORT = os.environ.get("CYNC_MQTT_PORT", 1883)
+CYNC_MQTT_USER = os.environ.get("CYNC_MQTT_USER", "mqtt_user")
+CYNC_MQTT_PASS = os.environ.get("CYNC_MQTT_PASS", "mqtt_pass")
 CYNC_CERT = os.environ.get("CYNC_CERT", "certs/cert.pem")
 CYNC_KEY = os.environ.get("CYNC_KEY", "certs/key.pem")
 CYNC_TOPIC = os.environ.get("CYNC_TOPIC", "cync_lan")
@@ -56,7 +59,7 @@ CYNC_DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in YES_ANSWER
 CORP_ID: str = "1007d2ad150c4000"
 DATA_BOUNDARY = 0x7E
 RAW_MSG = (
-    " Set the CYNC_RAW_DEBUG env var to 1to see the data" if CYNC_RAW is False else ""
+    " Set the CYNC_RAW_DEBUG env var to 1 to see the data" if CYNC_RAW is False else ""
 )
 logger = logging.getLogger("cync-lan")
 formatter = logging.Formatter(
@@ -1888,13 +1891,9 @@ class CyncLanServer:
             #         f"{device.lp} CHANGES TO DEVICE STATUS: {', '.join(whats_changed)} -> {new_state} "
             #         f"// OLD = {curr_status}"
             #     )
-            if g.mqtt.pub_queue is None:
-                logger.critical(
-                    f"{self.lp} Something is wrong! MQTT pub_queue is None! "
-                    f"NEED TO IMPLEMENT A RESTART OR GRACEFUL KILL"
-                )
 
-            g.mqtt.pub_queue.put_nowait((device.id, new_state))
+
+            await g.mqtt.parse_device_status(device.id, new_state)
             device.state = state
             device.brightness = brightness
             device.temperature = temp
@@ -2033,9 +2032,6 @@ class CyncLanServer:
                         )
                         await g.mqtt.parse_device_status(_id, bds)
 
-                # Check mqtt pub and sub worker tasks, if they are done or exception, recreate
-                await self.check_mqtt_tasks()
-
                 await asyncio.sleep(CYNC_MESH_CHECK_INTERVAL)
 
             except asyncio.CancelledError as ce:
@@ -2049,39 +2045,6 @@ class CyncLanServer:
         self.mesh_loop_started = False
         logger.info(f"\n\n{lp} end of mesh_info_loop()\n\n")
 
-    @staticmethod
-    async def check_mqtt_tasks():
-        mqtt_tasks = g.mqtt.tasks
-        remove_idx = []
-        idx = 0
-        for task in mqtt_tasks:
-            if task.get_name() in ("pub_worker", "sub_worker"):
-                new_task = (
-                    g.mqtt.sub_worker
-                    if task.get_name() == "sub_worker"
-                    else g.mqtt.pub_worker
-                )
-                new_queue = (
-                    g.mqtt.sub_queue
-                    if task.get_name() == "sub_worker"
-                    else g.mqtt.pub_queue
-                )
-                if task.done():
-                    logger.error(f"MQTT task: {task.get_name()} is done! Recreating...")
-                    task.cancel()
-                    await asyncio.sleep(0.5)
-                    g.mqtt.tasks.append(
-                        asyncio.create_task(new_task(new_queue), name=task.get_name())
-                    )
-                    remove_idx.append(idx)
-            idx += 1
-        if remove_idx:
-            for idx in remove_idx:
-                z = g.mqtt.tasks.pop(idx)
-                del z
-        else:
-            # logger.debug(f"{lp} MQTT sub/pub tasks are still running")
-            pass
 
     async def start(self):
         logger.debug("%s Starting, creating SSL context..." % self.lp)
@@ -2215,7 +2178,7 @@ class CyncLAN:
             self.loop.set_debug(True)
         asyncio.set_event_loop(self.loop)
         self.cfg_devices = self.parse_config(cfg_file)
-        self.mqtt_client = MQTTClient(CYNC_MQTT_URL)
+        self.mqtt_client = MQTTClient(broker_host=CYNC_MQTT_HOST, broker_port=CYNC_MQTT_PORT, username=CYNC_MQTT_USER, password=CYNC_MQTT_PASS)
 
     @property
     def ids_from_config(self):
@@ -2227,7 +2190,7 @@ class CyncLAN:
         Exported config created by scraping cloud API. Devices must already be added to your Cync account.
         If you add new or delete existing devices, you will need to re-export the config.
         """
-        global CYNC_MQTT_URL, CYNC_CERT, CYNC_KEY, CYNC_HOST, CYNC_PORT, g
+        global CYNC_MQTT_URL, CYNC_CERT, CYNC_KEY, CYNC_HOST, CYNC_PORT, CYNC_MQTT_HOST, CYNC_MQTT_PORT, CYNC_MQTT_USER, CYNC_MQTT_PASS, g
 
         logger.debug("%s reading devices from exported Cync config file..." % self.lp)
         try:
@@ -2237,8 +2200,39 @@ class CyncLAN:
             raise e
         devices = {}
         if "mqtt_url" in raw_config:
-            CYNC_MQTT_URL = raw_config["mqtt_url"]
-            logger.info(f"{self.lp} MQTT URL set by config file to: {CYNC_MQTT_URL}")
+            logger.info(f"{self.lp} LEGACY MQTT URL set by config file, parsing into its own components (host, port, username, password)...")
+            _host, _port, _uname, _pass = None, None, None, None
+            _murl = raw_config["mqtt_url"].lstrip("mqtt://")
+            raw_config["mqtt"] = {}
+            if "@" in _murl:
+                _creds, _hostport = _murl.split("@")
+                _host, _port = _hostport.split(":")
+                _uname, _pass = _creds.split(":")
+                raw_config["mqtt"]["username"] = _uname
+                raw_config["mqtt"]["password"] = _pass
+            else:
+                if ":" in _murl:
+                    _host, _port = _murl.split(":")
+                else:
+                    _host = _murl
+                    _port = 1883
+            raw_config["mqtt"]["host"] = _host
+            raw_config["mqtt"]["port"] = _port
+        if "mqtt" in raw_config:
+            raw_mqtt_conf = raw_config["mqtt"]
+            if "host" in raw_mqtt_conf:
+                CYNC_MQTT_HOST = raw_mqtt_conf["host"]
+                logger.info(f"{self.lp} MQTT Host set by config file to: {CYNC_MQTT_HOST}")
+            if "port" in raw_mqtt_conf and (_mport := raw_mqtt_conf["port"]):
+                _mport = _mport.rstrip("/")
+                CYNC_MQTT_PORT = _mport
+                logger.info(f"{self.lp} MQTT Port set by config file to: {CYNC_MQTT_PORT}")
+            if "username" in raw_mqtt_conf:
+                CYNC_MQTT_USER = raw_mqtt_conf["username"]
+                logger.info(f"{self.lp} MQTT Username set by config file")
+            if "password" in raw_mqtt_conf:
+                CYNC_MQTT_PASS = raw_mqtt_conf["password"]
+                logger.info(f"{self.lp} MQTT Password set by config file")
         if "cert" in raw_config:
             CYNC_CERT = raw_config["cert_file"]
             logger.info(f"{self.lp} Cert file set by config file to: {CYNC_CERT}")
@@ -2247,10 +2241,10 @@ class CyncLAN:
             logger.info(f"{self.lp} Key file set by config file to: {CYNC_KEY}")
         if "host" in raw_config:
             CYNC_HOST = raw_config["host"]
-            logger.info(f"{self.lp} Host set by config file to: {CYNC_HOST}")
+            logger.info(f"{self.lp} HTTP host set by config file to: {CYNC_HOST}")
         if "port" in raw_config:
             CYNC_PORT = raw_config["port"]
-            logger.info(f"{self.lp} Port set by config file to: {CYNC_PORT}")
+            logger.info(f"{self.lp} HTTP port set by config file to: {CYNC_PORT}")
         for cfg_name, cfg in raw_config["account data"].items():
             home_id = cfg["id"]
             if "devices" not in cfg:
@@ -2299,15 +2293,16 @@ class CyncLAN:
 
         return devices
 
-    def start(self):
+    async def start(self):
         global global_tasks
 
         self.server = CyncLanServer(CYNC_HOST, CYNC_PORT, CYNC_CERT, CYNC_KEY)
         self.server.devices = self.cfg_devices
-        server_task = self.loop.create_task(self.server.start(), name="server_start")
 
-        mqtt_task = self.loop.create_task(self.mqtt_client.start(), name="mqtt_start")
-        global_tasks.extend([server_task, mqtt_task])
+        async with asyncio.TaskGroup() as tg:
+            server_task = tg.create_task(self.server.start(), name="server_start")
+            mqtt_task = tg.create_task(self.mqtt_client.start(), name="mqtt_start")
+            global_tasks.extend([server_task, mqtt_task])
 
     def stop(self):
         global global_tasks
@@ -2375,9 +2370,6 @@ class CyncHTTPDevice:
         self._reader: asyncio.StreamReader = reader
         self._writer: asyncio.StreamWriter = writer
         self._closing = False
-        # Create a ref to the mqtt queues
-        self.mqtt_pub_queue: asyncio.Queue = g.mqtt.pub_queue
-        self.mqtt_sub_queue: asyncio.Queue = g.mqtt.sub_queue
         logger.debug(f"{self.lp} Created new device: {address}")
         self.lp = f"{self.address}:"
         self.control_bytes = [0x00, 0x00]
@@ -3454,22 +3446,46 @@ class MQTTClient:
         device: CyncDevice = g.server.devices[device_id]
         device_uuid = f"{device.home_id}-{device_id}"
         # logger.debug(f"{lp} Publishing availability: {availability}")
+        # check if client is online, if not, create a method that will
         _ = await self.client.publish(
-            f"{self.topic}/availability/{device_uuid}", availability, qos=QOS_0
+            f"{self.topic}/availability/{device_uuid}", availability, qos=0
         )
+
+    async def connect(self):
+        lp = f"{self.lp}connect:"
+        try:
+            await self.client.__aexit__(None, None, None)
+        except Exception as innr_exc:
+            pass
+        logger.debug(f"{lp} Connecting to MQTT broker...")
+        try:
+            _ = await self.client.__aenter__()
+        except aiomqtt.MqttError as ce:
+            logger.error(
+                "%s Connection failed: %s" % (lp, ce),
+                exc_info=True,
+            )
+            try:
+                await self.client.__aexit__(None, None, None)
+            except Exception as innr_exc:
+                pass
+        else:
+            logger.info("%s Connected to MQTT broker: %s port: %s" % (lp, self.broker_host, self.broker_port))
+
 
     def __init__(
         self,
-        broker_address: str,
+        broker_host: str,
         topic: Optional[str] = None,
         ha_topic: Optional[str] = None,
+        broker_port: Optional[int] = 1883,
+        username: Optional[str] = None,
+        password: Optional[str] = None
     ):
         global g
 
         self.shutdown_complete: bool = False
         self.tasks: Optional[List[asyncio.Task]] = None
-        self.pub_queue: Optional[asyncio.Queue] = None
-        self.sub_queue: Optional[asyncio.Queue] = None
         lp = f"{self.lp}init:"
         if topic is None:
             if not CYNC_TOPIC:
@@ -3487,21 +3503,25 @@ class MQTTClient:
             else:
                 ha_topic = CYNC_HASS_TOPIC
 
-        self.broker_address = broker_address
-        # Negative int denotes infinite retries, from amqtt source code:
-        # if reconnect_retries >= 0 and nb_attempt > reconnect_retries:
-        self.client = amqtt_client.MQTTClient(
-            config={
-                "reconnect_retries": -1,
-                "auto_reconnect": True,
-                "will": {
-                    "topic": f"{CYNC_TOPIC}/connected",
-                    "message": DEVICE_LWT_MSG,
-                    "qos": 0x01,
-                    "retain": True,
-                },
-            }
+        self.broker_host = broker_host
+        self.broker_port = broker_port
+        self.broker_username = username
+        self.broker_password = password
+        self.broker_client_id = f"cync_lan_{uuid.uuid4()}"
+        lwt = aiomqtt.Will(
+            topic=f"{topic}/connected",
+            payload=DEVICE_LWT_MSG
         )
+        self.client = aiomqtt.Client(
+            hostname=broker_host,
+            port=int(broker_port),
+            username=username,
+            password=password,
+            identifier=self.broker_client_id,
+            will=lwt,
+            # logger=logger,
+        )
+
         self.topic = topic
         self.ha_topic = ha_topic
 
@@ -3516,147 +3536,198 @@ class MQTTClient:
         g.mqtt = self
 
     async def start(self):
+        itr = 0
         lp = f"{self.lp}start:"
-        # loop to keep trying to connect to the broker
-        max_retries = 10
-        for retry in range(max_retries):
-            try:
-                _ = await self.client.connect(self.broker_address)
-            except Exception as ce:
-                logger.error(
-                    "%s Connection attempt: %d failed: %s" % (lp, retry, ce),
-                    exc_info=True,
-                )
-                try:
-                    await self.client.disconnect()
-                except Exception as innr_exc:
-                    pass
-            else:
-                logger.debug("%s Connected to MQTT broker..." % lp)
-                break
-        else:
-            logger.error(
-                "%s Failed to connect to MQTT broker after %d attempts!"
-                % (lp, max_retries)
-            )
-            raise ConnectionError(
-                "Failed to connect to MQTT broker after %d attempts!" % max_retries
-            )
-
-        self.pub_queue = asyncio.Queue()
-        self.sub_queue = asyncio.Queue()
-
-        # announce to homeassistant discovery
-        await self.homeassistant_discovery()
-        logger.debug(f"{lp} Seeding all devices: offline")
-
-        # seed everything offline
-        for device_id, device in g.server.devices.items():
-            await self.pub_online(device_id, False)
-
-        self.tasks = [
-            asyncio.create_task(self.pub_worker(self.pub_queue), name="pub_worker"),
-            asyncio.create_task(self.sub_worker(self.sub_queue), name="sub_worker"),
-            asyncio.create_task(self.start_subscribing(), name="data_worker"),
-        ]
-
-    async def start_subscribing(self):
-        """Subscribe to topics and start an infinite loop to pull data from the MQTT broker."""
-        lp = f"{self.lp}start_sub:"
-        await self.client.subscribe(
-            [
-                (f"{self.topic}/set/#", QOS_1),
-                (f"{self.topic}/cmnd/#", QOS_1),
-                (f"{self.topic}/devices", QOS_1),
-                (f"{self.topic}/shutdown", QOS_1),
-                (f"{self.ha_topic}/status", QOS_1),
+        while True:
+            itr += 1
+            await self.connect()
+            await self.homeassistant_discovery()
+            if itr == 1:
+                logger.debug(f"{lp} Seeding all devices: offline")
+                for device_id, device in g.server.devices.items():
+                    await self.pub_online(device_id, False)
+            elif itr > 1:
+                # set the device online/offline and set its status
+                for device in g.server.devices.values():
+                    await self.pub_online(device.id, device.online)
+                    await self.parse_device_status(
+                        device.id,
+                        DeviceStatus(
+                            state=device.state,
+                            brightness=device.brightness,
+                            temperature=device.temperature,
+                            red=device.red,
+                            green=device.green,
+                            blue=device.blue,
+                        ),
+                    )
+            logger.debug(f"{lp} Starting MQTT listener...")
+            lp: str = f"{self.lp}rcv:"
+            topics = [
+                (f"{self.topic}/set/#", 0),
+                (f"{self.ha_topic}/status", 0),
             ]
-        )
-        logger.debug(f"{lp} Subscribed to topics, setting up MQTT message handler...")
-        try:
-            while True:
-                # Grab message when it arrives
-                message: amqtt.session.ApplicationMessage = (
-                    await self.client.deliver_message()
-                )
-                if message:
-                    # release event loop
-                    await asyncio.sleep(0)
-                    # push message onto sub_queue for processing by sub_worker task
-                    self.sub_queue.put_nowait(message)
-        except asyncio.CancelledError:
-            logger.info(f"{lp} Caught task.cancel()...")
-        except Exception as ce:
-            logger.error("%s Client exception: %s" % (lp, ce))
-        logger.debug(f"{lp} start_subscribing() finished")
+            await self.client.subscribe(topics)
+            logger.debug(f"{lp} Subscribed to MQTT topics: {[x[0] for x in topics]}. "
+                         f"Waiting for MQTT messages...")
+            try:
+                await self.start_listening()
+            except aiomqtt.MqttError as msg_err:
+                logger.warning(f"{lp} MQTT error: {msg_err}")
+                continue
+
+    async def start_listening(self):
+        """Start listening for MQTT messages on subscribed topics"""
+        lp = f"{self.lp}rcv:"
+        async for message in self.client.messages:
+            topic = message.topic
+            payload = message.payload
+            logger.debug(
+                f"{lp} Received: {topic} => {payload}"
+            )
+            _topic = topic.value.split("/")
+            # Messages sent to the cync topic
+            if _topic[0] == CYNC_TOPIC:
+                if _topic[1] == "set":
+                    async with asyncio.TaskGroup() as cmd_tg:
+                        device_id = int(_topic[2].split("-")[1])
+                        if device_id not in g.server.devices:
+                            logger.warning(
+                                f"{lp} Device ID {device_id} not found, device is disabled in config file or have you deleted or added any "
+                                f"devices recently?"
+                            )
+                            continue
+                        device = g.server.devices[device_id]
+                        if payload.startswith(b"{"):
+                            try:
+                                json_data = json.loads(payload)
+                            except Exception as e:
+                                logger.error(
+                                    "%s bad json message: {%s} EXCEPTION => %s"
+                                    % (lp, payload, e)
+                                )
+                                continue
+
+                            if "state" in json_data and "brightness" not in json_data:
+                                if json_data["state"].upper() == "ON":
+                                    logger.debug(f"{lp} setting power to ON")
+                                    cmd_tg.create_task(device.set_power(1))
+                                else:
+                                    logger.debug(f"{lp} setting power to OFF")
+                                    cmd_tg.create_task(device.set_power(0))
+                            if "brightness" in json_data:
+                                lum = int(json_data["brightness"])
+                                logger.debug(
+                                    f"{lp} setting brightness to: {lum}"
+                                )
+                                # if 5 > lum > 0:
+                                #     lum = 5
+                                cmd_tg.create_task(device.set_brightness(lum))
+                            if "color_temp" in json_data:
+                                logger.debug(
+                                    f"{lp} setting white color temp to: {json_data['color_temp']}"
+                                )
+                                cmd_tg.create_task(
+                                    device.set_temperature(
+                                        self.hassct_to_tlct(
+                                            int(json_data["color_temp"])
+                                        )
+                                    )
+                                )
+                            elif "color" in json_data:
+                                color = []
+                                for rgb in ("r", "g", "b"):
+                                    if rgb in json_data["color"]:
+                                        color.append(
+                                            int(json_data["color"][rgb])
+                                        )
+                                    else:
+                                        color.append(0)
+                                logger.debug(f"{lp} setting RGB to: {color}")
+                                cmd_tg.create_task(device.set_rgb(*color))
+                        # handle non json OFF/ON payloads
+                        elif payload.upper() == b"ON":
+                            logger.debug(f"{lp} setting power to ON (non-JSON)")
+                            cmd_tg.create_task(device.set_power(1))
+                        elif payload.upper() == b"OFF":
+                            logger.debug(f"{lp} setting power to OFF (non-JSON)")
+                            cmd_tg.create_task(device.set_power(0))
+                        else:
+                            logger.warning(
+                                f"{lp} Unknown payload: {payload}, skipping..."
+                            )
+
+                    # make sure next command doesn't come too fast
+                    await asyncio.sleep(0.025)
+                else:
+                    logger.warning(
+                        f"{lp} Unknown command: {topic} => {payload}"
+                    )
+            # messages sent to the hass mqtt topic
+            elif _topic[0] == self.ha_topic:
+                # birth / will
+                if _topic[1] == CYNC_HASS_STATUS_TOPIC:
+                    if (
+                            payload.decode().casefold()
+                            == CYNC_HASS_BIRTH_MSG.casefold()
+                    ):
+                        logger.info(
+                            f"{lp} HASS has sent MQTT BIRTH message, re-announcing device discovery, availability and status"
+                        )
+                        # register devices
+                        await self.homeassistant_discovery()
+                        await asyncio.sleep(0.025)
+                        # set the device online/offline and set its status
+                        for device in g.server.devices.values():
+                            await self.pub_online(device.id, device.online)
+                            await self.parse_device_status(
+                                device.id,
+                                DeviceStatus(
+                                    state=device.state,
+                                    brightness=device.brightness,
+                                    temperature=device.temperature,
+                                    red=device.red,
+                                    green=device.green,
+                                    blue=device.blue,
+                                ),
+                            )
+
+                    elif (
+                            payload.decode().casefold()
+                            == CYNC_HASS_WILL_MSG.casefold()
+                    ):
+                        logger.info(
+                            f"{lp} received Last Will msg from Home Assistant, HASS is offline!"
+                        )
+                    else:
+                        logger.warning(
+                            f"{lp} Unknown HASS status message: {payload}"
+                        )
+
 
     async def stop(self):
         lp = f"{self.lp}stop:"
         # set all devices offline
         logger.debug(f"{lp} Setting all devices offline...")
         for device_id, device in g.server.devices.items():
-            availability = b"offline"
-            device_uuid = f"{device.home_id}-{device.id}"
-            _ = await self.client.publish(
-                f"{self.topic}/availability/{device_uuid}", availability, qos=QOS_0
-            )
-        logger.info(f"{lp} Unsubscribing from MQTT topics...")
-        await asyncio.sleep(0)
+            await self.pub_online(device_id, False)
         try:
-            await self.client.unsubscribe(
-                [
-                    f"{self.topic}/set/#",
-                    f"{self.topic}/cmnd/#",
-                    f"{self.topic}/devices",
-                    f"{self.topic}/shutdown",
-                    f"{self.ha_topic}/status",
-                ]
-            )
             logger.debug(
-                f"{lp} Unsubscribed from topics, cancelling mqtt tasks and calling disconnect..."
+                f"{lp} Calling disconnect..."
             )
-            await self.client.cancel_tasks()
-            await self.client.disconnect()
+            await self.client.__aexit__(None, None, None)
+        except aiomqtt.MqttError as ce:
+            logger.error(
+                "%s MQTT disconnect failed: %s" % (lp, ce),
+                exc_info=True,
+            )
         except Exception as e:
-            logger.warning("%s MQTT disconnect failed: %s" % (lp, e))
+            logger.warning("%s MQTT disconnect failed: %s" % (lp, e), exc_info=True)
+        else:
+            logger.info(f"{lp} MQTT client gracefully disconnected...")
 
-        # Wait until the queue is fully processed.
-        logger.debug(f"{lp} Waiting for pub_queue to finish...")
-        await self.pub_queue.join()
-        logger.debug(f"{lp} pub_queue finished, waiting for sub_queue...")
-        await self.sub_queue.join()
-        logger.debug(f"{lp} sub_queue finished, waiting...")
-        # Cancel our worker tasks.
-        for task in self.tasks:
-            if task.done():
-                continue
-            task.cancel()
-        # Wait until all worker tasks are cancelled.
-        await asyncio.gather(*self.tasks, return_exceptions=True)
-        logger.debug(f"{lp} All tasks finished, signalling exit for loop.stop()...")
+        logger.debug(f"{lp} Signalling MQTT client shutdown complete...")
         self.shutdown_complete = True
-
-    async def pub_worker(self, *args, **kwargs):
-        """Device status reported, publish to MQTT."""
-        lp = f"{self.lp}pub:"
-        logger.debug(f"{lp} Starting pub_worker...")
-        while True:
-            try:
-                device_status: DeviceStatus
-                (device_id, device_status) = await self.pub_queue.get()
-                # logger.debug(
-                #     f"{lp} Device ID: {device_id} status received from HTTP => {device_status}"
-                # )
-                await self.parse_device_status(device_id, device_status)
-
-            except Exception as e:
-                logger.error("%s pub_worker exception: %s" % (lp, e), exc_info=True)
-                break
-            finally:
-                # Notify the queue that the "work item" has been processed.
-                self.pub_queue.task_done()
-                # logger.debug(f"{lp} pub_queue.task_done() called")
-        logger.critical(f"{lp} pub_worker finished")
 
     async def parse_device_status(
         self, device_id: int, device_status: DeviceStatus, *args, **kwargs
@@ -3726,227 +3797,19 @@ class MQTTClient:
         #     + json.dumps(mqtt_dev_state)
         # )
         try:
-            await asyncio.wait_for(
-                self.client.publish(
+            await self.client.publish(
                     tpc,
                     mqtt_dev_state,
-                    qos=QOS_0,
+                    qos=0,
+                    timeout=3.0,
                     # retain=True,
                 ),
-                timeout=3.0,
-            )
-        except asyncio.TimeoutError:
-            logger.exception(f"{lp} Timeout waiting for MQTT publish")
         except Exception as e:
             logger.exception(f"{lp} publish exception: {e}")
 
-    async def sub_worker(self, sub_queue: asyncio.Queue):
-        """Process messages from MQTT"""
-        lp: str = f"{self.lp}sub:"
-        logger.debug(f"{lp} Starting sub_worker...")
-        while True:
-            message: amqtt.session.ApplicationMessage = await sub_queue.get()
-            try:
-                if message is None:
-                    logger.error(f"{lp} message is None, skipping...")
-                else:
-                    try:
-                        packet: amqtt.mqtt.packet.MQTTPacket = message.publish_packet
-                    except Exception as e:
-                        logger.error(
-                            "%s message.publish_packet exception: %s" % (lp, e)
-                        )
-                        continue
-                    topic = packet.variable_header.topic_name.split("/")
-                    payload = packet.payload.data
-                    logger.debug(
-                        f"{lp} Received: {packet.variable_header.topic_name} => {payload}"
-                    )
-
-                    if len(topic) == 3:
-                        if topic[0] == CYNC_TOPIC:
-                            # command channel to send raw data to device
-                            if topic[1] == "cmnd":
-                                cmnd_type = topic[2]
-                                if cmnd_type == "int":
-                                    # check if commas
-                                    if b"," in payload:
-                                        # convert from string of comma separated ints to bytearray
-                                        payload = bytearray(
-                                            [int(x) for x in payload.split(b",")]
-                                        )
-                                    else:
-                                        payload = bytearray(
-                                            [int(x) for x in payload.split(b" ")]
-                                        )
-                                elif cmnd_type == "bytes":
-                                    payload = bytes(payload)
-                                elif cmnd_type == "hex":
-                                    payload = bytes.fromhex(payload.decode())
-
-                            elif topic[1] == "set":
-                                device_id = int(topic[2].split("-")[1])
-                                if device_id not in g.server.devices:
-                                    logger.warning(
-                                        f"{lp} Device ID {device_id} not found, device is disabled in config file or have you deleted or added any "
-                                        f"devices recently?"
-                                    )
-                                    continue
-                                device = g.server.devices[device_id]
-                                if payload.startswith(b"{"):
-                                    try:
-                                        json_data = json.loads(payload)
-                                    except Exception as e:
-                                        logger.error(
-                                            "%s bad json message: {%s} EXCEPTION => %s"
-                                            % (lp, payload, e)
-                                        )
-                                        continue
-
-                                    if "state" in json_data and "brightness" not in json_data:
-                                        if json_data["state"].upper() == "ON":
-                                            logger.debug(f"{lp} setting power to ON")
-                                            await device.set_power(1)
-                                        else:
-                                            logger.debug(f"{lp} setting power to OFF")
-                                            await device.set_power(0)
-                                    if "brightness" in json_data:
-                                        lum = int(json_data["brightness"])
-                                        logger.debug(
-                                            f"{lp} setting brightness to: {lum}"
-                                        )
-                                        # if 5 > lum > 0:
-                                        #     lum = 5
-                                        try:
-                                            await device.set_brightness(lum)
-                                        except Exception as e:
-                                            logger.error(
-                                                f"{lp} set_brightness exception: {e}",
-                                                exc_info=True,
-                                            )
-                                    if "color_temp" in json_data:
-                                        logger.debug(
-                                            f"{lp} setting color temp to: {json_data['color_temp']}"
-                                        )
-                                        await device.set_temperature(
-                                            self.hassct_to_tlct(
-                                                int(json_data["color_temp"])
-                                            )
-                                        )
-                                    elif "color" in json_data:
-                                        color = []
-                                        for rgb in ("r", "g", "b"):
-                                            if rgb in json_data["color"]:
-                                                color.append(
-                                                    int(json_data["color"][rgb])
-                                                )
-                                            else:
-                                                color.append(0)
-                                        logger.debug(f"{lp} setting RGB to: {color}")
-                                        await device.set_rgb(*color)
-                                # handle non json OFF/ON payloads
-                                elif payload.upper() == b"ON":
-                                    logger.debug(f"{lp} setting power to ON")
-                                    await device.set_power(1)
-                                elif payload.upper() == b"OFF":
-                                    logger.debug(f"{lp} setting power to OFF")
-                                    await device.set_power(0)
-                                else:
-                                    logger.warning(
-                                        f"{lp} Unknown payload: {payload}, skipping..."
-                                    )
-                                # make sure next command doesn't come too fast
-                                await asyncio.sleep(0.05)
-
-                    elif len(topic) == 2:
-                        if topic[0] == CYNC_TOPIC:
-                            if topic[1] == "shutdown":
-                                logger.info(
-                                    "sub worker - Shutdown requested, sending SIGTERM"
-                                )
-                                os.kill(os.getpid(), signal.SIGTERM)
-                            elif topic[1] == "devices" and payload.lower() == b"get":
-                                await self.publish_devices()
-                        elif topic[0] == self.ha_topic:
-                            if topic[1] == CYNC_HASS_STATUS_TOPIC:
-                                if (
-                                    payload.decode().casefold()
-                                    == CYNC_HASS_BIRTH_MSG.casefold()
-                                ):
-                                    logger.info(
-                                        f"{lp} HASS has announced online, re-announce device availability and status"
-                                    )
-                                    # register devices
-                                    await self.homeassistant_discovery()
-                                    await asyncio.sleep(0.07)
-                                    # set the device online/offline and set its status
-                                    for device in g.server.devices.values():
-                                        await self.pub_online(device.id, device.online)
-                                        await self.parse_device_status(
-                                            device.id,
-                                            DeviceStatus(
-                                                state=device.state,
-                                                brightness=device.brightness,
-                                                temperature=device.temperature,
-                                                red=device.red,
-                                                green=device.green,
-                                                blue=device.blue,
-                                            ),
-                                        )
-
-                                elif (
-                                    payload.decode().casefold()
-                                    == CYNC_HASS_WILL_MSG.casefold()
-                                ):
-                                    logger.info(
-                                        f"{lp} HASS is offline, received Last Will and Testament msg"
-                                    )
-                                else:
-                                    logger.warning(
-                                        f"{lp} Unknown HASS status message: {payload}"
-                                    )
-
-            except Exception as e:
-                logger.error("%s sub_worker exception: %s" % (lp, e), exc_info=True)
-            finally:
-                # Notify the queue that the "work item" has been processed.
-                sub_queue.task_done()
-                logger.debug(f"{lp} sub_queue.task_done() called...")
-        logger.critical(f"{lp} sub_worker finished")
-
-    async def publish_devices(self):
-        lp = f"{self.lp}publish_devices:"
-        for device in g.server.devices.values():
-            device_uuid = f"{device.home_id}-{device.id}"
-            device_config = {
-                "name": device.name,
-                "id": device_uuid,
-                "mac": device.mac,
-                "is_plug": device.is_plug,
-                "supports_rgb": device.supports_rgb,
-                "supports_temperature": device.supports_temperature,
-                "online": device.online,
-                "brightness": device.brightness,
-                "red": device.red,
-                "green": device.green,
-                "blue": device.blue,
-                "color_temp": self.tlct_to_hassct(device.temperature),
-            }
-            tpc = f"{self.ha_topic}/devices/{device_uuid}"
-            try:
-                logger.debug(f"{lp} {tpc}  " + json.dumps(device_config))
-                _ = await self.client.publish(
-                    tpc, json.dumps(device_config).encode(), qos=QOS_1, retain=True
-                )
-            except Exception as e:
-                logger.error(
-                    "publish devices - Unable to publish mqtt message... skipped -> %s"
-                    % e
-                )
-
     async def homeassistant_discovery(self):
         lp = f"{self.lp}hass:"
-        logger.info(f"{lp} Starting discovery...")
+        logger.info(f"{lp} Starting device discovery...")
         try:
             for device in g.server.devices.values():
                 device_uuid = f"{device.home_id}-{device.id}"
@@ -3974,10 +3837,9 @@ class MQTTClient:
                     "sw_version": ver_str,
                     "model": type_2_str[device.type] or "Unknown",
                 }
-                dev_config = {
+                dev_registry_conf = {
                     "object_id": obj_id,
-                    # "name": device.name,
-                    # set to None if only device name is relevant
+                    # set to None if only device name is relevant, this sets entity name
                     "name": None,
                     "command_topic": "{0}/set/{1}".format(self.topic, device_uuid),
                     "state_topic": "{0}/status/{1}".format(self.topic, device_uuid),
@@ -3998,22 +3860,20 @@ class MQTTClient:
                 if device.is_plug:
                     dev_type = "switch"
                 else:
-                    dev_config.update({"brightness": True, "brightness_scale": 100})
+                    dev_registry_conf.update({"brightness": True, "brightness_scale": 100})
                     if device.supports_temperature or device.supports_rgb:
-                        # hass has deprecated color-mode in device config
-                        # light_config["color_mode"] = True
-                        dev_config["supported_color_modes"] = []
+                        dev_registry_conf["supported_color_modes"] = []
                         if device.supports_temperature:
-                            dev_config["supported_color_modes"].append("color_temp")
-                            dev_config["max_mireds"] = self.hass_maxct
-                            dev_config["min_mireds"] = self.hass_minct
+                            dev_registry_conf["supported_color_modes"].append("color_temp")
+                            dev_registry_conf["max_mireds"] = self.hass_maxct
+                            dev_registry_conf["min_mireds"] = self.hass_minct
                         if device.supports_rgb:
-                            dev_config["supported_color_modes"].append("rgb")
+                            dev_registry_conf["supported_color_modes"].append("rgb")
 
                 tpc = tpc_str_template.format(self.ha_topic, dev_type, device_uuid)
                 try:
                     _ = await self.client.publish(
-                        tpc, json.dumps(dev_config).encode(), qos=QOS_1, retain=True
+                        tpc, json.dumps(dev_registry_conf).encode(), qos=0, retain=False
                     )
                 except Exception as e:
                     logger.error(
@@ -4142,8 +4002,7 @@ if __name__ == "__main__":
             signal.SIGTERM, partial(cync.signal_handler, signal.SIGTERM)
         )
         try:
-            cync.start()
-            cync.loop.run_forever()
+            cync.loop.run_until_complete(cync.start())
         except KeyboardInterrupt as ke:
             logger.info("main: Caught KeyboardInterrupt in exception block!")
             raise KeyboardInterrupt from ke
@@ -4154,6 +4013,11 @@ if __name__ == "__main__":
                 exc_info=True,
             )
         finally:
+            if g and g.mqtt and g.mqtt.client:
+                try:
+                    loop.run_until_complete(g.mqtt.client.__aexit__(None, None, None))
+                except aiomqtt.MqttError as ce:
+                    pass
             if cync and not cync.loop.is_closed():
                 logger.debug("main: Closing loop...")
                 cync.loop.close()
