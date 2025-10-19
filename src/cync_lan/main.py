@@ -70,7 +70,7 @@ class CyncLAN:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __get_event_loop():
+    def __get_event_loop(self):
         try:
             loop = asyncio.get_event_loop()
             if loop.is_closed(): raise RuntimeError("Event loop is closed")
