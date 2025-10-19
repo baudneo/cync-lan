@@ -70,11 +70,21 @@ class CyncLAN:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    def __get_event_loop(self):
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed(): raise RuntimeError("Event loop is closed")
+            return loop
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+
     def __init__(self):
         lp = f"{self.lp}init:"
         check_for_uuid()
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-        g.loop = asyncio.get_event_loop()
+        g.loop = self.__get_event_loop()
         logger.debug(
             f"{lp} CyncLAN (version: {CYNC_VERSION}) stack initializing, "
             f"setting up event loop signal handlers for SIGINT & SIGTERM..."
