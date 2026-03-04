@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import ssl
 from typing import Dict, Optional, Union
 
@@ -139,8 +140,9 @@ class nCyncServer:
         from_pkt: Optional[str] = None,
     ):
         """Extracted status packet parsing, handles mqtt publishing and device state changes."""
+        ts = time.time()
         node_id = e_state.node_id
-        node = g.ncync_server.devices.get(node_id)
+        node: CyncNode = g.ncync_server.devices.get(node_id)
         if node is None:
             logger.warning(
                 f"Device ID: {node_id} not found in devices! device may be disabled in config file or you need to "
@@ -160,31 +162,31 @@ class nCyncServer:
             # At first, I interpreted it as the device losing mains power or network because I noticed it from devices that had happened to.
             # Using that byte as master online/offline results in false positives, Therefore:
             # todo: this does not signify online/offline, but being offline/online can set this byte.
-            logger.info(
-                f"{node.lp} '{e_state.name}' seems to have stale state data: {e_state}"
-            ) if node.metadata.supported else None
-            # if node.online:
-            #     node.online = False
-            #     logger.warning(
-            #         f'{self.lp} Device ID: {node_id} ("{node.name}") hasnt sent any comms for a bit '
-            #         f", setting offline..."
-            #     )
-        node.online = True
-        # if node.has_state_changed(e_state) is False:
-        #     (
-        #         logger.debug(f"{node.lp} NO CHANGES TO DEVICE STATUS")
-        #         if CYNC_RAW is True
-        #         else None
-        #     )
-        node.endpoints[e_state.id] = e_state
-        await g.mqtt_client.parse_endpoint_state(e_state, from_pkt=from_pkt)
-        g.ncync_server.devices[node.id] = node
+            if node.metadata.supported:
+                logger.info(
+                    f"{node.lp} '{e_state.name}' seems to have stale STATE data: {e_state}"
+                )
+                # how many are too many? we also check node.last_valid_state_ts
+                if node.num_late_states > 3:
+                    if (ts - node.last_valid_state_ts) >= 30:
+                        # more than 3 stales reported and mroe than 30 seconds since a valid state was received
+
+                        node.online = False
+                        logger.warning(f"{node.lp} ")
+                node.num_late_states += 1
+
+        else:
+            # we have a valid state, I think, lol
+            node.last_valid_state_ts = ts
+            node.num_late_states = 0
+            node.online = True
+            node.endpoints[e_state.id] = e_state
+            await g.mqtt_client.parse_endpoint_state(e_state, from_pkt=from_pkt)
+            g.ncync_server.devices[node.id] = node
 
     async def start(self):
         lp = f"{self.lp}start:"
-        logger.debug(
-            f"{lp} Creating SSL context - key: {self.key_file}, cert: {self.cert_file}"
-        )
+        logger.debug(f"{lp} Creating SSL context - key: {self.key_file}, cert: {self.cert_file}")
         try:
             self.ssl_context = await self.create_ssl_context()
             self._server = await asyncio.start_server(

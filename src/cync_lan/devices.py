@@ -73,6 +73,8 @@ class CyncNode:
     _online: bool = False
     metadata: Optional[DeviceTypeInfo] = None
     endpoints: Optional[Dict[int, EndpointState]] = None
+    last_valid_state_ts: float = 0
+    num_late_states: int = 0
 
     def __init__(
         self,
@@ -1961,9 +1963,8 @@ class CyncTCPDevice:
                                                                     )
                                                                     else 0
                                                                 )
-                                                                dev_name = f"'{node_repr.name} - {e_state_.name}' (ID: {dev_id}/{e_state_.id})"
                                                                 logger.debug(
-                                                                    f"{lp} Mesh state for {e_state_}"
+                                                                    f"{lp} Mesh state for {node_repr.name} - {e_state_}"
                                                                 )
                                                                 await g.ncync_server.handle_endpoint(
                                                                     e_state_,
@@ -2212,7 +2213,7 @@ class CyncTCPDevice:
         rand_bytes += bytes([0x00])
         self.xa3_msg_id += random.getrandbits(8).to_bytes(1, "big")
         a3_packet += rand_bytes
-        logger.debug(f"{self.lp} Sending 0xa3 (want to control) packet...")
+        logger.debug(f"{self.lp} Sending 0xA3 (want to control) packet...")
         await self.write(a3_packet)
         self.ready_to_control = True
         # send mesh info request
