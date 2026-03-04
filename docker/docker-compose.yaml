@@ -22,7 +22,7 @@ services:
       # to export devices from the cloud account, the export web app needs to be enabled and the cync username/password configured.
       # if you only want to use the LAN bridge functionality and don't need to export devices from the cloud account,
       # you can disable the exporter with this variable. If the exporter is enabled, you must configure the account username and password variables as well.
-      CYNC_ENABLE_EXPORTER: no
+#      CYNC_ENABLE_EXPORTER: no
       # Credentials are required for the export web app to access your Cync account and retrieve device information,
       # but they are not required for the main LAN bridge functionality.
       CYNC_ACCOUNT_USERNAME: "cync-account-email@gmail.com"
