@@ -29,6 +29,7 @@ from cync_lan.const import (
     DEVICE_LWT_MSG,
     FACTORY_EFFECTS_BYTES,
     ORIGIN_STRUCT,
+    MQTT_DEBUG,
 )
 from cync_lan.devices import CyncNode
 from cync_lan.metadata.model_info import device_type_map
@@ -100,7 +101,6 @@ class MQTTClient:
                 self._connected = await self.connect()
                 if self._connected:
                     # ["state_topic"] = f"{self.topic}/status/bridge/mqtt_client/connected"
-                    # TODO: publish MQTT message indicating the MQTT client is connected
                     await self.publish(
                         f"{self.topic}/status/bridge/mqtt_client/connected",
                         "ON".encode(),
@@ -378,11 +378,11 @@ class MQTTClient:
                             if str_payload.casefold() == "on":
                                 logger.debug(
                                     f"{lp} setting power to ON (non-JSON) for: {node.id}{' [sub ID: {}]'.format(sub_id) if sub_id else ''}"
-                                )
+                                ) if MQTT_DEBUG else None
 
                                 tasks.append(node.set_power(1, sub_id))
                             elif str_payload.casefold() == "off":
-                                logger.debug(f"{lp} setting power to OFF (non-JSON)")
+                                logger.debug(f"{lp} setting power to OFF (non-JSON)")  if MQTT_DEBUG else None
                                 tasks.append(node.set_power(0, sub_id))
                         else:
                             logger.warning(
@@ -434,7 +434,6 @@ class MQTTClient:
             for device_id, device in g.ncync_server.devices.items():
                 await self.pub_online(device_id, False)
             # ["state_topic"] = f"{self.topic}/status/bridge/mqtt_client/connected"
-            # TODO: publish MQTT message indicating the MQTT client is connected
             await self.publish(
                 f"{self.topic}/status/bridge/mqtt_client/connected",
                 "OFF".encode(),
@@ -591,7 +590,7 @@ class MQTTClient:
             tgt_id = f"{node.hass_id}" if not sub_id else f"{node.hass_id}-{sub_id}"
             logger.debug(
                 f"{lp} Sending {msg} for device: '{node.name}' (ID: {node.id}){" '{}' [sub ID: {}]".format(node.endpoints[sub_id].name, sub_id) if sub_id else ''}"
-            )
+            )  if MQTT_DEBUG else None
             tpc = f"{self.topic}/status/{tgt_id}"
             try:
                 await self.client.publish(
@@ -621,7 +620,7 @@ class MQTTClient:
         if from_pkt:
             lp = f"{lp}{from_pkt}:"
         if node_id not in g.ncync_server.devices:
-            logger.error(
+            logger.warning(
                 f"{lp} Device ID {node_id} not found! Device may be disabled in config file or "
                 f"you may need to re-export devices from your Cync account"
             )
