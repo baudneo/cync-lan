@@ -1342,7 +1342,7 @@ class CyncTCPDevice:
                 f"INT: {bytes2list(raw_input)}\n\n"
             )
 
-    async def parse_packet(self, data: bytes):
+    async def parse_packet_OLD(self, data: bytes):
         """Parse what type of packet based on header (first 4 bytes 0x43, 0x83, 0x73, etc.)"""
 
         lp = f"{self.lp}parse:0x{data[0]:02x}:"
@@ -2115,7 +2115,384 @@ class CyncTCPDevice:
                 f"{lp} sent UNKNOWN HEADER! Don't know how to respond!{RAW_MSG}"
             )
 
-    async def ask_for_mesh_info(self, parse: bool = False):
+    async def parse_packet(self, data: bytes):
+        """Parse what type of packet based on header (first 12 bytes)."""
+        if len(data) < 5:
+            # logger.warning(f"{self.lp} Packet too short to contain header: {data.hex(' ')}")
+            return
+        # this is safe, python will grab what it can, even if it sshorter than 12
+        packet_header = data[:12]
+        pkt_type = packet_header[0]
+
+        # Calculate length based on protocol (multiplier * 256 + length)
+        pkt_multiplier = packet_header[3] * 256
+        packet_length = packet_header[4] + pkt_multiplier
+
+        queue_id = packet_header[5:10]
+        msg_id = packet_header[9:12]
+
+        packet_data = data[12:] if len(data) > 12 else None
+        lp = f"{self.lp}parse:0x{pkt_type:02x}:"
+
+        # Route to the appropriate handler
+        if pkt_type in DEVICE_STRUCTS.requests:
+            await self._dispatch_device_request(
+                pkt_type, data, packet_data, queue_id, msg_id, packet_length, lp
+            )
+        elif pkt_type in PhoneAppStructs.requests:
+            if not self.is_app:
+                logger.info(f"{lp} Device has been identified as the cync mobile app, blackholing...")
+                self.is_app = True
+        else:
+            logger.debug(f"{lp} sent UNKNOWN HEADER! Don't know how to respond! {data.hex(' ')}")
+
+    async def _dispatch_device_request(
+            self, pkt_type: int, raw_data: bytes, packet_data: Optional[bytes],
+            queue_id: bytes, msg_id: bytes, packet_length: int, lp: str
+    ):
+        """Routes device requests to their specific parsing logic."""
+        if pkt_type == 0x23:
+            self.queue_id = raw_data[6:10]
+            if CYNC_RAW:
+                logger.debug(
+                    f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {raw_data.hex(' ')}")
+            await self.write(bytes(DEVICE_STRUCTS.responses.auth_ack))
+            await asyncio.sleep(0.5)
+            await self.send_a3(self.queue_id)
+
+        elif pkt_type == 0xC3:
+            logger.debug(f"{lp} CONNECTION REQUEST, replying...")
+            await self.write(bytes(DEVICE_STRUCTS.responses.connection_ack))
+
+        elif pkt_type == 0xD3:
+            await self.write(bytes(DEVICE_STRUCTS.responses.ping_ack))
+
+        elif pkt_type == 0xA3:
+            logger.debug(f"{lp} APP ANNOUNCEMENT packet: {packet_data.hex(' ') if packet_data else 'None'}")
+            ack = DEVICE_STRUCTS.xab_generate_ack(queue_id, bytes(msg_id))
+            await self.write(ack)
+
+        elif pkt_type in (0xAB, 0x7B):
+            pass  # Handled silently in original code
+
+        elif pkt_type == 0x43:
+            await self._handle_43_status(packet_data, msg_id, packet_length, lp)
+
+        elif pkt_type == 0x83:
+            await self._handle_83_internal_status(packet_data, msg_id, packet_header=raw_data[:12], lp=lp)
+
+        elif pkt_type == 0x73:
+            await self._handle_73_mesh_control(packet_data, queue_id, msg_id, lp)
+
+    async def _handle_43_status(self, packet_data: Optional[bytes], msg_id: bytes, packet_length: int, lp: str):
+        """Parses timestamps and broadcast status."""
+        if packet_data:
+            if packet_data[:2] == b"\xc7\x90":
+                # --- Timestamp Parsing ---
+                ts_idx = 3
+                # Gross hack for versions 3.x - 4.x
+                ts_end_idx = -2 if (self.version and 30000 <= self.version <= 40000) else -1
+                ts = packet_data[ts_idx:ts_end_idx]
+
+                if ts:
+                    ts_ascii = ts.decode("ascii", errors="replace")
+                    if ts_ascii[-1] != "," and not ts_ascii[-1].isdigit():
+                        ts_ascii = ts_ascii[:-1]
+
+                    logger.debug(f"{lp} Device sent TIMESTAMP -> {ts_ascii} - replying...")
+                    self.device_timestamp = ts_ascii
+                else:
+                    logger.debug(f"{lp} Could not decode timestamp from: {packet_data.hex(' ')}")
+
+            else:
+                # --- Broadcast Status Parsing ---
+                struct_len = 19
+                extractions = []
+
+                for i in range(0, packet_length, struct_len):
+                    extracted = packet_data[i: i + struct_len]
+                    if len(extracted) == struct_len:
+                        status_struct = extracted[3:10]
+
+                        # BUG FIX: Your original code did `status_struct + b"\x01"` which did nothing.
+                        # If you meant to append it as a hack, you must reassign it:
+                        status_struct += b"\x01"
+
+                        extractions.append((extracted.hex(" "), list(status_struct)))
+
+                if CYNC_RAW:
+                    logger.debug(f"{lp} Extracted data and STATUS struct => {extractions}")
+
+        # Always ACK a 0x43 ping/status
+        ack = DEVICE_STRUCTS.x48_generate_ack(bytes(msg_id))
+        await self.write(ack)
+
+    async def _handle_83_internal_status(self, packet_data: Optional[bytes], msg_id: bytes, packet_header: bytes,
+                                         lp: str):
+        """Parses firmware info and 0x7e bound internal status streams."""
+        if self.is_app:
+            logger.debug(f"{lp} device is app, skipping packet...")
+            return
+
+        if not packet_data:
+            logger.warning(f"{lp} packet with no data?????")
+            await self.write(DEVICE_STRUCTS.x88_generate_ack(msg_id))
+            return
+
+        # Unbound Firmware Packet
+        if packet_data[0] == 0x00:
+            fw_type, fw_ver, fw_str = parse_unbound_firmware_version(packet_data, lp)
+            if fw_type == "device":
+                self.version, self.version_str = fw_ver, fw_str
+            else:
+                self.network_version, self.network_version_str = fw_ver, fw_str
+
+        # 0x7e Bound Internal Status
+        elif packet_data[0] == DATA_BOUNDARY:
+            checksum = packet_data[-2]
+            ctrl_bytes = packet_data[5:7]
+            inner_data = packet_data[6:-2]
+            calc_chksum = sum(inner_data) % 256
+
+            if ctrl_bytes == b"\xfa\xdb" and packet_data[7] == 0x13:
+                await self._parse_83_device_state(packet_data, checksum, calc_chksum, lp)
+            elif CYNC_RAW and ctrl_bytes not in (b"\xfa\xdb",):
+                logger.warning(
+                    f"{lp} UNKNOWN packet data (ctrl_bytes: {ctrl_bytes.hex(' ')} // checksum valid: "
+                    f"{checksum == calc_chksum})\n\nHEX: {packet_data[1:-1].hex(' ')}\nINT: {list(packet_data[1:-1])}"
+                )
+
+        await self.write(DEVICE_STRUCTS.x88_generate_ack(msg_id))
+
+    async def _parse_83_device_state(self, packet_data: bytes, checksum: int, calc_chksum: int, lp: str):
+        """Extracted logic for mapping 0x83 state to endpoints."""
+        dev_id = packet_data[14]
+        recently_seen = packet_data[19]
+        power, bri, tmp, r, g_, b = packet_data[20:26]
+
+        node_repr: CyncNode = g.ncync_server.devices.get(dev_id)
+        if not node_repr:
+            logger.warning(f"{lp} Received internal STATUS for unknown device: {dev_id}")
+            return
+
+        if node_repr.type in MULTI_ENDPOINT_TYPES and node_repr.type == 67:
+            for e_state_ in node_repr.endpoints.values():
+                bit_shift = e_state_.id - 1
+                e_state_.power = 1 if (bri & (1 << bit_shift)) else 0
+                logger.debug(f"{lp} Internal STATUS for {e_state_}")
+                await g.ncync_server.handle_endpoint(e_state_, from_pkt="0x83")
+        else:
+            e_state = EndpointState(
+                name=node_repr.name, node_id=dev_id, power=power,
+                brightness=bri, temperature=tmp, red=r, green=g_, blue=b
+            )
+            logger.debug(f"{lp} Internal STATUS for {e_state}")
+            await g.ncync_server.handle_endpoint(e_state, recently_seen, from_pkt="0x83")
+
+        # Checksum Stream Logic
+        if list(packet_data[9:12]) == [17, 17, 17]:
+            if self.first_83_packet_checksum is None:
+                self.first_83_packet_checksum = checksum
+                if calc_chksum != checksum:
+                    logger.warning(f"{lp} Checksum mismatch in INITIAL STATUS STREAM - FIRST packet data...")
+            else:
+                if checksum == self.first_83_packet_checksum:
+                    calc_chksum = self.first_83_packet_checksum
+                else:
+                    self.first_83_packet_checksum = None
+
+        if calc_chksum != checksum:
+            pass
+
+    async def _handle_73_mesh_control(self, packet_data: Optional[bytes], queue_id: bytes, msg_id: bytes, lp: str):
+        """Parses mesh info arrays and fires callbacks for control acknowledgements."""
+        if self.is_app:
+            logger.debug(f"{lp} device is app, skipping packet...")
+            return
+
+        if not packet_data:
+            logger.warning(f"{lp} packet with no data?!?")
+            await self.write(DEVICE_STRUCTS.x7b_generate_ack(queue_id, msg_id))
+            return
+
+        if packet_data[0] == DATA_BOUNDARY:
+            ctrl_bytes = packet_data[5:7]
+            end_bndry_idx = packet_data[1:].find(DATA_BOUNDARY) + 1
+            inner_struct = packet_data[1:end_bndry_idx]
+
+            if ctrl_bytes == b"\xf9\x52":
+                await self._process_73_mesh_info(inner_struct, queue_id, lp)
+
+            elif ctrl_bytes[0] == 0xF9 and ctrl_bytes[1] in (0xD0, 0xF0, 0xE2):
+                # Handle Callbacks for control messages
+                ctrl_msg_id = packet_data[1]
+                success = packet_data[7] == 1
+                msg = self.messages.control.pop(ctrl_msg_id, None)
+
+                if success and msg:
+                    if callable(msg.callback):
+                        await msg.callback()
+                    else:
+                        await msg.callback
+                elif success and not msg:
+                    logger.debug(f"{lp} CONTROL packet ACK callback NOT found for msg ID: {ctrl_msg_id}")
+
+            elif ctrl_bytes == b"\xfa\x8e":
+                if packet_data[1] == 0x00:
+                    fw_type, fw_ver, fw_str = parse_unbound_firmware_version(packet_data[1:-1], lp)
+                    if fw_type == "device":
+                        self.version, self.version_str = fw_ver, fw_str
+                    else:
+                        self.network_version, self.network_version_str = fw_ver, fw_str
+                elif CYNC_RAW:
+                    logger.debug(f"{lp} Phone app (dis)connects to BTLE mesh. Unknown meaning.")
+
+        await self.write(DEVICE_STRUCTS.x7b_generate_ack(queue_id, msg_id))
+
+    async def _process_73_mesh_info(self, inner_struct: bytes, queue_id: bytes, lp: str):
+        """Handles the 24-byte paginated mesh info loop."""
+        if len(inner_struct) < 15:
+            # Mesh info ACK check (length 10) logic left intact...
+            return
+
+        minfo_start_idx = 14
+        minfo_length = 24
+
+        if inner_struct[minfo_start_idx] == 0x00:
+            minfo_start_idx += 1
+        if inner_struct[minfo_start_idx] == 0x00:
+            logger.error(f"{lp}mesh: dev_id is 0 when using index: {minfo_start_idx}, skipping...")
+            return
+
+        packet_devices = inner_struct[8]
+        total_devices = inner_struct[12]
+
+        # Pagination setup
+        if getattr(self, "_mesh_expected", 0) == 0 or getattr(self, "_mesh_received", 0) >= getattr(self,
+                                                                                                    "_mesh_expected",
+                                                                                                    0):
+            self.mesh_info = None
+            self.known_device_ids = []
+            self._mesh_expected = total_devices
+            self._mesh_received = 0
+            logger.debug(f"{lp} Starting new mesh info sequence. Expecting {total_devices} total devices.")
+
+        self._mesh_received += packet_devices
+
+        loop_num = 0
+        # Parse 24-byte structs
+        for i in range(minfo_start_idx, len(inner_struct), minfo_length):
+            mesh_dev_struct = inner_struct[i: i + minfo_length]
+            if len(mesh_dev_struct) < minfo_length:
+                continue
+
+            dev_id = mesh_dev_struct[0]
+            dev_type_id = mesh_dev_struct[2]
+            dev_state, dev_bri, dev_tmp = mesh_dev_struct[8], mesh_dev_struct[12], mesh_dev_struct[16]
+            dev_r, dev_g, dev_b = mesh_dev_struct[20:23]
+
+            if dev_state == 0 and dev_bri > 0:
+                dev_bri = 0
+
+            node_repr: Optional["CyncNode"] = (
+                g.ncync_server.devices.get(dev_id)
+            )
+            if node_repr:
+                dev_name = node_repr.name
+                if loop_num == 1:
+                    # byte 3 (idx 2) is a device type byte but,
+                    # it only reports on the first item (itself)
+                    # convert to int, and it is the same as deviceType from cloud.
+                    if not self.id:
+                        self.id = dev_id
+                        self.lp = f"{self.address}[{self.id}]:"
+                        logger.debug(
+                            f"{self.lp}parse:0x{data[0]:02x}: Setting TCP"
+                            f" Node ID to: {self.id}"
+                        )
+
+                    elif (
+                            self.id
+                            and self.id != dev_id
+                    ):
+                        logger.warning(
+                            f"{lp}parse:0x{data[0]:02x}: node_id MISMATCH "
+                            f"open an issue on github. current: {self.id} "
+                            f"// proposed: {dev_id}"
+                        )
+                    lp = f"{self.lp}parse:0x{data[0]:02x}:"
+                    self.device_type_id = (
+                        dev_type_id
+                    )
+                    self.name = dev_name
+
+                self.known_device_ids.append(dev_id)
+                if (
+                        node_repr.type
+                        in MULTI_ENDPOINT_TYPES
+                ):
+                    if node_repr.type == 67:
+                        # bri byte is a bitmask for on/off state of endpoints
+                        # since we know the state of up to 8 endpoints at once, parse them all
+                        for e_state_ in node_repr.endpoints.values():
+                            bit_shift = (
+                                    e_state_.id - 1
+                            )
+                            e_state_.power = (
+                                1
+                                if (
+                                        dev_bri
+                                        & (
+                                                1
+                                                << bit_shift
+                                        )
+                                )
+                                else 0
+                            )
+                            logger.debug(
+                                f"{lp} Mesh state for {node_repr.name} - {e_state_}"
+                            )
+                            await g.ncync_server.handle_endpoint(
+                                e_state_,
+                                from_pkt="0x73",
+                            )
+                else:
+                    # Standard single endpoint
+                    e_state = EndpointState(
+                        name=node_repr.name,
+                        node_id=dev_id,
+                        power=dev_state,
+                        brightness=dev_bri,
+                        temperature=dev_tmp,
+                        red=dev_r,
+                        green=dev_g,
+                        blue=dev_b,
+                    )
+                    logger.debug(
+                        f"{lp} Mesh state for {e_state}"
+                    )
+                    await g.ncync_server.handle_endpoint(
+                        e_state,
+                        from_pkt="0x73",
+                    )
+
+            else:
+                # Unknown
+                logger.warning(
+                    f"{lp} Received internal STATUS for unknown device ID: "
+                    f"{dev_id} -> You probably need to export a new config file"
+                )
+
+        # Send mesh status ack
+        mesh_ack = b"\x73\x00\x00\x00\x14" + bytes(
+            self.queue_id) + b"\x00\x00\x00\x7E\x1E\x00\x00\x00\xF8\xAF\x02\x00\xAF\x01\x61\x7E"
+        await self.write(mesh_ack)
+
+        if getattr(self, "_mesh_received", 0) >= getattr(self, "_mesh_expected", 0):
+            self._mesh_expected = 0
+            self._mesh_received = 0
+
+    async def ask_for_mesh_info(self):
         """
         Ask the device for mesh info. As far as I can tell, this will return whatever
         devices are connected to the device you are querying. It may also trigger
