@@ -151,9 +151,9 @@ CYNC_UUID_PATH: str = f"{CYNC_CONFIG_DIR}/uuid.txt"
 CYNC_CLOUD_AUTH_PATH: str = f"{CYNC_CONFIG_DIR}/.cloud_auth.yaml"
 
 CYNC_SSL_CERT: str = os.environ.get(
-    "CYNC_DEVICE_CERT", f"{CYNC_BASE_DIR}/certs/cert.pem"
+    "CYNC_DEVICE_CERT", f"/root/cync-lan/certs/cert.pem"
 )
-CYNC_SSL_KEY: str = os.environ.get("CYNC_DEVICE_KEY", f"{CYNC_BASE_DIR}/certs/key.pem")
+CYNC_SSL_KEY: str = os.environ.get("CYNC_DEVICE_KEY", f"/root/cync-lan/certs/key.pem")
 
 CYNC_BRIDGE_DEVICE_REGISTRY_CONF: dict = {}
 
