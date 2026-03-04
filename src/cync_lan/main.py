@@ -96,8 +96,7 @@ class CyncLAN:
         tasks = []
 
         if cfg_file.exists():
-            node_dict = await parse_config(cfg_file)
-            g.ncync_server = nCyncServer(node_dict)
+            g.ncync_server = nCyncServer(await parse_config(cfg_file))
             g.mqtt_client = MQTTClient()
             g.ncync_server.start_task = n_start = asyncio.Task(
                 g.mqtt_client.start(), name=MQTT_CLIENT_START_TASK_NAME
@@ -121,7 +120,6 @@ class CyncLAN:
 
         try:
             # the components start() methods have long running tasks of their own
-            # TODO: better way to control what tasks are doing what?
             await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
             logger.exception(f"{lp} Exception occurred while starting services: {e}")
@@ -132,7 +130,6 @@ class CyncLAN:
     async def stop(self):
         """Stop the nCync server, MQTT client, and Export server."""
         lp = f"{self.lp}stop:"
-        # send sigterm
         logger.info(f"{lp} Bringing software stack down using SIGTERM...")
         send_sigterm()
 
@@ -141,14 +138,6 @@ def parse_cli():
     parser = argparse.ArgumentParser(description="Cync LAN Server")
 
     parser.add_argument("-V", "--version", action="version", version=CYNC_VERSION)
-
-    parser.add_argument(
-        "--export-server",
-        "--enable-export-server",
-        action="store_true",
-        dest="export_server",
-        help="Enable the Cync Export Server",
-    )
 
     parser.add_argument(
         "-D",
