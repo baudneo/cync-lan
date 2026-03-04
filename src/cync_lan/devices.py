@@ -1139,7 +1139,6 @@ class CyncTCPDevice:
         self.last_xc3_request: Optional[float] = None
         self.messages = Messages()
         self.mesh_info: Optional[MeshInfo] = None
-        self.parse_mesh_status = False
         self.id: Optional[int] = None
         self.xa3_msg_id: bytes = bytes([0x00, 0x00, 0x00])
         self.queue_id: bytes = b""
@@ -1980,10 +1979,6 @@ class CyncTCPDevice:
                                             logger.exception(
                                                 f"{lp} MESH INFO for loop EXCEPTION: {e}"
                                             )
-                                        if self.parse_mesh_status is True:
-                                            logger.debug(
-                                                f"{lp} Parsing initial connection device status data"
-                                            )
                                         # Send mesh status ack
                                         # 73 00 00 00 14 2d e4 b5 d2 15 2d 00 7e 1e 00 00
                                         #  00 f8 {af 02 00 af 01} 61 7e
@@ -2018,7 +2013,6 @@ class CyncTCPDevice:
                                                 f"{lp} Finished receiving all {getattr(self, '_mesh_expected', 0)} "
                                                 f"devices in the mesh."
                                             )
-                                            self.parse_mesh_status = False
                                             self._mesh_expected = 0
                                             self._mesh_received = 0
                             else:
@@ -2165,19 +2159,15 @@ class CyncTCPDevice:
         if CYNC_RAW is True:
             _rdmsg = f"\nBYTES: {mesh_info_data}\nHEX: {mesh_info_data.hex(' ')}\nINT: {bytes2list(mesh_info_data)}"
         logger.debug(f"{lp} Requesting ALL device(s) status{_rdmsg}")
-        if parse is True:
-            self.parse_mesh_status = True
         try:
             await self.write(mesh_info_data)
         except TimeoutError as to_exc:
             logger.error(
                 f"{lp} Requesting ALL device(s) status timed out, likely powered off"
             )
-            self.parse_mesh_status = False
             raise to_exc
         except Exception as e:
             logger.error(f"{lp} EXCEPTION: {e}", exc_info=True)
-            self.parse_mesh_status = False
 
     async def send_a3(self, q_id: bytes):
         a3_packet = bytes([0xA3, 0x00, 0x00, 0x00, 0x07])
@@ -2192,7 +2182,7 @@ class CyncTCPDevice:
         self.ready_to_control = True
         # send mesh info request
         await asyncio.sleep(1.5)
-        await self.ask_for_mesh_info(True)
+        await self.ask_for_mesh_info()
 
     async def callback_cleanup_task_old(self):
         """Go through the callback queue and remove any callbacks that are older than 5 minutes"""
