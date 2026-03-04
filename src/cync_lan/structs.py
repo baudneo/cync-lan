@@ -63,6 +63,7 @@ class GlobalObject:
     env: GlobalObjEnv = GlobalObjEnv()
     uuid: Optional[uuid.UUID] = None
     cli_args: Optional[Namespace] = None
+    _last_valid_state_ts: float = 0.0
 
     _instance: Optional["GlobalObject"] = None
 
@@ -70,6 +71,18 @@ class GlobalObject:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
+
+    @property
+    def last_valid_state_ts(self):
+        return self._last_valid_state_ts
+
+    @last_valid_state_ts.setter
+    def last_valid_state_ts(self, value):
+        self._last_valid_state_ts = value
+        # TODO: send MQTT data, this can be used to trigger a restart
+        # if self.mqtt_client:
+        #     asyncio.create_task(self.mqtt_client.publish, "")
+
 
     def reload_env(self):
         """Re-evaluate environment variables to update constants."""
