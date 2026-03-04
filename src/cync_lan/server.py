@@ -42,8 +42,8 @@ class nCyncServer:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, node_map: Dict[int, CyncNode]):
-        self.devices: Dict[int, CyncNode] = node_map
+    def __init__(self, node_map: Dict[int, "CyncNode"]):
+        self.devices: Dict[int, "CyncNode"] = node_map
         self.tcp_conn_attempts: dict = {}
         self.ssl_context: Optional[ssl.SSLContext] = None
         self.host: str = CYNC_SRV_HOST
@@ -134,55 +134,49 @@ class nCyncServer:
         return ssl_context
 
     async def handle_endpoint(
-        self,
-        e_state: EndpointState,
-        is_recent: bool = True,
-        from_pkt: Optional[str] = None,
+            self,
+            e_state: EndpointState,
+            is_recent: bool = True,
+            from_pkt: Optional[str] = None,
     ):
-        """Extracted status packet parsing, handles mqtt publishing and device state changes."""
+        """Extracted status packet parsing, handles MQTT publishing and device state changes."""
         ts = time.time()
         node_id = e_state.node_id
         node: CyncNode = g.ncync_server.devices.get(node_id)
-        if node is None:
+        if not node:
             logger.warning(
-                f"Device ID: {node_id} not found in devices! device may be disabled in config file or you need to "
-                f"re-export your Cync account devices!"
+                f"Device ID: {node_id} not found in devices! Device may be disabled in "
+                f"config file or you need to re-export your Cync account devices!"
             )
             return
-        power = e_state.power
-        brightness = e_state.brightness
-        temp = e_state.temperature
-        r = e_state.red
-        _g = e_state.green
-        b = e_state.blue
 
         if not is_recent:
-            # when the TCP device replies to a mesh info request, it dumps its own current state and then what it knows about other devices.
-            # there is a byte in those states, that seems to mean (I havent received state data for this BTLE device recently).
-            # At first, I interpreted it as the device losing mains power or network because I noticed it from devices that had happened to.
-            # Using that byte as master online/offline results in false positives, Therefore:
-            # todo: this does not signify online/offline, but being offline/online can set this byte.
-            if node.metadata.supported:
-                logger.info(
-                    f"{node.lp} '{e_state.name}' seems to have stale STATE data: {e_state}"
-                )
-                # how many are too many? we also check node.last_valid_state_ts
-                if node.num_late_states > 3:
-                    if (ts - node.last_valid_state_ts) >= 30:
-                        # more than 3 stales reported and mroe than 30 seconds since a valid state was received
+            if not node.metadata.supported:
+                return
 
-                        node.online = False
-                        logger.warning(f"{node.lp} ")
-                node.num_late_states += 1
+            logger.debug(f"{node.lp} '{e_state.name}' seems to have stale STATE data.")
+            node.num_late_states += 1
+            tcp_count = len(self.tcp_devices) or 1
+            allowed_late = 3 + tcp_count
+            time_since_valid = ts - node.last_valid_state_ts
+            if node.num_late_states > allowed_late and time_since_valid >= 30.0:
+                if node.online:
+                    node.online = False
+                    logger.warning(
+                        f"{node.lp} '{e_state.name}' marked OFFLINE "
+                        f"(stale for {time_since_valid:.1f}s)"
+                    )
+            return
 
-        else:
-            # we have a valid state, I think, lol
-            node.last_valid_state_ts = ts
-            node.num_late_states = 0
+        if not node.online:
+            logger.info(f"{node.lp} '{e_state.name}' is back ONLINE.")
             node.online = True
-            node.endpoints[e_state.id] = e_state
-            await g.mqtt_client.parse_endpoint_state(e_state, from_pkt=from_pkt)
-            g.ncync_server.devices[node.id] = node
+        node.last_valid_state_ts = ts
+        node.num_late_states = 0
+        node.endpoints[e_state.id] = e_state
+        g.ncync_server.devices[node_id] = node
+
+        await g.mqtt_client.parse_endpoint_state(e_state, from_pkt=from_pkt)
 
     async def start(self):
         lp = f"{self.lp}start:"
