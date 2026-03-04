@@ -137,6 +137,7 @@ class GlobalObject:
         )
 
 
+
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class Tasks:
     receive: Optional[asyncio.Task] = None
@@ -148,6 +149,13 @@ class Tasks:
         for task in tasks:
             if task is not None:
                 yield task
+
+    def __len__(self):
+        tasks = [self.receive, self.send, self.callback_cleanup]
+        # remove any that are None
+        tasks = [task for task in tasks if task is not None]
+        return len(list(tasks))
+
 
     async def cancel_all(self):
         """Cancels all active tasks and waits for them to finish."""
@@ -215,6 +223,7 @@ class Messages:
 
 @dataclass
 class CacheData:
+    """Cache to store data between binary packets"""
     all_data: bytes = b""
     timestamp: float = 0
     data: bytes = b""
@@ -325,7 +334,26 @@ class DeviceStructs:
     headers: Tuple[int] = (0x23, 0xC3, 0xD3, 0x83, 0x73, 0x7B, 0x43, 0xA3, 0xAB)
 
     @staticmethod
-    def xab_generate_ack(queue_id: bytes, msg_id: bytes):
+    def xab_generate_ack(queue_id: bytes, msg_id: bytes) -> bytes:
+        """
+        Respond to a 0xAB packet from the device.
+        Requires queue_id and msg_id to reply with.
+        Has ascii 'xlink_dev' in reply.
+        """
+        # 'xlink_dev' (9 bytes) + 948 null bytes + tail (4 bytes) = 961 bytes
+        payload = b'xlink_dev' + bytes(948) + b'\xe3\x4f\x02\x10'
+        total_len = len(queue_id) + len(msg_id) + len(payload)
+        # divmod(x, 256) gives us (x // 256, x % 256)
+        # length_factor increments every 256 bytes, length_byte rolls over to 0
+        length_factor, length_byte = divmod(total_len, 256)
+        # Construct the header: 0xAB, 0x00, 0x00, <factor>, <length>
+        header = b'\xab\x00\x00' + bytes([length_factor, length_byte])
+
+        return header + queue_id + msg_id + payload
+
+
+    @staticmethod
+    def xab_generate_ack_OLD(queue_id: bytes, msg_id: bytes):
         """
         Respond to a 0xAB packet from the device, needs queue_id and msg_id to reply with.
         Has ascii 'xlink_dev' in reply
@@ -474,24 +502,9 @@ class EndpointState(BaseModel):
     green: int = 0
     blue: int = 0
 
-    # pydantic BaseModel has this baked in
-    # def __eq__(self, other):
-    #     if isinstance(other, EndpointState):
-    #         return (
-    #             self.node_id == other.node_id and
-    #             self.id == other.id and
-    #             self.power == other.power and
-    #             self.brightness == other.brightness and
-    #             self.temperature == other.temperature and
-    #             self.red == other.red and
-    #             self.green == other.green and
-    #             self.blue == other.blue
-    #         )
-    #     return False
-
     def __str__(self):
         return (
-            f"{self.name} ({self.node_id}/{self.id}): p={self.power} b={self.brightness} t={self.temperature} "
+            f"{self.name} ({self.node_id}/{self.id}): pow={self.power} bri={self.brightness} temp={self.temperature} || "
             f"r={self.red} g={self.green} b={self.blue}"
         )
 
