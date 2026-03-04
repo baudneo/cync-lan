@@ -117,8 +117,9 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_MQTT_USER`             | Username for MQTT broker                                                                                                    |                                       | str  |
 | `CYNC_MQTT_PASS`             | Password for MQTT broker                                                                                                    |                                       | str  |
 | `CYNC_MQTT_CONN_DELAY`       | Delay between MQTT re-connections (seconds)                                                                                 | `10`                                  | int  |
-| `CYNC_DEBUG`                 | Enable debug logging                                                                                                        | `no`                                  | int  |
-| `CYNC_RAW_DEBUG`             | Enable raw binary message debug logging                                                                                     | `no`                                  | int  |
+| `CYNC_MQTT_DEBUG`            | Enable MQTT debug logs even if debug level is set (set to no for less debug level log spam)                                 | `yes`                                 | str  |
+| `CYNC_DEBUG`                 | Enable debug logging                                                                                                        | `no`                                  | str  |
+| `CYNC_RAW_DEBUG`             | Enable raw binary message debug logging                                                                                     | `no`                                  | str  |
 | `CYNC_DEVICE_CERT`           | Path to cert file                                                                                                           | `certs/server.pem`                    | str  |
 | `CYNC_DEVICE_KEY`            | Path to key file                                                                                                            | `certs/server.key`                    | str  |
 | `CYNC_SRV_HOST`              | Interface to listen on                                                                                                      | `0.0.0.0`                             | str  |
