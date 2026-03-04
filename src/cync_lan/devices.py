@@ -1267,107 +1267,81 @@ class CyncTCPDevice:
         self._closing = value
 
     async def parse_raw_data(self, data: bytes):
-        """Extract single packets from raw data stream using metadata"""
-        data_len = len(data)
+        """Extract single packets from raw data stream using metadata."""
         lp = f"{self.lp}extract:"
-        if data_len == 0:
+        if not data:
             logger.debug(f"{lp} No data to parse AT BEGINNING OF FUNCTION!!!!!!!")
-        else:
-            raw_data = bytes(data)
-            cache_data = CacheData()
-            cache_data.timestamp = time.time()
-            cache_data.all_data = raw_data
+            return
+        raw_input = data
+        cache_data = CacheData()
+        cache_data.timestamp = time.time()
+        cache_data.all_data = raw_input
+        if self.needs_more_data:
+            logger.debug(f"{lp} partial packet (needs_more_data), appending to previous data...")
+            if not self.read_cache:
+                raise RuntimeError(f"{lp} No previous cache data to extract from!")
 
-            if self.needs_more_data is True:
-                logger.debug(
-                    f"{lp} It seems we have a partial packet (needs_more_data), need to append to "
-                    f"previous remaining data and re-parse..."
-                )
-                old_cdata: CacheData = self.read_cache[-1]
-                if old_cdata:
-                    data = old_cdata.data + data
-                    cache_data.raw_data = bytes(data)
-                    # Previous data [length: 16, need: 42] // Current data [length: 530] //
-                    #   New (current + old) data [length: 546] // reconstructed: False
+            old_cdata: CacheData = self.read_cache[-1]
+            data = old_cdata.data + data
+            cache_data.raw_data = data
+            logger.debug(
+                f"{lp} Data assembly: prev={old_cdata.data_len}/{old_cdata.needed_len} "
+                f"curr={len(raw_input)} combined={len(data)} "
+                f"match={(len(raw_input) + old_cdata.data_len) == len(data)}"
+            )
+            if CYNC_RAW:
+                logger.debug(f"DBG>>>{lp}NEW DATA:\n{data}\n")
+            self.needs_more_data = False
+
+        loop_count = 0
+        while data:
+            loop_count += 1
+            loop_lp = f"{lp}loop {loop_count}:"
+            data_len = len(data)
+            needed_length = data_len
+            if data[0] in ALL_HEADERS:
+                if data_len > 4:
+                    # [0:Header] [1] [2] [3:Multiplier] [4:Length]
+                    pkt_len_multiplier = data[3]
+                    packet_length = data[4]
+                    # Length of payload + 5 bytes for the header itself
+                    needed_length = (pkt_len_multiplier * 256) + packet_length + 5
+                else:
                     logger.debug(
-                        f"{lp} Previous data [length: {old_cdata.data_len}, need: "
-                        f"{old_cdata.needed_len}] // Current data [length: {data_len}] // "
-                        f"New (current + old) data [length: {len(data)}] // reconstructed: {data_len + old_cdata.data_len == len(data)}"
-                    )
+                        f"DBG>>>{loop_lp} Packet length is less than 4 bytes, setting needed_length to data_len")
+            else:
+                logger.warning(f"{loop_lp} Unknown packet header: {data[0].to_bytes(1, 'big').hex(' ')}")
 
-                    (
-                        logger.debug(f"DBG>>>{lp}NEW DATA:\n{data}\n")
-                        if CYNC_RAW is True
-                        else None
-                    )
-                else:
-                    raise RuntimeError(f"{lp} No previous cache data to extract from!")
-                self.needs_more_data = False
-            i = 0
-            while True:
-                i += 1
-                lp = f"{self.lp}extract:loop {i}:"
-                if not data:
-                    # logger.debug(f"{lp} No more data to parse!")
-                    break
-                data_len = len(data)
-                needed_length = data_len
-                if data[0] in ALL_HEADERS:
-                    if data_len > 4:
-                        packet_length = data[4]
-                        pkt_len_multiplier = data[3]
-                        needed_length = ((pkt_len_multiplier * 256) + packet_length) + 5
-                    else:
-                        logger.debug(
-                            f"DBG>>>{lp} Packet length is less than 4 bytes, setting needed_length to data_len"
-                        )
-                else:
-                    logger.warning(
-                        f"{lp} Unknown packet header: {data[0].to_bytes(1, 'big').hex(' ')}"
-                    )
-
-                if needed_length > data_len:
-                    self.needs_more_data = True
-                    logger.warning(
-                        f"{lp} Extracted packet length is longer than remaining data length! "
-                        f"need: {needed_length} // have: {data_len}, storing data for next read!"
-                    )
-                    cache_data.needed_len = needed_length
-                    cache_data.data_len = data_len
-                    cache_data.data = bytes(data)
-                    (
-                        logger.debug(f"{lp} cache_data: {cache_data}")
-                        if CYNC_RAW is True
-                        else None
-                    )
-                    data = data[needed_length:]
-                    continue
-
-                extracted_packet = data[:needed_length]
-                # cut data down
-                data = data[needed_length:]
-                await self.parse_packet(extracted_packet)
-
-                if data:
-                    (
-                        logger.debug(f"{lp} Remaining data to parse: {len(data)} bytes")
-                        if CYNC_RAW is True
-                        else None
-                    )
-
-            self.read_cache.append(cache_data)
-            limit = 20
-            if len(self.read_cache) > limit:
-                # keep half of limit packets
-                limit = limit // -2
-                self.read_cache = self.read_cache[limit:]
-            if CYNC_RAW is True:
-                logger.debug(
-                    f"{lp} END OF RAW READING of {len(raw_data)} bytes\n"
-                    f"BYTES: {raw_data}\n"
-                    f"HEX: {raw_data.hex(' ')}\n"
-                    f"INT: {bytes2list(raw_data)}\n\n"
+            if needed_length > data_len:
+                self.needs_more_data = True
+                logger.warning(
+                    f"{loop_lp} Packet requires more data! "
+                    f"need={needed_length}, have={data_len}. Storing for next read..."
                 )
+                cache_data.needed_len = needed_length
+                cache_data.data_len = data_len
+                cache_data.data = data
+                if CYNC_RAW:
+                    logger.debug(f"{loop_lp} cache_data: {cache_data}")
+                break
+
+            extracted_packet = data[:needed_length]
+            data = data[needed_length:]
+            await self.parse_packet(extracted_packet)
+            if data and CYNC_RAW:
+                logger.debug(f"{loop_lp} Remaining data to parse: {len(data)} bytes")
+
+        self.read_cache.append(cache_data)
+        # Keep only the last 10 entries if the cache exceeds 20
+        if len(self.read_cache) > 20:
+            self.read_cache = self.read_cache[-10:]
+        if CYNC_RAW:
+            logger.debug(
+                f"{lp} END OF RAW READING of {len(raw_input)} bytes\n"
+                f"BYTES: {raw_input}\n"
+                f"HEX: {raw_input.hex(' ')}\n"
+                f"INT: {bytes2list(raw_input)}\n\n"
+            )
 
     async def parse_packet(self, data: bytes):
         """Parse what type of packet based on header (first 4 bytes 0x43, 0x83, 0x73, etc.)"""
@@ -1920,7 +1894,7 @@ class CyncTCPDevice:
                                                             self.lp = f"{self.address}[{self.id}]:"
                                                             logger.debug(
                                                                 f"{self.lp}parse:0x{data[0]:02x}: Setting TCP"
-                                                                f" device Node ID to: {self.id}"
+                                                                f" Node ID to: {self.id}"
                                                             )
 
                                                         elif (
