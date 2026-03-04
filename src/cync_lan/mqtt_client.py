@@ -30,6 +30,7 @@ from cync_lan.const import (
     FACTORY_EFFECTS_BYTES,
     ORIGIN_STRUCT,
     MQTT_DEBUG,
+    MQTT_DEAD,
 )
 from cync_lan.devices import CyncNode
 from cync_lan.metadata.model_info import device_type_map
@@ -139,7 +140,7 @@ class MQTTClient:
                         (f"{self.topic}/set/#", 0),
                         (f"{self.ha_topic}/status", 0),
                     ]
-                    await self.client.subscribe(topics)
+                    await self.client.subscribe(topics) if not MQTT_DEAD else None
                     logger.debug(
                         f"{lp} Subscribed to MQTT topics: {[x[0] for x in topics]}. "
                         f"Waiting for MQTT messages..."
@@ -482,7 +483,7 @@ class MQTTClient:
             # logger.debug(f"{lp} Publishing availability: {availability}")
             for _d in data:
                 try:
-                    _ = await self.client.publish(_d[0], _d[1], qos=0)
+                    _ = await self.client.publish(_d[0], _d[1], qos=0) if not MQTT_DEAD else None
                 except aiomqtt.MqttError as mqtt_code_exc:
                     logger.warning(f"{lp} [MqttError] -> {mqtt_code_exc}")
                     self._connected = False
@@ -598,7 +599,7 @@ class MQTTClient:
                     msg,
                     qos=0,
                     timeout=3.0,
-                )
+                ) if not MQTT_DEAD else None
             except aiomqtt.MqttError as mqtt_code_exc:
                 logger.warning(f"{lp} [MqttError] -> {mqtt_code_exc}")
                 self._connected = False
@@ -679,7 +680,7 @@ class MQTTClient:
                     CYNC_HASS_BIRTH_MSG.encode(),
                     qos=0,
                     retain=True,
-                )
+                ) if not MQTT_DEAD else None
             except aiomqtt.MqttCodeError as mqtt_code_exc:
                 logger.warning(
                     f"{lp} [MqttError] (rc: {mqtt_code_exc.rc}) -> {mqtt_code_exc}"
@@ -702,7 +703,7 @@ class MQTTClient:
                     CYNC_HASS_WILL_MSG.encode(),
                     qos=0,
                     retain=True,
-                )
+                ) if not MQTT_DEAD else None
             except aiomqtt.MqttError as mqtt_code_exc:
                 logger.warning(f"{lp} [MqttError] -> {mqtt_code_exc}")
                 self._connected = False
@@ -771,7 +772,7 @@ class MQTTClient:
                 json.dumps(registry_struct).encode(),
                 qos=0,
                 retain=False,
-            )
+            ) if not MQTT_DEAD else None
 
         except Exception as e:
             logger.error(
@@ -1151,7 +1152,10 @@ class MQTTClient:
         if not self._connected:
             return False
         try:
-            _ = await self.client.publish(topic, msg_data, qos=0, retain=False)
+            if not MQTT_DEAD:
+                _ = await self.client.publish(topic, msg_data, qos=0, retain=False)
+            else:
+                logger.debug(f"{lp} CYNC_MQTT_DEAD has been turned on, not publishing the message, change the env var if you want to sub/pub")
         except aiomqtt.MqttError as mqtt_code_exc:
             logger.warning(
                 f"{lp} [MqttError] (rc: {mqtt_code_exc.rc}) -> {mqtt_code_exc}"
@@ -1170,7 +1174,7 @@ class MQTTClient:
         try:
             _ = await self.client.publish(
                 topic, json.dumps(msg_data).encode(), qos=0, retain=False
-            )
+            ) if not MQTT_DEAD else None
         except aiomqtt.MqttError as mqtt_code_exc:
             logger.warning(
                 f"{lp} [MqttError] (rc: {mqtt_code_exc.rc}) -> {mqtt_code_exc}"

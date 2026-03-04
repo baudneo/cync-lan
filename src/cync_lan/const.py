@@ -88,6 +88,7 @@ CYNC_API_BASE: str = "https://api.gelighting.com/v2/"
 DEVICE_LWT_MSG: bytes = b"offline"
 
 MQTT_DEBUG = os.environ.get("CYNC_MQTT_DEBUG", "1").casefold() in YES_ANSWER
+MQTT_DEAD = os.environ.get("CYNC_MQTT_DEAD", "0").casefold() in YES_ANSWER
 
 CYNC_SRV_HOST = os.environ.get("CYNC_SRV_HOST", "0.0.0.0")
 CYNC_EXPORT_HOST = os.environ.get("CYNC_EXPORT_HOST", CYNC_SRV_HOST)
