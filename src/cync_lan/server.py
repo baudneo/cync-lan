@@ -169,7 +169,7 @@ class nCyncServer:
             return
 
         if not node.online:
-            logger.info(f"{node.lp} '{e_state.name}' is back ONLINE.")
+            logger.info(f"{node.lp}{' \'{}\' ({})'.format(e_state.name, e_state.id) if e_state.id > 0 else ''} is back ONLINE.")
             node.online = True
         node.last_valid_state_ts = ts
         node.num_late_states = 0
