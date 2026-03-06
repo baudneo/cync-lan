@@ -1142,6 +1142,36 @@ class MQTTClient:
             )
         )
 
+        # Should restart sensor, to be used to restart the app/container
+        entity_type = "binary_sensor"
+        entity_unique_id = f"{bridge_base_unique_id}_should_restart"
+        restart_sensor_entity_conf = {
+            "platform": "sensor",
+            "object_id": entity_unique_id,
+            "default_entity_id": entity_unique_id,
+            "name": "Should Restart",
+            "state_topic": f"{self.topic}/status/bridge/should_restart",
+            "unique_id": entity_unique_id,
+            "icon": "mdi:restart",
+            "avty_t": f"{self.topic}/availability/bridge",
+            "device_class": "problem",
+            "schema": "json",
+            "origin": ORIGIN_STRUCT,
+            "device": bridge_device_reg_struct,
+        }
+        ret = await self.publish_json_msg(
+            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
+            restart_sensor_entity_conf,
+        )
+        if ret is False:
+            logger.warning(f"{lp} Failed to publish should restart entity config")
+        pub_tasks.append(
+            self.publish(
+                f"{self.topic}/status/bridge/should_restart",
+                "OFF".encode(),
+            )
+        )
+
         await asyncio.gather(*pub_tasks, return_exceptions=True)
         logger.debug(f"{lp} Bridge device config published and seeded")
         return ret
