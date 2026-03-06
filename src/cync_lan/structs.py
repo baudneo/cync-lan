@@ -469,7 +469,7 @@ class EndpointState(BaseModel):
 
     def __str__(self):
         return (
-            f"{self.name} ({self.node_id}/{self.id}): pow={self.power} bri={self.brightness} temp={self.temperature} || "
+            f"{self.name} ({self.node_id}{'/{}'.format(self.id) if self.id > 0 else ''}): pow={self.power} bri={self.brightness} temp={self.temperature} || "
             f"r={self.red} g={self.green} b={self.blue}"
         )
 
