@@ -149,24 +149,45 @@ class nCyncServer:
                 f"config file or you need to re-export your Cync account devices!"
             )
             return
-
+        sub_fmt_str = ' \'{}\' ({})'.format(e_state.name, e_state.id) if e_state.id > 0 else ''
         if not is_recent:
             if not node.metadata.supported:
                 return
 
-            logger.debug(f"{node.lp} '{e_state.name}' seems to have stale STATE data.")
+            logger.debug(f"{node.lp}{sub_fmt_str} seems to have STALE data.")
             node.num_late_states += 1
             tcp_count = len(self.tcp_devices) or 1
-            allowed_late = 3 + tcp_count
-            time_since_valid = ts - node.last_valid_state_ts
-            if node.num_late_states > allowed_late and time_since_valid >= 30.0:
+            if tcp_count == 1:
+                # single device will be source of truth
                 if node.online:
                     node.online = False
                     logger.warning(
-                        f"{node.lp} '{e_state.name}' marked OFFLINE "
-                        f"(stale for {time_since_valid:.1f}s)"
+                        f"{node.lp}{sub_fmt_str} marked OFFLINE "
+                        f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
                     )
-            return
+                else:
+                    logger.warning(
+                        f"{node.lp}{sub_fmt_str} is still marked as {'ONLINE' if node.online else 'OFFLINE'} -> "
+                        f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
+                    )
+                return
+            elif tcp_count > 1:
+                # time_since_valid = ts - node.last_valid_state_ts
+                # if node.num_late_states > allowed_late and time_since_valid >= 30.0:
+                if node.num_late_states >= tcp_count:
+                    if node.online:
+                        node.online = False
+                        logger.warning(
+                            f"{node.lp}{sub_fmt_str} marked OFFLINE "
+                            f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
+                        )
+                    else:
+                        logger.warning(
+                            f"{node.lp}{sub_fmt_str} is still marked as {'ONLINE' if node.online else 'OFFLINE'} -> "
+                            f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
+                        )
+                return
+
 
         if not node.online:
             logger.info(f"{node.lp}{' \'{}\' ({})'.format(e_state.name, e_state.id) if e_state.id > 0 else ''} is back ONLINE.")
