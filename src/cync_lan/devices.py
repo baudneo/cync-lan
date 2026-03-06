@@ -2450,7 +2450,7 @@ class CyncTCPDevice:
                                 else 0
                             )
                             logger.debug(
-                                f"{lp} Mesh state for {node_repr.name} - {e_state_}"
+                                f"{lp} MeshInfo for {node_repr.name} - {e_state_}"
                             )
                             await g.ncync_server.handle_endpoint(
                                 e_state_,
@@ -2469,7 +2469,7 @@ class CyncTCPDevice:
                         blue=dev_b,
                     )
                     logger.debug(
-                        f"{lp} Mesh state for {e_state}"
+                        f"{lp} MeshInfo for {e_state}"
                     )
                     await g.ncync_server.handle_endpoint(
                         e_state,
