@@ -401,13 +401,13 @@ class CyncNode:
             if speed == FanSpeed.OFF:
                 await self.set_brightness(0)
             elif speed == FanSpeed.LOW:
-                await self.set_brightness(50)
+                await self.set_brightness(25)
             elif speed == FanSpeed.MEDIUM:
-                await self.set_brightness(128)
+                await self.set_brightness(50)
             elif speed == FanSpeed.HIGH:
-                await self.set_brightness(191)
+                await self.set_brightness(75)
             elif speed == FanSpeed.MAX:
-                await self.set_brightness(255)
+                await self.set_brightness(100)
             else:
                 logger.error(
                     f"{self.lp} Invalid fan speed: {speed}, must be one of {list(FanSpeed)}"
@@ -423,7 +423,7 @@ class CyncNode:
 
     async def set_brightness(self, bri: int, sub_id: Optional[int] = None):
         """
-        Send raw data to control device brightness (0-100). Fans are 0-255.
+        Send raw data to control device brightness (0-100). Fans are also 0-100.
         """
         """
         73 00 00 00 22 37 96 24 69 60 48 00 7e 17 00 00  s..."7.$i`H.~...
