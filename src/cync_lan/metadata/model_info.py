@@ -38,8 +38,17 @@ class DeviceProtocol:
     BTLE: bool = True
     TCP: bool = False
     MATTER: bool = False
-    # XLink Wi-Fi-direct devices (older GE/C-by-GE family, e.g. C by GE Sol type 80)
-    # use different brightness/CCT opcodes (0xD2/0xE2) vs the newer Cync mesh (0xF0).
+
+
+@dataclass
+class OpcodeFamily:
+    """Identifies which binary opcode family a device uses for control commands.
+
+    Older GE/C-by-GE XLink Wi-Fi-direct devices (e.g. C by GE Sol, type 80) use a
+    different opcode set for brightness (0xD2) and CCT (0xE2) than the newer Cync mesh
+    devices which use 0xF0 for both.  All other fields on DeviceTypeInfo are transport or
+    aesthetic; this one drives the binary packet structure.
+    """
     xlink: bool = False
 
 
@@ -57,6 +66,7 @@ class DeviceTypeInfo:
     model_name: Optional[str] = "Unknown Device, See repo issue tracker"
     model_id: Optional[str] = None
     protocol: DeviceProtocol = Field(default_factory=DeviceProtocol)
+    opcodes: OpcodeFamily = Field(default_factory=OpcodeFamily)
     capabilities: Union[LightCapabilities, SwitchCapabilities, None] = None
     characteristics: Optional[LightCharacteristics] = None
     supported: bool = Field(
@@ -425,10 +435,9 @@ device_type_map = {
     ),
     80: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
-        # C by GE Sol (CBYGEF001 / GESOL_DE5C) — confirmed XLink Wi-Fi-direct device.
-        # Uses 0xD2 for brightness and 0xE2 (sub-cmd 0x05) for CCT instead of 0xF0.
         model_name="C by GE Sol / XLink Tunable White",
-        protocol=DeviceProtocol(TCP=True, xlink=True),
+        protocol=DeviceProtocol(TCP=True),
+        opcodes=OpcodeFamily(xlink=True),
         capabilities=LightCapabilities(tunable_white=True),
     ),
     81: DeviceTypeInfo(
