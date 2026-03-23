@@ -285,22 +285,22 @@ class MQTTClient:
                                     logger.debug(
                                         f"{lp} Fan percentage received: {percentage}, translated to: 'low' preset"
                                     )
-                                    tasks.append(node.set_brightness(50))
+                                    tasks.append(node.set_brightness(25))
                                 elif percentage <= 50:
                                     logger.debug(
                                         f"{lp} Fan percentage received: {percentage}, translated to: 'medium' preset"
                                     )
-                                    tasks.append(node.set_brightness(128))
+                                    tasks.append(node.set_brightness(50))
                                 elif percentage <= 75:
                                     logger.debug(
                                         f"{lp} Fan percentage received: {percentage}, translated to: 'high' preset"
                                     )
-                                    tasks.append(node.set_brightness(191))
+                                    tasks.append(node.set_brightness(75))
                                 elif percentage <= 100:
                                     logger.debug(
                                         f"{lp} Fan percentage received: {percentage}, translated to: 'max' preset"
                                     )
-                                    tasks.append(node.set_brightness(255))
+                                    tasks.append(node.set_brightness(100))
                                 else:
                                     logger.warning(
                                         f"{lp} Fan percentage received: {percentage} is out of range (0-100), skipping..."
@@ -744,7 +744,7 @@ class MQTTClient:
 
         elif dev_type == "fan":
             registry_struct["platform"] = "fan"
-            # fan can be controlled via light control structs: brightness -> max=255, high=191, medium=128, low=50, off=0
+            # fan can be controlled via light control structs: brightness -> max=100, high=75, medium=50, low=25, off=0
             registry_struct["percentage_command_topic"] = (
                 "{0}/set/{1}/percentage".format(self.topic, entity_uuid)
             )
