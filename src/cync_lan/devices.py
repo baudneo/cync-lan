@@ -410,13 +410,13 @@ class CyncNode:
             if speed == FanSpeed.OFF:
                 await self.set_brightness(0)
             elif speed == FanSpeed.LOW:
-                await self.set_brightness(50)
+                await self.set_brightness(25)
             elif speed == FanSpeed.MEDIUM:
-                await self.set_brightness(128)
+                await self.set_brightness(50)
             elif speed == FanSpeed.HIGH:
-                await self.set_brightness(191)
+                await self.set_brightness(75)
             elif speed == FanSpeed.MAX:
-                await self.set_brightness(255)
+                await self.set_brightness(100)
             else:
                 logger.error(
                     f"{self.lp} Invalid fan speed: {speed}, must be one of {list(FanSpeed)}"
@@ -432,7 +432,7 @@ class CyncNode:
 
     async def set_brightness(self, bri: int, sub_id: Optional[int] = None):
         """
-        Send raw data to control device brightness (0-100). Fans are 0-255.
+        Send raw data to control device brightness (0-100). Fans are also 0-100.
         """
         """
         73 00 00 00 22 37 96 24 69 60 48 00 7e 17 00 00  s..."7.$i`H.~...
@@ -441,12 +441,8 @@ class CyncNode:
         """
         lp = f"{self.lp}set_brightness:"
         if bri < 0 or bri > 100:
-            if self.is_fan_controller:
-                # fan can be controlled via light control structs: brightness -> max=255, high=191, medium=128, low=50, off=0
-                pass
-            elif self.is_light or self.is_switch:
-                logger.error(f"{lp} Invalid brightness: {bri} must be 0-100")
-                return
+            logger.error(f"{lp} Invalid brightness: {bri} must be 0-100")
+            return
 
         # elif bri == self._brightness:
         #     logger.debug(f"{lp} Device already in brightness {bri}, skipping...")
