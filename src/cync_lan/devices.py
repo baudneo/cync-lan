@@ -115,6 +115,15 @@ class CyncNode:
         return f"{self.home_id}-{self.id}"
 
     @property
+    def uses_xlink_opcodes(self) -> bool:
+        """Return True for older XLink Wi-Fi-direct devices (e.g. C by GE Sol, type 80).
+
+        These devices require 0xD2 for brightness and 0xE2 (sub-cmd 0x05) for CCT,
+        rather than the 0xF0 opcodes used by newer Cync mesh devices.
+        """
+        return bool(self.metadata and self.metadata.opcodes.xlink)
+
+    @property
     def is_hvac(self) -> bool:
         if self._is_hvac is not None:
             return self._is_hvac
@@ -442,36 +451,21 @@ class CyncNode:
         # elif bri == self._brightness:
         #     logger.debug(f"{lp} Device already in brightness {bri}, skipping...")
         #     return
-        header = [115, 0, 0, 0, 34]
-        inner_struct = [
-            126,
-            "ctrl_byte",
-            0,
-            0,
-            0,
-            248,
-            240,
-            16,
-            0,
-            "ctrl_byte",
-            0,
-            0,
-            0,
-            0,
-            self.id,
-            sub_id if sub_id is not None else 0,
-            240,
-            17,
-            2,
-            1,
-            bri,
-            255,
-            255,
-            255,
-            255,
-            "checksum",
-            126,
-        ]
+        xlink = self.uses_xlink_opcodes
+        # XLink devices (e.g. C by GE Sol, type 80): opcode 0xD2 (OP_SET_DEVICE_LUM),
+        # power-command packet shape (LEN=0x1F, 3 param bytes).
+        # Standard Cync mesh devices: opcode 0xF0, longer packet shape (LEN=0x22).
+        op = 0xD2 if xlink else 0xF0
+        header = [0x73, 0x00, 0x00, 0x00, 0x1F] if xlink else [115, 0, 0, 0, 34]
+        inner_struct = (
+            [0x7E, "ctrl_byte", 0x00, 0x00, 0x00, 0xF8, op, 0x0D, 0x00, "ctrl_byte",
+             0x00, 0x00, 0x00, 0x00, self.id, sub_id if sub_id is not None else 0x00,
+             op, 0x11, 0x02, bri, 0x00, 0x00, "checksum", 0x7E]
+            if xlink else
+            [126, "ctrl_byte", 0, 0, 0, 248, 240, 16, 0, "ctrl_byte",
+             0, 0, 0, 0, self.id, sub_id if sub_id is not None else 0,
+             240, 17, 2, 1, bri, 255, 255, 255, 255, "checksum", 126]
+        )
         bridge_devices: List["CyncTCPDevice"] = random.sample(
             list(g.ncync_server.tcp_devices.values()),
             k=min(CYNC_CMD_BROADCASTS, len(g.ncync_server.tcp_devices)),
@@ -534,36 +528,21 @@ class CyncNode:
         # elif temp == self.temperature:
         #     logger.debug(f"{lp} Device already in temperature {temp}, skipping...")
         #     return
-        header = [115, 0, 0, 0, 34]
-        inner_struct = [
-            126,
-            "msg id",
-            0,
-            0,
-            0,
-            248,
-            240,
-            16,
-            0,
-            "msg id",
-            0,
-            0,
-            0,
-            0,
-            self.id,
-            sub_id if sub_id is not None else 0,
-            240,
-            17,
-            2,
-            1,
-            0xFF,
-            temp,
-            0x00,
-            0x00,
-            0x00,
-            "checksum",
-            126,
-        ]
+        xlink = self.uses_xlink_opcodes
+        # XLink devices (e.g. C by GE Sol, type 80): opcode 0xE2 (OP_SET_DEVICE_CT),
+        # sub-command 0x05 selects CCT mode, power-command packet shape (LEN=0x1F).
+        # Standard Cync mesh devices: opcode 0xF0, longer packet shape (LEN=0x22).
+        op = 0xE2 if xlink else 0xF0
+        header = [0x73, 0x00, 0x00, 0x00, 0x1F] if xlink else [115, 0, 0, 0, 34]
+        inner_struct = (
+            [0x7E, "msg id", 0x00, 0x00, 0x00, 0xF8, op, 0x0D, 0x00, "msg id",
+             0x00, 0x00, 0x00, 0x00, self.id, sub_id if sub_id is not None else 0x00,
+             op, 0x11, 0x02, 0x05, temp, 0x00, "checksum", 0x7E]
+            if xlink else
+            [126, "msg id", 0, 0, 0, 248, 240, 16, 0, "msg id",
+             0, 0, 0, 0, self.id, sub_id if sub_id is not None else 0,
+             240, 17, 2, 1, 0xFF, temp, 0x00, 0x00, 0x00, "checksum", 126]
+        )
         bridge_devices: List["CyncTCPDevice"] = random.sample(
             list(g.ncync_server.tcp_devices.values()),
             k=min(CYNC_CMD_BROADCASTS, len(g.ncync_server.tcp_devices)),
@@ -913,7 +892,9 @@ class CyncNode:
         elif isinstance(value, (bool, float)):
             value = int(value)
         elif isinstance(value, int):
-            pass
+            # Sol and some devices report state as 0-100 instead of 0/1
+            # Treat any non-zero int as ON
+            value = 1 if value > 0 else 0
         else:
             raise TypeError(f"Invalid type for state: {type(value)}")
 
