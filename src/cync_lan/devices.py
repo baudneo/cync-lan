@@ -2213,11 +2213,7 @@ class CyncTCPDevice:
                     extracted = packet_data[i: i + struct_len]
                     if len(extracted) == struct_len:
                         status_struct = extracted[3:10]
-
-                        # BUG FIX: Your original code did `status_struct + b"\x01"` which did nothing.
-                        # If you meant to append it as a hack, you must reassign it:
                         status_struct += b"\x01"
-
                         extractions.append((extracted.hex(" "), list(status_struct)))
 
                 if CYNC_RAW:

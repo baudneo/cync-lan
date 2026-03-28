@@ -432,8 +432,8 @@ class MQTTClient:
         # set all devices offline
         if self._connected:
             logger.debug(f"{lp} Setting all Cync devices offline...")
-            for device_id, device in g.ncync_server.devices.items():
-                await self.pub_online(device_id, False)
+            for node in g.ncync_server.devices.values():
+                node.online = False
             # ["state_topic"] = f"{self.topic}/status/bridge/mqtt_client/connected"
             await self.publish(
                 f"{self.topic}/status/bridge/mqtt_client/connected",

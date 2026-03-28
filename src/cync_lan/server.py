@@ -151,7 +151,7 @@ class nCyncServer:
             return
         sub_fmt_str = ' \'{}\' ({})'.format(e_state.name, e_state.id) if e_state.id > 0 else ''
         if not is_recent:
-logic fix            if node.metadata is not None:
+            if node.metadata is not None:
                 if not node.metadata.supported:
                     return
 
