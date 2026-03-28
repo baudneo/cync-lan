@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cync_lan"
 # fixme: isnt in-sync yet, work on CI to set ver on image build
-version = "0.0.4b5"
+version = "0.0.4b6"
 description = "A Python library for local async MQTT control of Cync/C by GE smart devices"
 readme = "README.md"
 authors = [{name = "baudneo", email = "86508179+baudneo@users.noreply.github.com"}]
