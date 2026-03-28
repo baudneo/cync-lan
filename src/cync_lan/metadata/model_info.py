@@ -49,7 +49,7 @@ class OpcodeFamily:
     devices which use 0xF0 for both.  All other fields on DeviceTypeInfo are transport or
     aesthetic; this one drives the binary packet structure.
     """
-    xlink: bool = False
+    sol_lamp: bool = False
 
 
 @dataclass
@@ -437,7 +437,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="C by GE Sol / XLink Tunable White",
         protocol=DeviceProtocol(TCP=True),
-        opcodes=OpcodeFamily(xlink=True),
+        opcodes=OpcodeFamily(sol_lamp=True),
         capabilities=LightCapabilities(tunable_white=True),
     ),
     81: DeviceTypeInfo(
