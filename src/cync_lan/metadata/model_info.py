@@ -49,6 +49,7 @@ class OpcodeFamily:
     devices which use 0xF0 for both.  All other fields on DeviceTypeInfo are transport or
     aesthetic; this one drives the binary packet structure.
     """
+
     sol_lamp: bool = False
 
 
@@ -418,12 +419,14 @@ device_type_map = {
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
     ),
-    72:DeviceTypeInfo(
+    72: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Dynamic Effects Premium Light Strip",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
-        characteristics=LightCharacteristics(lumens=1600, min_kelvin=2000, max_kelvin=7000, cri=80),
+        characteristics=LightCharacteristics(
+            lumens=1600, min_kelvin=2000, max_kelvin=7000, cri=80
+        ),
     ),
     76: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -431,7 +434,9 @@ device_type_map = {
         model_info="CCF48CDOD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True, dynamic=True),
-        characteristics=LightCharacteristics(lumens=130, min_kelvin=2000, max_kelvin=7000)
+        characteristics=LightCharacteristics(
+            lumens=130, min_kelvin=2000, max_kelvin=7000
+        ),
     ),
     80: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,

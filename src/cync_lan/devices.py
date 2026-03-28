@@ -454,13 +454,62 @@ class CyncNode:
         op = 0xD2 if sol_lamp else 0xF0
         header = [0x73, 0x00, 0x00, 0x00, 0x1F] if sol_lamp else [115, 0, 0, 0, 34]
         inner_struct = (
-            [0x7E, "ctrl_byte", 0x00, 0x00, 0x00, 0xF8, op, 0x0D, 0x00, "ctrl_byte",
-             0x00, 0x00, 0x00, 0x00, self.id, sub_id if sub_id is not None else 0x00,
-             op, 0x11, 0x02, bri, 0x00, 0x00, "checksum", 0x7E]
-            if sol_lamp else
-            [126, "ctrl_byte", 0, 0, 0, 248, 240, 16, 0, "ctrl_byte",
-             0, 0, 0, 0, self.id, sub_id if sub_id is not None else 0,
-             240, 17, 2, 1, bri, 255, 255, 255, 255, "checksum", 126]
+            [
+                0x7E,
+                "ctrl_byte",
+                0x00,
+                0x00,
+                0x00,
+                0xF8,
+                op,
+                0x0D,
+                0x00,
+                "ctrl_byte",
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                self.id,
+                sub_id if sub_id is not None else 0x00,
+                op,
+                0x11,
+                0x02,
+                bri,
+                0x00,
+                0x00,
+                "checksum",
+                0x7E,
+            ]
+            if sol_lamp
+            else [
+                126,
+                "ctrl_byte",
+                0,
+                0,
+                0,
+                248,
+                240,
+                16,
+                0,
+                "ctrl_byte",
+                0,
+                0,
+                0,
+                0,
+                self.id,
+                sub_id if sub_id is not None else 0,
+                240,
+                17,
+                2,
+                1,
+                bri,
+                255,
+                255,
+                255,
+                255,
+                "checksum",
+                126,
+            ]
         )
         bridge_devices: List["CyncTCPDevice"] = random.sample(
             list(g.ncync_server.tcp_devices.values()),
@@ -531,13 +580,62 @@ class CyncNode:
         op = 0xE2 if xlink else 0xF0
         header = [0x73, 0x00, 0x00, 0x00, 0x1F] if xlink else [115, 0, 0, 0, 34]
         inner_struct = (
-            [0x7E, "msg id", 0x00, 0x00, 0x00, 0xF8, op, 0x0D, 0x00, "msg id",
-             0x00, 0x00, 0x00, 0x00, self.id, sub_id if sub_id is not None else 0x00,
-             op, 0x11, 0x02, 0x05, temp, 0x00, "checksum", 0x7E]
-            if xlink else
-            [126, "msg id", 0, 0, 0, 248, 240, 16, 0, "msg id",
-             0, 0, 0, 0, self.id, sub_id if sub_id is not None else 0,
-             240, 17, 2, 1, 0xFF, temp, 0x00, 0x00, 0x00, "checksum", 126]
+            [
+                0x7E,
+                "msg id",
+                0x00,
+                0x00,
+                0x00,
+                0xF8,
+                op,
+                0x0D,
+                0x00,
+                "msg id",
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                self.id,
+                sub_id if sub_id is not None else 0x00,
+                op,
+                0x11,
+                0x02,
+                0x05,
+                temp,
+                0x00,
+                "checksum",
+                0x7E,
+            ]
+            if xlink
+            else [
+                126,
+                "msg id",
+                0,
+                0,
+                0,
+                248,
+                240,
+                16,
+                0,
+                "msg id",
+                0,
+                0,
+                0,
+                0,
+                self.id,
+                sub_id if sub_id is not None else 0,
+                240,
+                17,
+                2,
+                1,
+                0xFF,
+                temp,
+                0x00,
+                0x00,
+                0x00,
+                "checksum",
+                126,
+            ]
         )
         bridge_devices: List["CyncTCPDevice"] = random.sample(
             list(g.ncync_server.tcp_devices.values()),

@@ -790,9 +790,11 @@ class MQTTClient:
                 for node in g.ncync_server.devices.values():
                     device_uuid = node.hass_id
                     if node.metadata is None:
-                        logger.warning(f"{lp} Device '{node.name}' (ID: {node.id} / Type: {node.type}) has no metadata,"
-                                       f" meaning this type hasn't been seen before and can not be controlled, please "
-                                       f"see: https://github.com/baudneo/cync-lan/issues/12 to have this device added")
+                        logger.warning(
+                            f"{lp} Device '{node.name}' (ID: {node.id} / Type: {node.type}) has no metadata,"
+                            f" meaning this type hasn't been seen before and can not be controlled, please "
+                            f"see: https://github.com/baudneo/cync-lan/issues/12 to have this device added"
+                        )
                         continue
                     supported = node.metadata.supported
                     if not supported:
@@ -1030,7 +1032,9 @@ class MQTTClient:
         )
         if ret is False:
             logger.error(f"{lp} Failed to publish export server running entity config")
-        status = "ON" if (g.export_server and g.export_server.running is True) else "OFF"
+        status = (
+            "ON" if (g.export_server and g.export_server.running is True) else "OFF"
+        )
         pub_tasks.append(
             self.publish(
                 f"{self.topic}/status/bridge/export_server/running", status.encode()
