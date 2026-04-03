@@ -97,6 +97,7 @@ async def request_otp():
 
 @app.post("/api/restart")
 async def restart():
+    #FIXME: non HASS app needs a sigterm
     lp = "ExportServer:restart:"
     supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
     if not supervisor_token:
