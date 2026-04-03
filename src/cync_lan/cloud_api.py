@@ -401,7 +401,6 @@ class CyncCloudAPI:
                     raw_home["product_id"], raw_home["id"]
                 )
             if "bulbsArray" not in raw_home["properties"]:
-                # Haven't encountered this scenario yet
                 logger.debug(
                     f"{lp} No 'bulbsArray' in Cync home: '{raw_home['name']}' properties (safely ignore), skipping..."
                 )
@@ -508,7 +507,11 @@ class CyncCloudAPI:
                 for node_id, endpoint_data in entity_reg.items():
                     if node_id in new_home["devices"]:
                         # overwrite the default 0 endpoint with the children
-                        new_home["devices"][node_id]["endpoints"] = endpoint_data
+                        new_home["devices"][node_id]["endpoints"].pop(0)
+                        for _sub_id, _sub_state in endpoint_data.items():
+                            new_home["devices"][node_id]["endpoints"][_sub_id] = _sub_state.name
+
+
         # END OF HOME PARSING LOOP
         # write raw exported config to file for debugging, only if export source is None
         if CYNC_EXPORT_SOURCE is None:
