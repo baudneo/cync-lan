@@ -443,7 +443,8 @@ class CyncCloudAPI:
                 dev_id = int(raw_dev[-3:])
                 sub_id = 0
                 parent = None
-                if len(raw_dev) > 3:
+                # Seems the thermostat has a multi-endpoint deviceID but is a single entry
+                if len(raw_dev) > 3 and dev_type != 224:
                     # firmwareVersion = Unknown is also an identifier for sub-devices
                     # sub-device wifiMac will always be 01:02:03:04:05:06 even if parent has WiFi, BT MACs match
                     sub_id = int(raw_dev[:3])
@@ -465,6 +466,7 @@ class CyncCloudAPI:
                     else:
                         entity_reg[dev_id] = {sub_id: state}
                     continue
+
                 # END OF SUB DEVICE PARSING
 
                 # { "hvacSystem": { "changeoverMode": 0, "auxHeatStages": 1, "auxFurnaceType": 1, "stages": 1, "furnaceType": 1, "type": 2, "powerLines": 1 },
