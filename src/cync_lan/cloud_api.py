@@ -427,7 +427,7 @@ class CyncCloudAPI:
                     )
                 ):
                     logger.warning(
-                        f"{lp} Missing required attribute (ID, Name, Type, MACs, Version) in Cync device, skipping: {raw_device}"
+                        f"{lp} Missing required attribute (deviceID, displayName, deviceType, MACs, firmwareVersion) in Cync device, skipping: {raw_device}"
                     )
                     continue
                 new_device: dict = {}
@@ -444,7 +444,25 @@ class CyncCloudAPI:
                 sub_id = 0
                 parent = None
                 # Seems the thermostat has a multi-endpoint deviceID but is a single entry
-                if len(raw_dev) > 3 and dev_type != 224:
+                # 169573386
+                # 7
+                # 009
+                # { "hvacSystem": { "changeoverMode": 0, "auxHeatStages": 1, "auxFurnaceType": 1, "stages": 1, "furnaceType": 1, "type": 2, "powerLines": 1 },
+                # "thermostatSensors": [ { "pin": "025572", "name": "Living Room", "type": "savant" }, { "pin": "044604", "name": "Bedroom Sensor", "type": "savant" }, { "pin": "022724", "name": "Thermostat sensor 3", "type": "savant" } ] } ]
+                # todo: thermostat device logic whenever someone gets me debug data
+                hvac_cfg = None
+                if "hvacSystem" in raw_device:
+                    hvac_cfg = raw_device["hvacSystem"]
+                    if "thermostatSensors" in raw_device:
+                        hvac_cfg["thermostatSensors"] = raw_device["thermostatSensors"]
+                    logger.debug(
+                        f"{lp} Found HVAC device '{dev_name}' (ID: {dev_id}): {hvac_cfg}"
+                    )
+                    logger.info(f"{lp} HVAC devices are currently unsupported, work is in progress to "
+                                f"get the thermostat and temp sensors added")
+                    continue
+                    new_device["hvac"] = hvac_cfg
+                if len(raw_dev) > 4:
                     # firmwareVersion = Unknown is also an identifier for sub-devices
                     # sub-device wifiMac will always be 01:02:03:04:05:06 even if parent has WiFi, BT MACs match
                     sub_id = int(raw_dev[:3])
@@ -462,45 +480,35 @@ class CyncCloudAPI:
                     )
                     state = EndpointState(node_id=dev_id, id=sub_id, name=dev_name)
                     if dev_id in entity_reg:
-                        entity_reg[dev_id][sub_id] = state
+                        entity_reg[dev_id][sub_id] = state.name
                     else:
-                        entity_reg[dev_id] = {sub_id: state}
+                        entity_reg[dev_id] = {sub_id: state.name}
                     continue
-
+                elif len(raw_dev) == 4:
+                    logger.debug(f"{lp} FOUND: '{dev_name}' has a thermostat related quirk with a value of: {raw_dev[3]}")
                 # END OF SUB DEVICE PARSING
 
-                # { "hvacSystem": { "changeoverMode": 0, "auxHeatStages": 1, "auxFurnaceType": 1, "stages": 1, "furnaceType": 1, "type": 2, "powerLines": 1 },
-                # "thermostatSensors": [ { "pin": "025572", "name": "Living Room", "type": "savant" }, { "pin": "044604", "name": "Bedroom Sensor", "type": "savant" }, { "pin": "022724", "name": "Thermostat sensor 3", "type": "savant" } ] } ]
-                # todo: thermostat device logic whenever someone gets me debug data
-                hvac_cfg = None
-                if "hvacSystem" in raw_device:
-                    hvac_cfg = raw_device["hvacSystem"]
-                    if "thermostatSensors" in raw_device:
-                        hvac_cfg["thermostatSensors"] = raw_device["thermostatSensors"]
-                    logger.debug(
-                        f"{lp} Found HVAC device '{dev_name}' (ID: {dev_id}): {hvac_cfg}"
-                    )
-                    new_device["hvac"] = hvac_cfg
-                cync_device = CyncNode(
-                    name=dev_name,
-                    node_id=dev_id,
-                    dev_type=dev_type,
-                    mac=bt_mac,
-                    wifi_mac=wifi_mac,
-                    fw_version=fw_ver,
-                    hvac=hvac_cfg,
-                )
+
+                # cync_device = CyncNode(
+                #     name=dev_name,
+                #     node_id=dev_id,
+                #     dev_type=dev_type,
+                #     mac=bt_mac,
+                #     wifi_mac=wifi_mac,
+                #     fw_version=fw_ver,
+                #     hvac=hvac_cfg,
+                # )
                 new_device["name"] = dev_name
                 new_device["type"] = dev_type
-                new_device["is_plug"] = cync_device.is_plug
-                new_device["supports_temperature"] = cync_device.supports_temperature
-                new_device["supports_rgb"] = cync_device.supports_rgb
+                # new_device["is_plug"] = cync_device.is_plug
+                # new_device["supports_temperature"] = cync_device.supports_temperature
+                # new_device["supports_rgb"] = cync_device.supports_rgb
                 new_device["fw"] = fw_ver
                 new_device["mac"] = bt_mac
                 new_device["wifi_mac"] = wifi_mac
                 # give it the default 0, if it has children, we will overwrite the 0
                 new_device["endpoints"] = {0: dev_name}
-                del cync_device
+                # del cync_device
                 new_home["devices"][dev_id] = new_device
 
             # END OF DEVICE PARSING LOOP
@@ -509,10 +517,7 @@ class CyncCloudAPI:
                 for node_id, endpoint_data in entity_reg.items():
                     if node_id in new_home["devices"]:
                         # overwrite the default 0 endpoint with the children
-                        new_home["devices"][node_id]["endpoints"].pop(0)
-                        for _sub_id, _sub_state in endpoint_data.items():
-                            new_home["devices"][node_id]["endpoints"][_sub_id] = _sub_state.name
-
+                        new_home["devices"][node_id]["endpoints"] = endpoint_data
 
         # END OF HOME PARSING LOOP
         # write raw exported config to file for debugging, only if export source is None
