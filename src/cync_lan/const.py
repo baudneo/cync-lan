@@ -91,6 +91,8 @@ CYNC_SRV_HOST = os.environ.get("CYNC_SRV_HOST", "0.0.0.0")
 CYNC_EXPORT_HOST = os.environ.get("CYNC_EXPORT_HOST", CYNC_SRV_HOST)
 CYNC_EXPORT_SOURCE = os.environ.get("CYNC_EXPORT_SOURCE")
 
+CYNC_HASS_APP = os.environ.get("CYNC_HASS_APP", "no") in YES_ANSWER
+
 CYNC_ACCOUNT_LANGUAGE: str = os.environ.get("CYNC_ACCOUNT_LANGUAGE", "en-us").casefold()
 CYNC_ACCOUNT_USERNAME: str = os.environ.get("CYNC_ACCOUNT_USERNAME", None)
 CYNC_ACCOUNT_PASSWORD: str = os.environ.get("CYNC_ACCOUNT_PASSWORD", None)

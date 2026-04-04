@@ -19,6 +19,7 @@ from cync_lan.const import (
     CYNC_EXPORT_HOST,
     CYNC_EXPORT_PORT,
     CYNC_EXPORT_SOURCE,
+    CYNC_HASS_APP,
     CYNC_LOG_NAME,
     CYNC_STATIC_DIR,
 )
@@ -97,49 +98,53 @@ async def request_otp():
 
 @app.post("/api/restart")
 async def restart():
-    #FIXME: non HASS app needs a sigterm
+    # FIXME: non HASS app needs a sigterm
     lp = "ExportServer:restart:"
-    supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
-    if not supervisor_token:
-        logger.info(f"{lp} No SUPERVISOR_TOKEN found trying: cync_lan.stop()...")
-        g.cync_lan.stop()
+    if CYNC_HASS_APP is True:
+        supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+        if not supervisor_token:
+            logger.info(f"{lp} No SUPERVISOR_TOKEN found trying: cync_lan.stop()...")
+            g.cync_lan.stop()
+        else:
+            # The 'self' slug is a special value that refers to the current App.
+            # This is the recommended endpoint for self-restarts.
+            url = "http://supervisor/addons/self/restart"
+
+            headers = {
+                "Authorization": f"Bearer {supervisor_token}",
+                "Content-Type": "application/json",
+            }
+            logger.info(f"{lp} Attempting to restart App via API call to {url}...")
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=headers) as response:
+                        if response.status == 200:
+                            logger.debug(
+                                f"{lp} Successfully called the restart API. The App will now restart."
+                            )
+                            return True, "App is restarting."
+                        else:
+                            # Try to get more details from the response if it fails
+                            error_details = await response.text()
+                            logger.warning(
+                                f"{lp} Error: Failed to restart App. API returned status {response.status}"
+                            )
+                            logger.warning(f"{lp} Response: {error_details}")
+                            return (
+                                False,
+                                f"API returned status {response.status}: {error_details}",
+                            )
+
+            except aiohttp.ClientError as e:
+                logger.error(f"{lp} Error: An aiohttp client error occurred: {e}")
+                return False, f"AIOHTTP Client Error: {e}"
+            except Exception as e:
+                logger.error(f"{lp} An unexpected error occurred: {e}")
+                return False, f"An unexpected error occurred: {e}"
     else:
-        # The 'self' slug is a special value that refers to the current App.
-        # This is the recommended endpoint for self-restarts.
-        url = "http://supervisor/addons/self/restart"
-
-        headers = {
-            "Authorization": f"Bearer {supervisor_token}",
-            "Content-Type": "application/json",
-        }
-        logger.info(f"{lp} Attempting to restart App via API call to {url}...")
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers) as response:
-                    if response.status == 200:
-                        logger.debug(
-                            f"{lp} Successfully called the restart API. The App will now restart."
-                        )
-                        return True, "App is restarting."
-                    else:
-                        # Try to get more details from the response if it fails
-                        error_details = await response.text()
-                        logger.warning(
-                            f"{lp} Error: Failed to restart App. API returned status {response.status}"
-                        )
-                        logger.warning(f"{lp} Response: {error_details}")
-                        return (
-                            False,
-                            f"API returned status {response.status}: {error_details}",
-                        )
-
-        except aiohttp.ClientError as e:
-            logger.error(f"{lp} Error: An aiohttp client error occurred: {e}")
-            return False, f"AIOHTTP Client Error: {e}"
-        except Exception as e:
-            logger.error(f"{lp} An unexpected error occurred: {e}")
-            return False, f"An unexpected error occurred: {e}"
+        logger.info(f"{lp} Trying: cync_lan.stop()...")
+        g.cync_lan.stop()
 
 
 @app.post("/api/export/otp/submit")

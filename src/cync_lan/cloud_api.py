@@ -23,7 +23,6 @@ from cync_lan.const import (
     CYNC_LOG_NAME,
     CYNC_OVERWRITE_CONFIG_FILE,
 )
-from cync_lan.devices import CyncNode
 from cync_lan.structs import ComputedTokenData, EndpointState, GlobalObject
 
 logger = logging.getLogger(CYNC_LOG_NAME)
@@ -458,8 +457,10 @@ class CyncCloudAPI:
                     logger.debug(
                         f"{lp} Found HVAC device '{dev_name}' (ID: {dev_id}): {hvac_cfg}"
                     )
-                    logger.info(f"{lp} HVAC devices are currently unsupported, work is in progress to "
-                                f"get the thermostat and temp sensors added")
+                    logger.info(
+                        f"{lp} HVAC devices are currently unsupported, work is in progress to "
+                        f"get the thermostat and temp sensors added"
+                    )
                     continue
                     new_device["hvac"] = hvac_cfg
                 if len(raw_dev) > 4:
@@ -485,9 +486,10 @@ class CyncCloudAPI:
                         entity_reg[dev_id] = {sub_id: state.name}
                     continue
                 elif len(raw_dev) == 4:
-                    logger.debug(f"{lp} FOUND: '{dev_name}' has a thermostat related quirk with a value of: {raw_dev[3]}")
+                    logger.debug(
+                        f"{lp} FOUND: '{dev_name}' has a thermostat related quirk with a value of: {raw_dev[3]}"
+                    )
                 # END OF SUB DEVICE PARSING
-
 
                 # cync_device = CyncNode(
                 #     name=dev_name,
