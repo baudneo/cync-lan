@@ -295,6 +295,13 @@ device_type_map = {
         protocol=DeviceProtocol(TCP=True),
         capabilities=SwitchCapabilities(),
     ),
+    40: DeviceTypeInfo(
+        type=DeviceClassification.SWITCH,
+        model_name="Paddle Switch",
+        model_id="CSWONBLTWF1",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=SwitchCapabilities(),
+    ),
     41: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ Full Color Under Cabinet Light - 12 Inch",
