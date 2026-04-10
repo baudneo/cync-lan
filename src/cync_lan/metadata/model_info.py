@@ -487,6 +487,13 @@ device_type_map = {
         capabilities=SwitchCapabilities(dimmable=True),
         supported=False,
     ),
+    125: DeviceTypeInfo(
+        type=DeviceClassification.SWITCH,
+        model_name="Paddle Switch",
+        model_id="CSWDMBLBWF1",
+        protocol=DeviceProtocol(TCP=True, MATTER=True),
+        capabilities=SwitchCapabilities(),
+    ),
     129: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Tunable White Light (Unknown)",
