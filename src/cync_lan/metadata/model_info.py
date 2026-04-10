@@ -1,3 +1,4 @@
+from asyncio import protocols
 from enum import StrEnum
 from typing import Annotated, List, Optional, Union
 
@@ -493,6 +494,14 @@ device_type_map = {
         model_id="CSWDMBLBWF1",
         protocol=DeviceProtocol(TCP=True, MATTER=True),
         capabilities=SwitchCapabilities(),
+    ),
+    128: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Dimmable A19 Bulb",
+        model_id="CLEDA199LD1",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=LightCapabilities(),
+        characteristics=LightCharacteristics(lumens=800, cri=90, min_kelvin=2700)
     ),
     129: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
