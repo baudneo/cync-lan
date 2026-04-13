@@ -4,7 +4,7 @@
 > Existing `cync_mesh.yaml`? simply use the config as it is: bind mount into the docker container.
 
 ## Docker
-This project is bundled as a docker image, you can build it locally or pull images from DockerHub.
+This project is bundled as a docker image, you can build it locally.
 
 ### Build
 - Clone the repo 
@@ -14,15 +14,4 @@ This project is bundled as a docker image, you can build it locally or pull imag
 - Set up env vars using the docker-compose `environment` section or uncomment the `env_file` option and create an .env file (See [example](../docker/example.env))
 
 #### Upgrading
-- Rebuild the image
-
----
-
-### Pull
-- Copy the example [`docker-compose.yaml`](../docker/docker-compose.yaml) file
-- Set up env vars using the docker-compose `environment` section or uncomment the `env_file` option and create an .env file (See [example](../docker/example.env)) 
-- `docker compose up -d --force-recreate`
-
-#### Upgrading
-- `cd` to wherever you have your CyncLAN `docker-compose.yaml` file
-- `docker compose pull && docker compose up -d --force-recreate`
+- Rebuild the image (use no-cache for a clean build): `docker compose -f ./docker/Dockerfile build --no-cache`
