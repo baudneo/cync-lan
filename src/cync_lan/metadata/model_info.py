@@ -493,7 +493,7 @@ device_type_map = {
         model_name="Paddle Switch",
         model_id="CSWDMBLBWF1",
         protocol=DeviceProtocol(TCP=True, MATTER=True),
-        capabilities=SwitchCapabilities(),
+        capabilities=SwitchCapabilities(dimmable=True),
     ),
     128: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
