@@ -17,14 +17,6 @@ class DeviceClassification(StrEnum):
 
 
 @dataclass
-class SwitchCapabilities:
-    power: bool = True
-    dimmable: bool = False
-    fan: bool = False
-    plug: bool = False
-
-
-@dataclass
 class LightCapabilities:
     power: bool = True
     dimmable: bool = True
@@ -33,6 +25,12 @@ class LightCapabilities:
     color: bool = False
     colour: Annotated[bool, Field(alias="color")] = False
 
+
+@dataclass
+class SwitchCapabilities(LightCapabilities):
+    dimmable = False
+    fan: bool = False
+    plug: bool = False
 
 @dataclass
 class DeviceProtocol:
@@ -489,12 +487,19 @@ device_type_map = {
         supported=False,
     ),
     125: DeviceTypeInfo(
-        type=DeviceClassification.SWITCH,
-        model_name="Paddle Switch",
+        type=DeviceClassification.Light,
+        model_name="Paddle Switch TEST RGB/KELVIN",
         model_id="CSWDMBLBWF1",
         protocol=DeviceProtocol(TCP=True, MATTER=True),
-        capabilities=SwitchCapabilities(dimmable=True),
+        capabilities=LightCapabilities(color=True, tunable_white=True),
     ),
+    # 125: DeviceTypeInfo(
+    #     type=DeviceClassification.SWITCH,
+    #     model_name="Paddle Switch",
+    #     model_id="CSWDMBLBWF1",
+    #     protocol=DeviceProtocol(TCP=True, MATTER=True),
+    #     capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
+    # ),
     128: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Dimmable A19 Bulb",
