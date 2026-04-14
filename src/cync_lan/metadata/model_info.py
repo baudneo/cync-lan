@@ -487,7 +487,7 @@ device_type_map = {
         supported=False,
     ),
     125: DeviceTypeInfo(
-        type=DeviceClassification.Light,
+        type=DeviceClassification.LIGHT,
         model_name="Paddle Switch TEST RGB/KELVIN",
         model_id="CSWDMBLBWF1",
         protocol=DeviceProtocol(TCP=True, MATTER=True),
