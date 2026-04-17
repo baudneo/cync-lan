@@ -29,4 +29,4 @@ schema:
   email: str
   password: str
 map:
-  - /root/cync-lan/config:rw
+  - data:rw

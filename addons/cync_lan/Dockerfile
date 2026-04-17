@@ -105,7 +105,10 @@ RUN chmod +x /run.sh
 RUN cp -r /app/cync-lan/static/. /root/cync-lan/www/
 
 # Setup config folder
-RUN mkdir -p /root/cync-lan/config
+RUN mkdir -p /data/cync-lan
+
+# Create symlink
+RUN ln -s /data/cync-lan /root/cync-lan/config
 
 LABEL org.opencontainers.image.authors="baudneo <86508179+baudneo@users.noreply.github.com>"
 LABEL org.opencontainers.image.version="v${CYNC_VERSION}"
