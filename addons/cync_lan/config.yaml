@@ -1,0 +1,32 @@
+name: "Cync Lan"
+description: "Async HTTP/MQTT LAN controller for Cync/C by GE devices"
+url: https://github.com/CodeNeedsCoffee/cync-lan/blob/HEAD/addons/addons.md
+version: "1.2.0"
+slug: "cync_lan"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: services
+services:
+  - mqtt:need
+ingress: true
+ingress_port: 23778
+ingress_stream: true
+ports:
+  23779/tcp: 23779
+hassio_api: true
+hassio_role: manager
+homeassistant_api: true
+host_network: true
+options:
+  email: ""
+  password: ""
+schema:
+  email: str
+  password: str
+map:
+  - /root/cync-lan/config:rw
