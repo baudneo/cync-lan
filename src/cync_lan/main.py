@@ -21,6 +21,7 @@ from cync_lan.const import (
     LOG_FORMATTER,
     MQTT_CLIENT_START_TASK_NAME,
     nCYNC_START_TASK_NAME,
+    CYNC_SECRET_KEY
 )
 from cync_lan.exporter import ExportServer
 from cync_lan.mqtt_client import MQTTClient
@@ -111,12 +112,16 @@ class CyncLAN:
                 f"an existing config file or visit the ingress page and perform a device export."
             )
         if CYNC_ENABLE_EXPORTER is True:
+            if not CYNC_SECRET_KEY:
+                logger.critical(f"{lp} You must set an non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting...")
+                signal.raise_signal(signal.SIGTERM)
             g.cloud_api = CyncCloudAPI()
             g.export_server = ExportServer()
             g.export_server.start_task = x_start = asyncio.Task(
                 g.export_server.start(), name=EXPORT_SRV_START_TASK_NAME
             )
             tasks.append(x_start)
+
 
         try:
             # the components start() methods have long running tasks of their own

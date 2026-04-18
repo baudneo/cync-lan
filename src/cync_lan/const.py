@@ -129,7 +129,7 @@ CYNC_HASS_STATUS_TOPIC = os.environ.get("CYNC_HASS_STATUS_TOPIC", "status")
 CYNC_HASS_BIRTH_MSG = os.environ.get("CYNC_HASS_BIRTH_MSG", "online")
 CYNC_HASS_WILL_MSG = os.environ.get("CYNC_HASS_WILL_MSG", "offline")
 CYNC_MQTT_CONN_DELAY: int = int(os.environ.get("CYNC_MQTT_CONN_DELAY", 10))
-
+CYNC_SECRET_KEY: str = os.environ.get("CYNC_SECRET_KEY", None)
 CYNC_RAW = os.environ.get("CYNC_RAW_DEBUG", "0").casefold() in YES_ANSWER
 CYNC_DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in YES_ANSWER
 
@@ -149,7 +149,7 @@ CYNC_CONFIG_DIR = os.environ.get(
 
 CYNC_CONFIG_FILE_PATH: str = f"{CYNC_CONFIG_DIR}/cync_mesh.yaml"
 CYNC_UUID_PATH: str = f"{CYNC_CONFIG_DIR}/uuid.txt"
-CYNC_CLOUD_AUTH_PATH: str = f"{CYNC_CONFIG_DIR}/.cloud_auth.yaml"
+CYNC_CLOUD_AUTH_PATH: str = f"{CYNC_CONFIG_DIR}/.cloud_auth.enc.json"
 
 CYNC_SSL_CERT: str = os.environ.get(
     "CYNC_DEVICE_CERT", f"/root/cync-lan/certs/cert.pem"

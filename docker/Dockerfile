@@ -21,7 +21,8 @@ RUN set -x \
         "aiohttp>=3.10.8" \
         "fastapi>=0.115.12" \
         "uvicorn>=0.34.3" \
-        "tzlocal>=5.3.1"
+        "tzlocal>=5.3.1" \
+        "cryptography>=46.0.7"
 
 # copy, install, remove src for smaller image
 WORKDIR /tmp/cync-src

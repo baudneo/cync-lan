@@ -18,6 +18,9 @@ services:
       - ./config:/root/cync-lan/config
 #    env_file: ./env
     environment:
+      # secret key used to encrypt the cync cloud access token at rest
+      # REQUIRED if export server is enabled, but can be any value. Just make sure to use a unique value and not the default for better security.
+      CYNC_SECRET_KEY: "PLEASE_CHANGE_ME_TO_A_RANDOM_STRING"
       TZ: "America/Chicago"
       # to export devices from the cloud account, the export web app needs to be enabled and the cync username/password configured.
       # if you only want to use the LAN bridge functionality and don't need to export devices from the cloud account,

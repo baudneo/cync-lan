@@ -1,12 +1,16 @@
 import datetime
 import json
 import logging
-import pickle
+import os
+import base64
 import random
+import signal
 import string
 from pathlib import Path
 from typing import Optional
-
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import aiohttp
 import yaml
 
@@ -22,6 +26,7 @@ from cync_lan.const import (
     CYNC_EXPORT_SOURCE,
     CYNC_LOG_NAME,
     CYNC_OVERWRITE_CONFIG_FILE,
+    CYNC_SECRET_KEY,
 )
 from cync_lan.structs import ComputedTokenData, EndpointState, GlobalObject
 
@@ -70,50 +75,47 @@ class CyncCloudAPI:
 
     async def read_token_cache(self) -> Optional[ComputedTokenData]:
         """
-        Read the token cache from the file.
+        Read the encrypted token cache from a file.
         Returns:
             CloudTokenData: The cached token data if available, otherwise None.
         """
         lp = f"{self.lp}:read_token_cache:"
         try:
             with open(self.auth_cache_file, "rb") as f:
-                token_data: Optional[ComputedTokenData] = pickle.load(f)
+                encrypted_data = f.read()
+
+            cipher = self._get_fernet_cipher()
+            decrypted_json = cipher.decrypt(encrypted_data)
+            token_dict = json.loads(decrypted_json.decode('utf-8'))
+
+            logger.debug(f"{lp} Cached token data read and decrypted successfully")
+            return ComputedTokenData(**token_data)
+
         except FileNotFoundError:
             logger.debug(f"{lp} Token cache file not found: {self.auth_cache_file}")
             return None
-        else:
-            if not token_data:
-                logger.debug(f"{lp} Cached token data is EMPTY!")
-                return None
-            logger.debug(f"{lp} Cached token data read successfully")
-            return token_data
-            # add issued_at to the token data for computing the expiration datetime
-            # iat = datetime.datetime.now(datetime.UTC)
-            # token_data["issued_at"] = iat
-            # return ComputedTokenData(**token_data)
+        except Exception as e:
+            logger.error(
+                f"{lp} Failed to decrypt or parse token cache. It may be corrupt or the secret key changed: {e}")
+            return None
 
     async def check_token(self) -> bool:
         """Check if we need to request a new OTP code for 2FA authentication."""
         lp = f"{self.lp}:check_tkn:"
-        # read the token cache
         self.token_cache = await self.read_token_cache()
         if not self.token_cache:
             logger.debug(f"{lp} No cached token found, requesting OTP...")
             return False
-        # check if the token is expired
         if self.token_cache.expires_at < datetime.datetime.now(datetime.UTC):
             logger.debug(f"{lp} Token expired, requesting OTP...")
-            # token expired, request OTP
             return False
         else:
             logger.debug(f"{lp} Token is valid, using cached token")
-            # token is valid, return the token data
         return True
 
     async def request_otp(self) -> bool:
         """
         Request an OTP code for 2FA authentication.
-        The username and password are defined in the hass_add-on 'configuration' page
         """
         lp = f"{self.lp}:request_otp:"
         await self._check_session()
@@ -189,13 +191,12 @@ class CyncCloudAPI:
         else:
             # add issued_at to the token data for computing the expiration datetime
             token_data["issued_at"] = iat
-            computed_token = ComputedTokenData(**token_data)
-            await self.write_token_cache(computed_token)
+            await self.write_token_cache(ComputedTokenData(**token_data))
             return True
 
     async def write_token_cache(self, tkn: ComputedTokenData) -> bool:
         """
-        Write the token cache to the file.
+        Write the encrypted token cache to file.
         Args:
             tkn (ComputedTokenData): The token data to write to the cache.
         Returns:
@@ -203,17 +204,17 @@ class CyncCloudAPI:
         """
         lp = f"{self.lp}:write_token_cache:"
         try:
+            json_data = tkn.model_dump_json().encode('utf-8')
+            cipher = self._get_fernet_cipher()
+            encrypted_data = cipher.encrypt(json_data)
             with open(self.auth_cache_file, "wb") as f:
-                pickle.dump(tkn, f)
-        except Exception as e:
-            logger.error(f"{lp} Failed to write token cache: {e}")
-            return False
-        else:
-            logger.debug(
-                f"{lp} Token cache written successfully to: {self.auth_cache_file}"
-            )
+                f.write(encrypted_data)
+            logger.debug(f"{lp} Token cache encrypted and written successfully to: {self.auth_cache_file}")
             self.token_cache = tkn
             return True
+        except Exception as e:
+            logger.error(f"{lp} Failed to write encrypted token cache: {e}")
+            return False
 
     async def request_device_data(self):
         """Get a list of Cync homes that have their own devices for a particular account."""
@@ -256,7 +257,10 @@ class CyncCloudAPI:
         return ret
 
     async def get_cync_home_properties(self, product_id: str, device_id: str):
-        """Get properties for a Cync home. Properties contain a device list (bulbsArray), groups (groupsArray), and saved light effects (lightShows)."""
+        """
+        Get properties for a Cync home. Properties contain a device list (bulbsArray),
+        groups (groupsArray), and saved light effects (lightShows).
+        """
         lp = f"{self.lp}:get_properties:"
         await self._check_session()
         access_token = self.token_cache.access_token
@@ -350,12 +354,6 @@ class CyncCloudAPI:
         else:
             # use the cloud
             exported_data = await self.request_device_data()
-        # moved into _parse_raw_export to only pull properties for valid homes that have a name
-        # prevents unnecessary API calls for empty homes that don't have any devices or properties
-        # for exported_home in exported_data:
-        #     exported_home["properties"] = await self.get_cync_home_properties(
-        #         exported_home["product_id"], exported_home["id"]
-        #     )
         cync_lan_cfg = await self._parse_raw_export(exported_data)
         # write config to file in YAML format
         base_cfg_path = Path(CYNC_CONFIG_FILE_PATH)
@@ -544,3 +542,25 @@ class CyncCloudAPI:
 
         config_dict = {"exported_homes": new_cfg}
         return config_dict
+
+    def _get_fernet_cipher(self) -> Fernet:
+        """
+        Derives a secure, 32-byte url-safe base64-encoded key from the CYNC_SECRET_KEY
+        passphrase using PBKDF2 and initializes a fernet cipher suite.
+        """
+        if not CYNC_SECRET_KEY:
+            logger.critical("CYNC_SECRET_KEY is not set! You must configure this!")
+            signal.raise_signal(signal.SIGINT)
+        else:
+            passphrase = CYNC_SECRET_KEY.encode()
+        # A static salt is used because the target file is local and we need to derive
+        # the exact same key across restarts without storing it on disk.
+        salt = b"cync_lan_static_salt_for_local_storage"
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=480000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(passphrase))
+        return Fernet(key)
