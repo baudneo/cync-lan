@@ -137,7 +137,7 @@ CYNC_BASE_DIR: str = os.environ.get("CYNC_BASE_DIR", "/root/cync-lan")
 CYNC_STATIC_DIR: str = os.environ.get("CYNC_STATIC_DIR", f"{CYNC_BASE_DIR}/www")
 CYNC_CFGAPPEND_DIR: str = os.environ.get("CYNC_CFGAPPEND_DIR", "/config")
 CYNC_OVERWRITE_CONFIG_FILE: bool = (
-    os.environ.get("CYNC_OVERWRITE_CONFIG_FILE", "0").casefold() in YES_ANSWER
+    os.environ.get("CYNC_OVERWRITE_CONFIG_FILE", "1").casefold() in YES_ANSWER
 )
 if CYNC_CFGAPPEND_DIR is not None and CYNC_CFGAPPEND_DIR:
     if not CYNC_CFGAPPEND_DIR.startswith("/"):

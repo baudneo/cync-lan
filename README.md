@@ -10,10 +10,6 @@ Huge thanks to [@CodeNeedsCoffee](https://github.com/CodeNeedsCoffee) for the in
 The existing `python` branch will remain for users who prefer a non HASS App setup. However, docker is required and 
 manual installation is no longer officially supported.
 
-![GitHub Release](https://img.shields.io/github/v/release/baudneo/cync-lan) 
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/baudneo/cync-lan/container-package-publish.yml) 
-![Docker Pulls](https://img.shields.io/docker/pulls/baudneo/cync-lan)
-
 >[!WARNING]
 > **DO NOT** contact GE / Savant for troubleshooting while using this project, open issues here and tag @baudneo 
 > for fast responses.
@@ -69,20 +65,22 @@ See the [installation](./docs/install.md) docs for more information
 > talking to Cync cloud will need to be power cycled before they make
 > a DNS request and connect to the local `cync-lan` server.
 
-There are detailed instructions for OPNSense, Pi-hole and Ad-Guard Home. 
+There are detailed instructions for OPNSense (unbound / dnscrypt-proxy), Pi-hole, Ad-Guard Home and TP-Link Omada SDN. 
 See [DNS docs](docs/DNS.md) for more information.
 
 ## Tips
 See [Tips](docs/tips.md) for more information on how to get the most out of this project.
 
 Also, let me set some expectations:
-1. HASS light groups will always have a delay on state changes between each other (set group of cync lights green, they don't all change to green at the same time) 
-At the moment, the script receives an MQTT command, sends commands to `x` devices 
-and receives a `success` response all within 200 ish ms (0.2 seconds). I don't know
-what happens on the device itself, but the TCP <-> BT bridge is not instant, when it really should be. Work continues on improving this.
-2. There are no provisions for the Cync app to work with this project, any data sent by the app is black-holed (for now, anyway; MITM proxy to record commands and responses in the future).
+1. HASS based light groups will always have a delay on state changes between each other (set group of cync lights green, they don't all change to green at the same time)
+  - As of 0.0.5b1, Cync **switches** are exposed as `light` entities in Home Assistant, this allows you to target a Cync light switch with RGB, brightness or white temp commands and the Cync app group/room that switch is a part of will change in unison, just like they do in the Cync app when you control a group/room, or a physical button press.
+  - This assumes the switch is configured to control Cync devices logically rather than physical switching of the circuit (hasn't been tested with non logical setup)
+  - The reason I don't want to add Cync groups/rooms is that on every change of a group/room the end user would need to re-export a config file. With this switch as a `light` entity method, cync-lan doesnt need to know what device belongs to what Cync group/room, the end user knows which switch controls what devices and can target the switch with commands to broadcast to the Cync group/room.
+    - If you want the rooms/groups exposed as their own device/entity, open an issue to discuss.
+2. There are no provisions for the Cync mobile app to work with this project, any data sent by the app is black-holed (for now, anyway; MITM proxy to record commands and responses in the future).
 3. If I don't own a device, I cant test it, and if I cant test it, I cant support it easily. 
-   - If you want a device supported, you will need to set up a debug env and send me logs of the device communicating with the cloud server.
+   - If you want a device supported, you will need to set up a debug env (DNS redirect to a machine running `socat`) and send me logs of the device communicating with the cloud server *until* the MITM mode is implemented to capture command sequences in real-time, greatly reducing the manual labour required to debug and add unknown devices/features.
+4. Custom light scenes/shows; from what I have seen it sends a large stream of binary data to the device (presumably RGB, fade/transition times, etc.) then the device executes the show/scene on a loop based on that data. This will be on the roadmap at some point once things get to a basic stable build of 0.1.0+.
 ---
 
 ## Config file
@@ -93,17 +91,11 @@ See the example [config file](./cync_mesh_example.yaml)
 #### **NEW** Web App
 By default, the export webserver is started when cync-lan is. Navigate to http://localhost:23778 to access the export web app.
 
-#### CLI
-~~There is an `export` sub command~~ **Currently being refactored**.
-
 ---
-
-## CLI arguments
-You can always supply `--help` to the cync-lan.py script to get a breakdown.
 
 ## Env Vars
 For the `yes` / `no` value, the user input is cast to a lower case string stripped of spaces:
-- Yes answers: "true", "1", "yes", "y", "t", 1, "on", "o"
+- Yes answers: "true", "t", "yes", "y", "1", 1, "on", "o"
 - No is interpreted as anything other than the yes answers
 
 | Variable                     | Description                                                                                                                 | Default                               | Type |
@@ -111,13 +103,13 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_ENABLE_EXPORTER`       | Start the local device export web app                                                                                       | `yes`                                 | str  |
 | `CYNC_ACCOUNT_USERNAME`      | Cync account username (email) *Required* for the export web app                                                             |                                       | str  |
 | `CYNC_ACCOUNT_PASSWORD`      | Cync account password *Required* for the export web app                                                                     |                                       | str  |
-| `CYNC_OVERWRITE_CONFIG_FILE` | On export, overwrite `cync_mesh.yaml` or use a numbered system: `*_1.yaml`, `*_2.yaml`, etc.                                | `no`                                  | str  |
+| `CYNC_OVERWRITE_CONFIG_FILE` | On export, overwrite `cync_mesh.yaml` or use a numbered system: `*_1.yaml`, `*_2.yaml`, etc.                                | `yes`                                 | str  |
 | `CYNC_MQTT_HOST`             | Host of MQTT broker                                                                                                         | `homeassistant.local`                 | str  |
 | `CYNC_MQTT_PORT`             | Port of MQTT broker                                                                                                         | `1883`                                | int  |
 | `CYNC_MQTT_USER`             | Username for MQTT broker                                                                                                    |                                       | str  |
 | `CYNC_MQTT_PASS`             | Password for MQTT broker                                                                                                    |                                       | str  |
 | `CYNC_MQTT_CONN_DELAY`       | Delay between MQTT re-connections (seconds)                                                                                 | `10`                                  | int  |
-| `CYNC_MQTT_DEBUG`            | Enable MQTT debug logs even if debug level is set (set to no for less debug level log spam)                                 | `yes`                                 | str  |
+| `CYNC_MQTT_DEBUG`            | Override MQTT debug logs (set to no for less debug level log spam)                                                          | `yes`                                 | str  |
 | `CYNC_DEBUG`                 | Enable debug logging                                                                                                        | `no`                                  | str  |
 | `CYNC_RAW_DEBUG`             | Enable raw binary message debug logging                                                                                     | `no`                                  | str  |
 | `CYNC_DEVICE_CERT`           | Path to cert file                                                                                                           | `certs/server.pem`                    | str  |
@@ -134,7 +126,6 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_CMD_BROADCASTS`        | Number of WiFi devices to send state *change* commands to (2+ offers noticeable command response improvements)              | `2`                                   | int  |
 | `CYNC_MAX_TCP_CONN`          | Maximum WiFi devices allowed to connect at a time (keep down log spam, unneccesary load)                                    | `8`                                   | int  |
 | `CYNC_TCP_WHITELIST`         | Comma separated string of allowed IPs (keep down log spam, unneccesary load, restrict to 'always-on' devices)               | Allow ALL IPs                         | str  |
-| `CYNC_TCP_BLACKHOLE_DELAY`   | If a non-whitelisted IP *OR* max devices reached connects, how long to keep the connection open before closing it (seconds) | `14.95`                               | int  |
 | `CYNC_BASE_DIR`              | Base directory for **ALL** files.                                                                                           | `/root/cync-lan`                      | str  |
 | `CYNC_CFGAPPEND_DIR`         | Directory for persistent files (config, uuid, etc.) This is **appended** to `CYNC_BASE_DIR`                                 | `/config`                             | str  |
 | `CYNC_STATIC_DIR`            | Absolute path to where the index.html and css/js dirs/files are stored                                                      | `{CYNC_BASE_DIR}/www`                 | str  |
