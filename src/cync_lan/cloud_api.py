@@ -83,14 +83,11 @@ class CyncCloudAPI:
         try:
             with open(self.auth_cache_file, "rb") as f:
                 encrypted_data = f.read()
-
             cipher = self._get_fernet_cipher()
             decrypted_json = cipher.decrypt(encrypted_data)
             token_dict = json.loads(decrypted_json.decode('utf-8'))
-
             logger.debug(f"{lp} Cached token data read and decrypted successfully")
-            return ComputedTokenData(**token_data)
-
+            return ComputedTokenData(**token_dict)
         except FileNotFoundError:
             logger.debug(f"{lp} Token cache file not found: {self.auth_cache_file}")
             return None
