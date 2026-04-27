@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cync_lan"
-version = "0.0.5b1"
+version = "0.0.5b2"
 description = "A Python library for local async MQTT control of Cync/C by GE smart devices (DNS redirection required)"
 readme = "README.md"
 authors = [{name = "baudneo", email = "86508179+baudneo@users.noreply.github.com"}]
