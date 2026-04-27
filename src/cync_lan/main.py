@@ -115,6 +115,7 @@ class CyncLAN:
             if not CYNC_SECRET_KEY:
                 logger.critical(f"{lp} You must set an non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting...")
                 signal.raise_signal(signal.SIGTERM)
+                sys.exit(55)
             g.cloud_api = CyncCloudAPI()
             g.export_server = ExportServer()
             g.export_server.start_task = x_start = asyncio.Task(
