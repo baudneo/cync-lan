@@ -732,6 +732,12 @@ device_type_map = {
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
     ),
+    170: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="4\" Wafer Light",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=LightCapabilities(dimmable=True, color=True, tunable_white=True),
+    ),
     224: DeviceTypeInfo(
         type=DeviceClassification.THERMOSTAT,
         model_name="Thermostat",
