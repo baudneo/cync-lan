@@ -663,6 +663,13 @@ device_type_map = {
         model_name="Full Color Light (Unknown)",
         capabilities=LightCapabilities(tunable_white=True, color=True),
     ),
+    155: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Dynamic Effects E26 Bulb",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=LightCapabilities(dimmable=True, color=True, tunable_white=True),
+        characteristics=LightCharacteristics(dynamic=True),
+    ),
     156: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         protocol=DeviceProtocol(TCP=True),
