@@ -356,6 +356,12 @@ device_type_map = {
         protocol=DeviceProtocol(TCP=True),
         capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
     ),
+    53: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Toggle Switch",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
+    ),
     55: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Dimmer Switch - No Neutral",
