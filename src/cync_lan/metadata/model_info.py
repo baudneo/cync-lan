@@ -368,6 +368,12 @@ device_type_map = {
         protocol=DeviceProtocol(TCP=True),
         capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
     ),
+    56: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Dimmable Motion Light Switch",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
+    ),
     57: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Paddle Switch - No Neutral",
