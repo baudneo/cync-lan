@@ -1,5 +1,8 @@
-### 0.0.5b2
+### 0.0.5b3
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- add deviceType's 53, 56, 155, 170
+
+### 0.0.5b2
 - BREAKING CHANGES:
   - Add encryption for the cloud token cache at rest; Fernet with static seeded PBKDF2HMAC key.
   - REQUIRES: Setting a random alphanumeric string for CYNC_SECRET_KEY in the App config
