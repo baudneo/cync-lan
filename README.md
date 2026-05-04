@@ -53,7 +53,7 @@ See the [installation](./docs/install.md) docs for more information
 
 
 >[!IMPORTANT]
-> After configuring and running the container, you must visit http://localhost:23778 in order to export your Cync 
+> After configuring and running the container (but before enabling DNS redirection), you must visit http://localhost:23778 in order to export your Cync 
 > devices from the Cync cloud API. Your Cync account creds are set using an env var in the docker-compose.yaml file, 
 > the web app will initiate OTP auth and export homes and each homes device list
 
@@ -71,12 +71,15 @@ See [DNS docs](docs/DNS.md) for more information.
 ## Tips
 See [Tips](docs/tips.md) for more information on how to get the most out of this project.
 
+### Cync Group/Room support
+Currently, the only way to interact with cync groups is to target a physical light switch that is a part of the Cync group/room with the on/off, kelvin or RGB command.
+Cync switches are represented as a light in Home Assistant, so you can target the switch with light commands. The Cync group/room that the switch is a part of will change in unison, 
+just like they do in the Cync app when you control a group/room, or a physical button press.
+
+This assumes the switch is configured to control Cync devices logically rather than physical switching of the circuit (hasn't been tested with non logical setup).
+
 Also, let me set some expectations:
 1. HASS based light groups will always have a delay on state changes between each other (set group of cync lights green, they don't all change to green at the same time)
-  - As of 0.0.5b1, Cync **switches** are exposed as `light` entities in Home Assistant, this allows you to target a Cync light switch with RGB, brightness or white temp commands and the Cync app group/room that switch is a part of will change in unison, just like they do in the Cync app when you control a group/room, or a physical button press.
-  - This assumes the switch is configured to control Cync devices logically rather than physical switching of the circuit (hasn't been tested with non logical setup)
-  - The reason I don't want to add Cync groups/rooms is that on every change of a group/room the end user would need to re-export a config file. With this switch as a `light` entity method, cync-lan doesnt need to know what device belongs to what Cync group/room, the end user knows which switch controls what devices and can target the switch with commands to broadcast to the Cync group/room.
-    - If you want the rooms/groups exposed as their own device/entity, open an issue to discuss.
 2. There are no provisions for the Cync mobile app to work with this project, any data sent by the app is black-holed (for now, anyway; MITM proxy to record commands and responses in the future).
 3. If I don't own a device, I cant test it, and if I cant test it, I cant support it easily. 
    - If you want a device supported, you will need to set up a debug env (DNS redirect to a machine running `socat`) and send me logs of the device communicating with the cloud server *until* the MITM mode is implemented to capture command sequences in real-time, greatly reducing the manual labour required to debug and add unknown devices/features.
@@ -154,14 +157,20 @@ and I can walk you through getting good debug logs, or you can use
 cloud server in real-time yourself by running:
 
 ```bash
-# make sure to create the self-signed certs first (they will be located in ./certs/ dir)
+# make sure to create the self-signed certs first using the included script (they will be located in ./certs/ dir)
 # Older firmware devices
-socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:34.73.130.191:23779,verify=0
+sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:34.73.130.191:23779,verify=0
 # Newer firmware devices (Notice the last IP change)
 sudo socat -d -d -lf /dev/stdout -x -v 2> dump.txt ssl-l:23779,reuseaddr,fork,cert=certs/server.pem,verify=0 openssl:35.196.85.236:23779,verify=0
 ```
 In `dump.txt` you will see the back-and-forth communication between the device and the cloud server.
 `>` is device to server, `<` is server to device.
+
+### Best `socat` based debugging practices
+- spin up vm/lxc so you have 2 `socat` hosts available
+- using unbound and its `views` feature to selectively redirect devices to your MITM `socat` machine is a great way to reduce noise in the logs and only capture the traffic of the device you want to add support for
+  - allows for only redirecting the device and mobile app to different machines hosting `socat`; see what the mobile app sends and then what the cloud sends to the device
+  - the goal is to only have 1 device talking to 1 `socat` instance, so you can easily correlate the logs to the device and not have to sift through a ton of noise from other devices
 
 >[!IMPORTANT]
 > I am planning on writing a MITM mode that will allow a user to capture command sequences in real-time, greatly reducing the manual labour required to debug and add unknown devices.
@@ -184,8 +193,3 @@ and will connect to the local `cync-lan` server.
 # Troubleshooting
 If you are having issues, please see the 
 [Troubleshooting docs](docs/troubleshooting.md) for more information.
-
-# Buy devices to be supported
-If you really want a device added, [purchase it from this Amazon wish list](https://www.amazon.ca/registries/gl/guest-view/270SHDZQLXRU8), 
-and it will be sent to me. I will add support ASAP.
-
