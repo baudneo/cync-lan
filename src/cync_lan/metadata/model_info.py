@@ -645,6 +645,14 @@ device_type_map = {
         characteristics=LightCharacteristics(min_kelvin=2700),
         capabilities=LightCapabilities(),
     ),
+    151: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Soft White Decorative Candle Light",
+        model_id="CLEDBM6LDGF",
+        protocol=DeviceProtocol(TCP=True),
+        characteristics=LightCharacteristics(lumens=500, min_kelvin=2700, cri=90),
+        capabilities=LightCapabilities(),
+    ),
     152: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ White A19 Bulb",
