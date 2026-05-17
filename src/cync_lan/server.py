@@ -1,14 +1,14 @@
 import asyncio
 import logging
-import time
 import ssl
+import time
 from typing import Dict, Optional, Union
 
 import uvloop
 
 from cync_lan.const import CYNC_LOG_NAME, CYNC_SRV_HOST, CYNC_SRV_PORT
-from cync_lan.devices import CyncNode, CyncTCPDevice
-from cync_lan.structs import EndpointState, GlobalObject
+from cync_lan.devices import CyncDevice, CyncTCPSession
+from cync_lan.structs import EntityState, GlobalObject
 
 __all__ = [
     "nCyncServer",
@@ -23,8 +23,9 @@ class nCyncServer:
     The Wi-Fi devices translate messages, status updates and commands to/from the Cync BTLE mesh.
     """
 
-    devices: Dict[int, CyncNode] = {}
-    tcp_devices: Dict[str, Optional[CyncTCPDevice]] = {}
+    node_devices: Dict[int, CyncDevice] = {}
+    tcp_connections: Dict[str, Optional[CyncTCPSession]] = {}
+    app_tcp_connections: Dict[str, Optional[CyncTCPSession]] = {}
     shutting_down: bool = False
     running: bool = False
     host: str
@@ -42,8 +43,8 @@ class nCyncServer:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, node_map: Dict[int, "CyncNode"]):
-        self.devices: Dict[int, "CyncNode"] = node_map
+    def __init__(self, node_map: Dict[int, "CyncDevice"]):
+        self.node_devices: Dict[int, "CyncDevice"] = node_map
         self.tcp_conn_attempts: dict = {}
         self.ssl_context: Optional[ssl.SSLContext] = None
         self.host: str = CYNC_SRV_HOST
@@ -56,8 +57,8 @@ class nCyncServer:
         )
 
     async def remove_tcp_device(
-        self, device: Union[CyncTCPDevice, str]
-    ) -> Optional[CyncTCPDevice]:
+        self, device: Union[CyncTCPSession, str]
+    ) -> Optional[CyncTCPSession]:
         """
         Remove a TCP device from the server's device list.
         :param device: The CyncTCPDevice to remove.
@@ -66,42 +67,57 @@ class nCyncServer:
         lp = f"{self.lp}remove_tcp_device:"
         if isinstance(device, str):
             # if device is a string, it is the address
-            if device in self.tcp_devices:
-                device = self.tcp_devices[device]
+            if device in self.tcp_connections:
+                device = self.tcp_connections[device]
 
-        if isinstance(device, CyncTCPDevice):
-            if device.address in self.tcp_devices:
-                dev = self.tcp_devices.pop(device.address, None)
+        if isinstance(device, CyncTCPSession):
+            if device.ip_address in self.tcp_connections:
+                dev = self.tcp_connections.pop(device.ip_address, None)
                 if dev is not None:
                     logger.debug(
-                        f"{lp} Removed TCP device {device.address} from server.tcp_devices."
+                        f"{lp} Removed TCP device {device.ip_address} from server.tcp_devices."
                     )
                     # "state_topic": f"{self.topic}/status/bridge/tcp_devices/connected",
                     if g.mqtt_client is not None:
                         await g.mqtt_client.publish(
                             f"{g.env.mqtt_topic}/status/bridge/tcp_devices/connected",
-                            str(len(self.tcp_devices)).encode(),
+                            str(len(self.tcp_connections)).encode(),
                         )
             else:
                 logger.warning(
-                    f"{lp} Device {device.address} not found in TCP devices."
+                    f"{lp} Device {device.ip_address} not found in TCP devices."
                 )
+        await self._update_app_stats()
         return dev
 
-    async def add_tcp_device(self, device: CyncTCPDevice):
+    async def add_tcp_device(self, device: CyncTCPSession):
         """
         Add a TCP device to the server's device list.
         :param device: The CyncTCPDevice to add.
         """
-        lp = f"{self.lp}add_tcp_device:"
-        self.tcp_devices[device.address] = device
-        logger.debug(f"{lp} Added TCP device {device.address} to server.")
-        if g.mqtt_client is not None:
-            # publish the device removal
-            await g.mqtt_client.publish(
-                f"{g.env.mqtt_topic}/status/bridge/tcp_devices/connected",
-                str(len(self.tcp_devices)).encode(),
-            )
+        lp = f"{self.lp}add_tcp_conn:"
+        self.tcp_connections[device.ip_address] = device
+        logger.debug(f"{lp} Adding {device.ip_address}")
+        await self._update_app_stats()
+        await device.start_tasks()
+
+    async def _update_app_stats(self):
+        """Publish count and IPs of connected apps."""
+        if not g.mqtt_client:
+            return
+        apps = self.app_tcp_connections
+        app_ips = [d.ip_address for d in apps]
+        # todo: add app ip addresses as an attribute
+        await g.mqtt_client.publish(
+            f"{g.env.mqtt_topic}/status/bridge/apps/connected", str(len(apps)).encode()
+        )
+
+        devs = self.tcp_connections
+        await g.mqtt_client.publish(
+            f"{g.env.mqtt_topic}/status/bridge/tcp_devices/connected",
+            str(len(devs)).encode(),
+        )
+
 
     async def create_ssl_context(self):
         # Allow the server to use a self-signed certificate
@@ -133,77 +149,11 @@ class nCyncServer:
         ssl_context.set_ciphers(":".join(ciphers))
         return ssl_context
 
-    async def handle_endpoint(
-            self,
-            e_state: EndpointState,
-            is_recent: bool = True,
-            from_pkt: Optional[str] = None,
-    ):
-        """Extracted status packet parsing, handles MQTT publishing and device state changes."""
-        ts = time.time()
-        node_id = e_state.node_id
-        node: CyncNode = g.ncync_server.devices.get(node_id)
-        if not node:
-            logger.warning(
-                f"Device ID: {node_id} not found in devices! Device may be disabled in "
-                f"config file or you need to re-export your Cync account devices!"
-            )
-            return
-        sub_fmt_str = ' \'{}\' ({})'.format(e_state.name, e_state.id) if e_state.id > 0 else ''
-        if not is_recent:
-            if node.metadata is not None:
-                if not node.metadata.supported:
-                    return
-
-                logger.debug(f"{node.lp}{sub_fmt_str} seems to have STALE data.")
-                node.num_late_states += 1
-                tcp_count = len(self.tcp_devices) or 1
-                if tcp_count == 1:
-                    # single device will be source of truth
-                    if node.online:
-                        node.online = False
-                        logger.warning(
-                            f"{node.lp}{sub_fmt_str} marked OFFLINE "
-                            f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
-                        )
-                    else:
-                        logger.warning(
-                            f"{node.lp}{sub_fmt_str} is still marked as {'ONLINE' if node.online else 'OFFLINE'} -> "
-                            f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
-                        )
-                    return
-                elif tcp_count > 1:
-                    # time_since_valid = ts - node.last_valid_state_ts
-                    # if node.num_late_states > allowed_late and time_since_valid >= 30.0:
-                    if node.num_late_states >= tcp_count:
-                        if node.online:
-                            node.online = False
-                            logger.warning(
-                                f"{node.lp}{sub_fmt_str} marked OFFLINE "
-                                f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
-                            )
-                        else:
-                            logger.warning(
-                                f"{node.lp}{sub_fmt_str} is still marked as {'ONLINE' if node.online else 'OFFLINE'} -> "
-                                f"(stale state count {node.num_late_states} / num tcp nodes {tcp_count})"
-                            )
-                    return
-
-
-        if not node.online:
-            logger.info(f"{node.lp}{' \'{}\' ({})'.format(e_state.name, e_state.id) if e_state.id > 0 else ''} "
-                        f"is back ONLINE.")
-            node.online = True
-        g.last_valid_state_ts = node.last_valid_state_ts = ts
-        node.num_late_states = 0
-        node.endpoints[e_state.id] = e_state
-        g.ncync_server.devices[node_id] = node
-
-        await g.mqtt_client.parse_endpoint_state(e_state, from_pkt=from_pkt)
-
     async def start(self):
         lp = f"{self.lp}start:"
-        logger.debug(f"{lp} Creating SSL context - key: {self.key_file}, cert: {self.cert_file}")
+        logger.debug(
+            f"{lp} Creating SSL context - key: {self.key_file}, cert: {self.cert_file}"
+        )
         try:
             self.ssl_context = await self.create_ssl_context()
             self._server = await asyncio.start_server(
@@ -245,8 +195,8 @@ class nCyncServer:
         try:
             self.shutting_down = True
             lp = f"{self.lp}stop:"
-            device: CyncTCPDevice
-            devices = list(self.tcp_devices.values())
+            device: CyncTCPSession
+            devices = list(self.tcp_connections.values())
             if devices:
                 logger.debug(
                     f"{lp} Shutting down, closing connections to {len(devices)} devices..."
@@ -298,6 +248,7 @@ class nCyncServer:
     async def _register_new_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
+        dev2add = None
         client_addr: str = writer.get_extra_info("peername")[0]
         if client_addr in self.tcp_conn_attempts:
             self.tcp_conn_attempts[client_addr] += 1
@@ -306,21 +257,31 @@ class nCyncServer:
         lp = f"{self.lp}new_conn:{client_addr}:"
         existing_device = await self.remove_tcp_device(client_addr)
         if existing_device is not None:
-            existing_device_id = id(existing_device)
+            _add_str = ""
+            if not existing_device.mitm_mode:
+                _add_str = " closing and"
+                await existing_device.close()
             logger.debug(
-                f"{lp} Existing device found ({existing_device_id}), gracefully closing and killing..."
+                f"{lp} Existing TCP session found, gracefully{_add_str} replacing..."
             )
-            await existing_device.close()
-            del existing_device
         try:
-            new_device = CyncTCPDevice(reader, writer, client_addr)
-            # will sleep devices that cant connect to prevent connection flooding
-            can_connect = await new_device.can_connect()
-            if can_connect:
-                await self.add_tcp_device(new_device)
+            if existing_device is not None:
+                if existing_device.allowed_to_connect is False:
+                    can_connect = existing_device.can_connect()
+                    if can_connect is False:
+                        del existing_device
+                        existing_device = None
+                        dev2add = None
+                if existing_device is not None:
+                    existing_device.reader = reader
+                    existing_device.writer = writer
+                    existing_device.ip_address = client_addr
+                    existing_device.existing_init()
+                    dev2add = existing_device
             else:
-                await new_device.close()
-                del new_device
+                dev2add = CyncTCPSession(reader, writer, client_addr)
+            if dev2add is not None:
+                await self.add_tcp_device(dev2add)
         except asyncio.CancelledError as ce:
             logger.debug(f"{lp} Connection cancelled: {ce}")
             # propagate the cancellation

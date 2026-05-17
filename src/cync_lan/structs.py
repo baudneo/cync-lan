@@ -8,6 +8,7 @@ import time
 from argparse import Namespace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Coroutine, Dict, List, Optional, Tuple, Union
+import uuid
 
 import uvloop
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -50,6 +51,7 @@ class GlobalObjEnv(BaseModel):
     cync_srv_ssl_key: Optional[str] = None
     appended_config_dir: Optional[str] = None
     base_dir: Optional[str] = None
+    app_mitm_logging: bool = False
 
 
 class GlobalObject:
@@ -59,10 +61,9 @@ class GlobalObject:
     loop: Union[uvloop.Loop, asyncio.AbstractEventLoop, None] = None
     export_server: Optional["ExportServer"] = None
     cloud_api: Optional["CyncCloudAPI"] = None
-    tasks: List[asyncio.Task] = []
+    tasks: List[Optional[asyncio.Task]]
     env: GlobalObjEnv = GlobalObjEnv()
     uuid: Optional[uuid.UUID] = None
-    cli_args: Optional[Namespace] = None
     _last_valid_state_ts: float = 0.0
 
     _instance: Optional["GlobalObject"] = None
@@ -70,6 +71,7 @@ class GlobalObject:
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            cls._instance.tasks = []
         return cls._instance
 
     @property
@@ -82,7 +84,6 @@ class GlobalObject:
         # TODO: send MQTT data, this can be used to trigger a restart
         # if self.mqtt_client:
         #     asyncio.create_task(self.mqtt_client.publish, "")
-
 
     def reload_env(self):
         """Re-evaluate environment variables to update constants."""
@@ -148,7 +149,9 @@ class GlobalObject:
         self.env.appended_config_dir = PERSISTENT_DIR = os.environ.get(
             "CYNC_CONFIG_DIR", "/config"
         )
-
+        self.env.app_mitm_logging = (
+            os.environ.get("CYNC_APP_MITM_LOGGING", "0").casefold() in YES_ANSWER
+        )
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -156,6 +159,7 @@ class Tasks:
     receive: Optional[asyncio.Task] = None
     send: Optional[asyncio.Task] = None
     callback_cleanup: Optional[asyncio.Task] = None
+    proxy_task: Optional[asyncio.Task] = None
 
     def __iter__(self):
         tasks = [self.receive, self.send, self.callback_cleanup]
@@ -169,7 +173,6 @@ class Tasks:
         tasks = [task for task in tasks if task is not None]
         return len(list(tasks))
 
-
     async def cancel_all(self):
         """Cancels all active tasks and waits for them to finish."""
         active_tasks = list(self)
@@ -178,7 +181,6 @@ class Tasks:
         for task in active_tasks:
             task.cancel()
         await asyncio.gather(*active_tasks, return_exceptions=True)
-        # clear them, not getting bit again.
         self.receive = None
         self.send = None
         self.callback_cleanup = None
@@ -227,7 +229,7 @@ class ControlMessageCallback:
             return None
 
 
-class Messages:
+class MessageCache:
     control: Dict[int, ControlMessageCallback]
 
     def __init__(self):
@@ -237,6 +239,7 @@ class Messages:
 @dataclass
 class CacheData:
     """Cache to store data between binary packets"""
+
     all_data: bytes = b""
     timestamp: float = 0
     data: bytes = b""
@@ -244,161 +247,7 @@ class CacheData:
     needed_len: int = 0
 
 
-class DeviceStatus(BaseModel):
-    """
-    A class that represents a Cync devices status.
-    This may need to be changed as new devices are bought and added.
-    """
-
-    state: Optional[int] = None
-    brightness: Optional[int] = None
-    temperature: Optional[int] = None
-    red: Optional[int] = None
-    green: Optional[int] = None
-    blue: Optional[int] = None
-
-
-@dataclass
-class MeshInfo:
-    status: List[Optional[List[Optional[int]]]]
-    id_from: int
-
-
-class PhoneAppStructs:
-    def __iter__(self):
-        return iter([self.requests, self.responses])
-
-    @dataclass
-    class AppRequests:
-        auth_header: Tuple[int] = (0x13, 0x00, 0x00, 0x00)
-        connect_header: Tuple[int] = (0xA3, 0x00, 0x00, 0x00)
-        headers: Tuple[int] = (0x13, 0xA3)
-
-        def __iter__(self):
-            return iter(self.headers)
-
-    @dataclass
-    class AppResponses:
-        auth_resp: Tuple[int] = (0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00)
-        headers: Tuple[int] = 0x18
-
-        def __iter__(self):
-            return iter(self.headers)
-
-    requests: AppRequests = AppRequests()
-    responses: AppResponses = AppResponses()
-    headers = (0x13, 0xA3, 0x18)
-
-
-class DeviceStructs:
-    def __iter__(self):
-        return iter([self.requests, self.responses])
-
-    @dataclass
-    class DeviceRequests:
-        """These are packets devices send to the server"""
-
-        x23: Tuple[int] = tuple([0x23])
-        xc3: Tuple[int] = tuple([0xC3])
-        xd3: Tuple[int] = tuple([0xD3])
-        x83: Tuple[int] = tuple([0x83])
-        x73: Tuple[int] = tuple([0x73])
-        x7b: Tuple[int] = tuple([0x7B])
-        x43: Tuple[int] = tuple([0x43])
-        xa3: Tuple[int] = tuple([0xA3])
-        xab: Tuple[int] = tuple([0xAB])
-        headers: Tuple[int] = (0x23, 0xC3, 0xD3, 0x83, 0x73, 0x7B, 0x43, 0xA3, 0xAB)
-
-        def __iter__(self):
-            return iter(self.headers)
-
-    @dataclass
-    class DeviceResponses:
-        """These are the packets the server sends to the device"""
-
-        auth_ack: Tuple[int] = (0x28, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00)
-        # TODO: figure out correct bytes for this
-        connection_ack: Tuple[int] = (
-            0xC8,
-            0x00,
-            0x00,
-            0x00,
-            0x0B,
-            0x0D,
-            0x07,
-            0xE8,
-            0x03,
-            0x0A,
-            0x01,
-            0x0C,
-            0x04,
-            0x1F,
-            0xFE,
-            0x0C,
-        )
-        x48_ack: Tuple[int] = (0x48, 0x00, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00)
-        x88_ack: Tuple[int] = (0x88, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00)
-        ping_ack: Tuple[int] = (0xD8, 0x00, 0x00, 0x00, 0x00)
-        x78_base: Tuple[int] = (0x78, 0x00, 0x00, 0x00)
-        x7b_base: Tuple[int] = (0x7B, 0x00, 0x00, 0x00, 0x07)
-
-    requests: DeviceRequests = DeviceRequests()
-    responses: DeviceResponses = DeviceResponses()
-    headers: Tuple[int] = (0x23, 0xC3, 0xD3, 0x83, 0x73, 0x7B, 0x43, 0xA3, 0xAB)
-
-    @staticmethod
-    def xab_generate_ack(queue_id: bytes, msg_id: bytes) -> bytes:
-        """
-        Respond to a 0xAB packet from the device.
-        Requires queue_id and msg_id to reply with.
-        Has ascii 'xlink_dev' in reply.
-        """
-        # 'xlink_dev' (9 bytes) + 948 null bytes + tail (4 bytes) = 961 bytes
-        payload = b'xlink_dev' + bytes(948) + b'\xe3\x4f\x02\x10'
-        total_len = len(queue_id) + len(msg_id) + len(payload)
-        # divmod(x, 256) gives us (x // 256, x % 256)
-        # length_factor increments every 256 bytes, length_byte rolls over to 0
-        length_factor, length_byte = divmod(total_len, 256)
-        # Construct the header: 0xAB, 0x00, 0x00, <factor>, <length>
-        header = b'\xab\x00\x00' + bytes([length_factor, length_byte])
-
-        return header + queue_id + msg_id + payload
-
-    @staticmethod
-    def x88_generate_ack(msg_id: bytes):
-        """Respond to a 0x83 packet from the device, needs a msg_id to reply with"""
-        _x = bytes([0x88, 0x00, 0x00, 0x00, 0x03])
-        _x += msg_id
-        return _x
-
-    @staticmethod
-    def x48_generate_ack(msg_id: bytes):
-        """Respond to a 0x43 packet from the device, needs a queue and msg id to reply with"""
-        # set last msg_id digit to 0
-        msg_id = msg_id[:-1] + b"\x00"
-        _x = bytes([0x48, 0x00, 0x00, 0x00, 0x03])
-        _x += msg_id
-        return _x
-
-    @staticmethod
-    def x7b_generate_ack(queue_id: bytes, msg_id: bytes):
-        """
-        Respond to a 0x73 packet from the device, needs a queue and msg id to reply with.
-        This is also called for 0x83 packets AFTER seeing a 0x73 packet.
-        Not sure of the intricacies yet, seems to be bound to certain queue ids.
-        """
-        _x = bytes([0x7B, 0x00, 0x00, 0x00, 0x07])
-        _x += queue_id
-        _x += msg_id
-        return _x
-
-
-APP_HEADERS = PhoneAppStructs()
-DEVICE_STRUCTS = DeviceStructs()
-ALL_HEADERS = list(DEVICE_STRUCTS.headers) + list(APP_HEADERS.headers)
-
-
-class RawTokenData(BaseModel):
+class RawTokenStruct(BaseModel):
     """
     Model for cloud token data.
     """
@@ -410,26 +259,20 @@ class RawTokenData(BaseModel):
     authorize: str
 
 
-class ComputedTokenData(RawTokenData):
+class ComputedTokenStruct(RawTokenStruct):
     issued_at: datetime.datetime
 
     @computed_field
     @property
     def expires_at(self) -> Optional[datetime.datetime]:
         """
-        Calculate the expiration time of the token based on the issued time and expires_in.
+        Calculate the expiration time of the token based on the issued_at time and expires_in.
         Returns:
             datetime.datetime: The expiration time in UTC.
         """
         if self.issued_at and self.expire_in:
             return self.issued_at + datetime.timedelta(seconds=self.expire_in)
         return None
-
-    # expires_at: Optional[datetime] = None
-
-    # def model_post_init(self, __context) -> None:
-    #     if self.expires_in:
-    #         self.expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=self.expires_in)
 
 
 class FanSpeed(StrEnum):
@@ -440,37 +283,40 @@ class FanSpeed(StrEnum):
     MAX = "max"
 
 
-class EndpointState(BaseModel):
+class EntityState(BaseModel):
     """
-    Holds the individual state for a specific endpoint (outlet, bulb, etc.).
-    Endpoint is the logical device. Node is the physical device (TCP/BTLE conn).
+    Holds the individual state for a specific entity (outlet, bulb, etc.).
+    entity is the logical device. Node is the physical device (TCP/BTLE conn).
 
     Args:
-        name (str): The name of the endpoint.
-        node_id (int): The node ID of the endpoint.
-        id (int, optional): The sub ID of the endpoint. Defaults to 0.
-        power (int, optional): The power state of the endpoint. Defaults to 0.
-        brightness (int, optional): The brightness state of the endpoint. Defaults to 0.
-        temperature (int, optional): the temperature state of the endpoint. Defaults to 0.
-        red (int, optional): the red state of the endpoint. Defaults to 0.
-        green (int, optional): the green state of the endpoint. Defaults to 0.
-        blue (int, optional): the blue state of the endpoint. Defaults to 0.
+        name (str): The name of the entity.
+        dev_id (int): The node ID of the entity.
+        sub_id (int, optional): The sub ID of the entity. Defaults to 0.
+        power (int, optional): The power state of the entity. Defaults to 0.
+        brightness (int, optional): The brightness state of the entity. Defaults to 0.
+        temperature (int, optional): the temperature state of the entity. Defaults to 0.
+        red (int, optional): the red state of the entity. Defaults to 0.
+        green (int, optional): the green state of the entity. Defaults to 0.
+        blue (int, optional): the blue state of the entity. Defaults to 0.
+        recently_seen (int, optional): has reported its state to BTLE mesh lately. Defaults to 1.
     """
 
-    name: str
-    node_id: int
-    id: int = 0
+    name: str = None
+    dev_id: int
+    # sub_id of the node_id
+    sub_id: int = 0
     power: int = 0
     brightness: int = 0
     temperature: int = 0
     red: int = 0
     green: int = 0
     blue: int = 0
+    recently_seen: int = 1
 
     def __str__(self):
         return (
-            f"{self.name} ({self.node_id}{'/{}'.format(self.id) if self.id > 0 else ''}): pow={self.power} bri={self.brightness} temp={self.temperature} || "
-            f"r={self.red} g={self.green} b={self.blue}"
+            f"{self.name} ({self.dev_id}{'/{}'.format(self.sub_id) if self.sub_id > 0 else ''}): pow={self.power} bri={self.brightness} temp={self.temperature} ["
+            f"r={self.red} g={self.green} b={self.blue}] stale: {self.recently_seen == 0}"
         )
 
     def __repr__(self):

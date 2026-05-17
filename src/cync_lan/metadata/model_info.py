@@ -1,4 +1,3 @@
-from asyncio import protocols
 from enum import StrEnum
 from typing import Annotated, List, Optional, Union
 
@@ -31,6 +30,7 @@ class SwitchCapabilities(LightCapabilities):
     dimmable = False
     fan: bool = False
     plug: bool = False
+
 
 @dataclass
 class DeviceProtocol:
@@ -518,7 +518,7 @@ device_type_map = {
         model_id="CLEDA199LD1",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(),
-        characteristics=LightCharacteristics(lumens=800, cri=90, min_kelvin=2700)
+        characteristics=LightCharacteristics(lumens=800, cri=90, min_kelvin=2700),
     ),
     129: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -742,7 +742,7 @@ device_type_map = {
     ),
     170: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
-        model_name="4\" Wafer Light",
+        model_name='4" Wafer Light',
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(dimmable=True, color=True, tunable_white=True),
     ),

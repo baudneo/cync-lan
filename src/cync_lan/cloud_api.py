@@ -1,18 +1,19 @@
+import base64
 import datetime
 import json
 import logging
 import os
-import base64
 import random
 import signal
 import string
 from pathlib import Path
 from typing import Optional
+
+import aiohttp
+import yaml
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import aiohttp
-import yaml
 
 from cync_lan.const import (
     CYNC_ACCOUNT_LANGUAGE,
@@ -28,7 +29,7 @@ from cync_lan.const import (
     CYNC_OVERWRITE_CONFIG_FILE,
     CYNC_SECRET_KEY,
 )
-from cync_lan.structs import ComputedTokenData, EndpointState, GlobalObject
+from cync_lan.structs import ComputedTokenStruct, EntityState, GlobalObject
 
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
@@ -38,9 +39,9 @@ class CyncCloudAPI:
     api_timeout: int = 8
     lp: str = "CyncCloudAPI"
     auth_cache_file = CYNC_CLOUD_AUTH_PATH
-    token_cache: Optional[ComputedTokenData]
-    http_session: Optional[aiohttp.ClientSession] = None
-    _instance: Optional["CyncCloudAPI"] = None
+    token_cache: ComputedTokenStruct
+    http_session: aiohttp.ClientSession = None
+    _instance: "CyncCloudAPI" = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -73,7 +74,7 @@ class CyncCloudAPI:
             self.http_session = aiohttp.ClientSession()
             await self.http_session.__aenter__()
 
-    async def read_token_cache(self) -> Optional[ComputedTokenData]:
+    async def read_token_cache(self) -> Optional[ComputedTokenStruct]:
         """
         Read the encrypted token cache from a file.
         Returns:
@@ -85,15 +86,16 @@ class CyncCloudAPI:
                 encrypted_data = f.read()
             cipher = self._get_fernet_cipher()
             decrypted_json = cipher.decrypt(encrypted_data)
-            token_dict = json.loads(decrypted_json.decode('utf-8'))
+            token_dict = json.loads(decrypted_json.decode("utf-8"))
             logger.debug(f"{lp} Cached token data read and decrypted successfully")
-            return ComputedTokenData(**token_dict)
+            return ComputedTokenStruct(**token_dict)
         except FileNotFoundError:
             logger.debug(f"{lp} Token cache file not found: {self.auth_cache_file}")
             return None
         except Exception as e:
             logger.error(
-                f"{lp} Failed to decrypt or parse token cache. It may be corrupt or the secret key changed: {e}")
+                f"{lp} Failed to decrypt or parse token cache. It may be corrupt or the secret key changed: {e}"
+            )
             return None
 
     async def check_token(self) -> bool:
@@ -104,8 +106,12 @@ class CyncCloudAPI:
             logger.debug(f"{lp} No cached token found, requesting OTP...")
             return False
         if self.token_cache.expires_at < datetime.datetime.now(datetime.UTC):
-            logger.debug(f"{lp} Token expired, requesting OTP...")
-            return False
+            # try refreshing first
+            succ = await self.refresh_access_token()
+            if not succ:
+                logger.debug(f"{lp} Token expired, requesting OTP...")
+            return succ
+
         else:
             logger.debug(f"{lp} Token is valid, using cached token")
         return True
@@ -141,6 +147,13 @@ class CyncCloudAPI:
                 return False
         return True
 
+    async def refresh_access_token(self) -> bool:
+        lp = f"{self.lp}:refresh token:"
+        return await self._send_tkn_post(
+            f"{CYNC_API_BASE}user/token/refresh",
+            {"refresh_token": self.token_cache.refresh_token},
+        )
+
     async def send_otp(self, otp_code: int) -> bool:
         lp = f"{self.lp}:send_otp:"
         await self._check_session()
@@ -165,17 +178,17 @@ class CyncCloudAPI:
         logger.debug(
             f"{lp} Sending OTP code: {otp_code} to Cync Cloud API for authentication"
         )
+        return await self._send_tkn_post(api_auth_url, auth_data)
 
-        sesh = self.http_session
+    async def _send_tkn_post(self, url, data):
         try:
-            r = await sesh.post(
-                api_auth_url,
-                json=auth_data,
-                timeout=aiohttp.ClientTimeout(total=self.api_timeout),
+            self.http_session: aiohttp.ClientSession
+            resp = await self.http_session.post(
+                url, json=data, timeout=aiohttp.ClientTimeout(total=self.api_timeout)
             )
-            r.raise_for_status()
+            resp.raise_for_status()
             iat = datetime.datetime.now(datetime.UTC)
-            token_data = await r.json()
+            token_data = await resp.json()
         except aiohttp.ClientResponseError as e:
             logger.error(f"Failed to authenticate: {e}")
             return False
@@ -185,28 +198,33 @@ class CyncCloudAPI:
         except KeyError as ke:
             logger.error(f"Failed to get key from JSON: {ke}")
             return False
+        except Exception:
+            logger.warning(f"{lp} Failed to refresh credentials")
+            return False
         else:
             # add issued_at to the token data for computing the expiration datetime
             token_data["issued_at"] = iat
-            await self.write_token_cache(ComputedTokenData(**token_data))
-            return True
+            return await self.write_token_cache(ComputedTokenStruct(**token_data))
 
-    async def write_token_cache(self, tkn: ComputedTokenData) -> bool:
+    async def write_token_cache(self, tkn: ComputedTokenStruct) -> bool:
         """
         Write the encrypted token cache to file.
         Args:
-            tkn (ComputedTokenData): The token data to write to the cache.
+            tkn (ComputedTokenStruct): The token data to write to the cache.
         Returns:
             bool: True if the write was successful, False otherwise.
         """
         lp = f"{self.lp}:write_token_cache:"
         try:
-            json_data = tkn.model_dump_json().encode('utf-8')
+            json_data = tkn.model_dump_json().encode("utf-8")
             cipher = self._get_fernet_cipher()
             encrypted_data = cipher.encrypt(json_data)
             with open(self.auth_cache_file, "wb") as f:
                 f.write(encrypted_data)
-            logger.debug(f"{lp} Token cache encrypted and written successfully to: {self.auth_cache_file}")
+            os.chmod(self.auth_cache_file, 0o777)
+            logger.debug(
+                f"{lp} Token cache encrypted and written successfully to: {self.auth_cache_file}"
+            )
             self.token_cache = tkn
             return True
         except Exception as e:
@@ -365,6 +383,7 @@ class CyncCloudAPI:
         try:
             with raw_cfg_file_out.open("w") as f:
                 f.write(yaml.dump(cync_lan_cfg))
+            os.chmod(raw_cfg_file_out, 0o777)
         except Exception as file_exc:
             logger.error(
                 f"{self.lp} Failed to write cync-lan config to file: {CYNC_CONFIG_FILE_PATH} -> {file_exc}"
@@ -439,11 +458,10 @@ class CyncCloudAPI:
                 parent = None
                 # Seems the thermostat has a multi-endpoint deviceID but is a single entry
                 # 169573386
-                # 7
+                # 7 (multi endpoint is 3 digit, this is only 1)
                 # 009
                 # { "hvacSystem": { "changeoverMode": 0, "auxHeatStages": 1, "auxFurnaceType": 1, "stages": 1, "furnaceType": 1, "type": 2, "powerLines": 1 },
                 # "thermostatSensors": [ { "pin": "025572", "name": "Living Room", "type": "savant" }, { "pin": "044604", "name": "Bedroom Sensor", "type": "savant" }, { "pin": "022724", "name": "Thermostat sensor 3", "type": "savant" } ] } ]
-                # todo: thermostat device logic whenever someone gets me debug data
                 hvac_cfg = None
                 if "hvacSystem" in raw_device:
                     hvac_cfg = raw_device["hvacSystem"]
@@ -474,7 +492,7 @@ class CyncCloudAPI:
                         f"{lp} Staging sub-device ({sub_id}) named: '{dev_name}' with parent device ID {dev_id} in "
                         f"home '{raw_home['name']}' devices registry"
                     )
-                    state = EndpointState(node_id=dev_id, id=sub_id, name=dev_name)
+                    state = EntityState(node_id=dev_id, id=sub_id, name=dev_name)
                     if dev_id in entity_reg:
                         entity_reg[dev_id][sub_id] = state.name
                     else:
@@ -530,6 +548,7 @@ class CyncCloudAPI:
             try:
                 with open(raw_file_out, "w") as _f:
                     _f.write(yaml.dump(exported_home_data))
+                os.chmod(raw_file_out, 0o777)
             except Exception as file_exc:
                 logger.error(
                     f"{lp} Failed to write RAW config to '{raw_file_out}': {file_exc}"

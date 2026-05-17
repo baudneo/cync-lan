@@ -74,7 +74,7 @@ LOCAL_TZ = zoneinfo.ZoneInfo(str(tzlocal.get_localzone()))
 CYNC_LOG_NAME: str = "cync_lan"
 
 LOG_FORMATTER = logging.Formatter(
-    "%(asctime)s.%(msecs)d %(levelname)s [%(module)s:%(lineno)d] > %(message)s",
+    "%(asctime)s.%(msecs)d %(levelname)s [%(module)s:%(lineno)d] %(message)s",
     "%m/%d/%y %H:%M:%S",
 )
 # adds logger name
@@ -99,6 +99,8 @@ CYNC_HASS_APP = os.environ.get("CYNC_HASS_APP", "no") in YES_ANSWER
 CYNC_ACCOUNT_LANGUAGE: str = os.environ.get("CYNC_ACCOUNT_LANGUAGE", "en-us").casefold()
 CYNC_ACCOUNT_USERNAME: str = os.environ.get("CYNC_ACCOUNT_USERNAME", None)
 CYNC_ACCOUNT_PASSWORD: str = os.environ.get("CYNC_ACCOUNT_PASSWORD", None)
+CYNC_MITM_DEV_LOGGER: bool = os.environ.get("CYNC_MITM_DEV_LOGGER", 'no').casefold() in YES_ANSWER
+CYNC_MITM_APP_LOGGER: bool = os.environ.get("CYNC_MITM_APP_LOGGER", 'no').casefold() in YES_ANSWER
 
 CYNC_CMD_BROADCASTS: int = os.environ.get("CYNC_CMD_BROADCASTS", 2)
 if not CYNC_CMD_BROADCASTS:
@@ -152,9 +154,9 @@ CYNC_UUID_PATH: str = f"{CYNC_CONFIG_DIR}/uuid.txt"
 CYNC_CLOUD_AUTH_PATH: str = f"{CYNC_CONFIG_DIR}/.cloud_auth.enc.json"
 
 CYNC_SSL_CERT: str = os.environ.get(
-    "CYNC_DEVICE_CERT", f"/root/cync-lan/certs/cert.pem"
+    "CYNC_DEVICE_CERT", "/root/cync-lan/certs/cert.pem"
 )
-CYNC_SSL_KEY: str = os.environ.get("CYNC_DEVICE_KEY", f"/root/cync-lan/certs/key.pem")
+CYNC_SSL_KEY: str = os.environ.get("CYNC_DEVICE_KEY", "/root/cync-lan/certs/key.pem")
 
 CYNC_BRIDGE_DEVICE_REGISTRY_CONF: dict = {}
 
@@ -179,6 +181,13 @@ nCYNC_START_TASK_NAME = "CyncLanServer_START"
 if CYNC_TCP_WHITELIST:
     CYNC_TCP_WHITELIST = CYNC_TCP_WHITELIST.split(",")
     CYNC_TCP_WHITELIST = [x.strip() for x in CYNC_TCP_WHITELIST if x]
+CYNC_MITM_LOG_NAME = "cync_mitm"
+CYNC_MITM_LOG_PATH = os.environ.get("CYNC_MITM_LOG_PATH", f"{CYNC_CONFIG_DIR}/mitm.log")
+CYNC_MITM_LOG_DIR = os.environ.get("CYNC_MITM_LOG_DIR", f"{CYNC_CONFIG_DIR}/mitm_logs")
+CYNC_APP_MITM_LOGGING = (
+    os.environ.get("CYNC_APP_MITM_LOGGING", "0").casefold() in YES_ANSWER
+)
+CYNC_CLOUD_IP = os.environ.get("CYNC_CLOUD_IP", "34.73.130.191")
 
 FACTORY_EFFECTS_BYTES: Dict[str, Tuple[int, int]] = {
     "candle": (int(0x01), int(0xF1)),

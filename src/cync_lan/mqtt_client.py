@@ -28,13 +28,13 @@ from cync_lan.const import (
     CYNC_VERSION,
     DEVICE_LWT_MSG,
     FACTORY_EFFECTS_BYTES,
-    ORIGIN_STRUCT,
-    MQTT_DEBUG,
     MQTT_DEAD,
+    MQTT_DEBUG,
+    ORIGIN_STRUCT,
 )
-from cync_lan.devices import CyncNode
-from cync_lan.metadata.model_info import device_type_map
-from cync_lan.structs import EndpointState, FanSpeed, GlobalObject
+from cync_lan.devices import CyncDevice
+from cync_lan.metadata.model_info import device_type_map, DeviceClassification
+from cync_lan.structs import EntityState, FanSpeed, GlobalObject
 from cync_lan.utils import send_sigterm
 
 logger = logging.getLogger(CYNC_LOG_NAME)
@@ -109,7 +109,7 @@ class MQTTClient:
 
                     if itr == 1:
                         logger.debug(f"{lp} Seeding all devices: offline")
-                        for device_id, node in g.ncync_server.devices.items():
+                        for device_id, node in g.ncync_server.node_devices.items():
                             # if device.is_fan_controller:
                             #     logger.debug(f"{lp} TESTING>>> Setting up fan controller for device: {device.name} (ID: {device.id})")
                             #     # set device online for testing
@@ -120,13 +120,13 @@ class MQTTClient:
                     elif itr > 1:
                         tasks = []
                         # set the device online/offline and set its status
-                        for node in g.ncync_server.devices.values():
+                        for node in g.ncync_server.node_devices.values():
                             # key is entity id (sub_id), value is state class which has node and endpoint id
                             # map is for easy lookup based on endpoint id, rather than iterating a list of endpoints
-                            for epoint_state in node.endpoints.values():
+                            for epoint_state in node.entities.values():
                                 tasks.append(self.pub_online(node.id, node.online))
                                 tasks.append(
-                                    self.parse_endpoint_state(
+                                    self.parse_entity_state(
                                         epoint_state,
                                         from_pkt="'re-connect'",
                                     )
@@ -233,8 +233,10 @@ class MQTTClient:
             tasks = []
             node = None
             sub_id: Optional[int] = None
+            logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}")
             if _topic[0] == CYNC_TOPIC:
                 if _topic[1] == "set":
+                    # TOPIC: cync_lan_TEST/set/769962427-46/mitm // MESSAGE: b'ON'
                     device_uuid_ = _topic[2]
                     # homeID-deviceID-childID / no -childID when no children
                     _ids = device_uuid_.split("-")
@@ -243,22 +245,51 @@ class MQTTClient:
                     if len(_ids) >= 3:
                         sub_id = int(_ids[-1])
 
+                    extra_data = _topic[3:] if len(_topic) > 3 else None
                     if device_uuid_ == "bridge":
                         pass
                     else:
-                        if device_id not in g.ncync_server.devices:
+                        if device_id not in g.ncync_server.node_devices:
                             logger.warning(
                                 f"{lp} Device ID {device_id} not found, device is disabled in config file or have you deleted / added any "
                                 f"devices recently?"
                             )
                             continue
-                        node: CyncNode = g.ncync_server.devices[device_id]
-                    extra_data = _topic[3:] if len(_topic) > 3 else None
+                        node: CyncDevice = g.ncync_server.node_devices[device_id]
                     # bridge or fan, extra data
                     if extra_data:
                         norm_pl = payload.decode().casefold()
                         # logger.debug(f"{lp} Extra data found: {extra_data}")
-                        if extra_data[0] == "restart":
+                        if extra_data[0] == "app_logging":
+                            # Determine the new state
+                            is_on = payload.decode().upper() == "ON"
+
+                            # Update the global state
+                            g.env.app_mitm_logging = is_on
+
+                            # Publish the new status back to MQTT
+                            await self.publish(
+                                f"{self.topic}/status/bridge/app_logging", payload
+                            )
+                            logger.info(
+                                f"{lp} Global App MITM Logging set to {'ON' if is_on else 'OFF'}"
+                            )
+                        elif extra_data[0] == "mitm":
+                            is_on = payload.decode().upper() == "ON"
+                            # Find the TCP device instance and trigger start/stop
+                            for tcp_dev in g.ncync_server.tcp_connections.values():
+                                if tcp_dev.node_id == node.id:
+                                    if is_on:
+                                        await tcp_dev.start_mitm()
+                                    else:
+                                        logger.debug(
+                                            "DBG>>> MITM mqtt command is calling mitm_stop()"
+                                        )
+                                        await tcp_dev.stop_mitm()
+                            await self.publish(
+                                f"{self.topic}/status/{device_uuid_}/mitm", payload
+                            )
+                        elif extra_data[0] == "restart":
                             if norm_pl == "press":
                                 logger.info(
                                     f"{lp} Restart button pressed! Restarting Cync LAN bridge (NOT IMPLEMENTED)..."
@@ -323,72 +354,75 @@ class MQTTClient:
                                         f"{lp} Unknown preset mode: {preset_mode}, skipping..."
                                     )
 
-                    if payload.startswith(b"{"):
-                        try:
-                            json_data = json.loads(payload)
-                        except JSONDecodeError as e:
-                            logger.error(
-                                "%s bad json message: {%s} EXCEPTION => %s"
-                                % (lp, payload, e)
-                            )
-                            continue
-                        except Exception as e:
-                            logger.error(
-                                "%s error will decoding a string into JSON: '%s' EXCEPTION => %s"
-                                % (lp, payload, e)
-                            )
-                            continue
-
-                        if "state" in json_data and "brightness" not in json_data:
-                            if "effect" in json_data:
-                                effect = json_data["effect"]
-                                tasks.append(node.set_lightshow(effect, sub_id))
-                            else:
-                                if json_data["state"].upper() == "ON":
-                                    tasks.append(node.set_power(1, sub_id))
-                                else:
-                                    tasks.append(node.set_power(0, sub_id))
-                        if "brightness" in json_data:
-                            lum = int(json_data["brightness"])
-                            tasks.append(node.set_brightness(lum, sub_id))
-
-                        if "color_temp" in json_data:
-                            tasks.append(
-                                node.set_temperature(
-                                    self.kelvin2cync(int(json_data["color_temp"])),
-                                    sub_id,
-                                )
-                            )
-                        elif "color" in json_data:
-                            color = []
-                            for rgb in ("r", "g", "b"):
-                                if rgb in json_data["color"]:
-                                    color.append(int(json_data["color"][rgb]))
-                                else:
-                                    color.append(0)
-                            if sub_id is not None:
-                                color.append(sub_id)
-                            tasks.append(node.set_rgb(*color))
-                    # binary payload does not start with a '{', so it is not JSON
                     else:
-                        str_payload = payload.decode("utf-8").strip()
-                        #  use a regex pattern to determine if it is a single word
-                        pattern = re.compile(r"^\w+$")
-                        if pattern.match(str_payload):
-                            # handle non-JSON payloads
-                            if str_payload.casefold() == "on":
-                                logger.debug(
-                                    f"{lp} setting power to ON (non-JSON) for: {node.id}{' [sub ID: {}]'.format(sub_id) if sub_id else ''}"
-                                ) if MQTT_DEBUG else None
+                        if payload.startswith(b"{"):
+                            try:
+                                json_data = json.loads(payload)
+                            except JSONDecodeError as e:
+                                logger.error(
+                                    "%s bad json message: {%s} EXCEPTION => %s"
+                                    % (lp, payload, e)
+                                )
+                                continue
+                            except Exception as e:
+                                logger.error(
+                                    "%s error will decoding a string into JSON: '%s' EXCEPTION => %s"
+                                    % (lp, payload, e)
+                                )
+                                continue
 
-                                tasks.append(node.set_power(1, sub_id))
-                            elif str_payload.casefold() == "off":
-                                logger.debug(f"{lp} setting power to OFF (non-JSON)")  if MQTT_DEBUG else None
-                                tasks.append(node.set_power(0, sub_id))
+                            if "state" in json_data and "brightness" not in json_data:
+                                if "effect" in json_data:
+                                    effect = json_data["effect"]
+                                    tasks.append(node.set_lightshow(effect, sub_id))
+                                else:
+                                    if json_data["state"].upper() == "ON":
+                                        tasks.append(node.set_power(1, sub_id))
+                                    else:
+                                        tasks.append(node.set_power(0, sub_id))
+                            if "brightness" in json_data:
+                                lum = int(json_data["brightness"])
+                                tasks.append(node.set_brightness(lum, sub_id))
+
+                            if "color_temp" in json_data:
+                                tasks.append(
+                                    node.set_temperature(
+                                        self.kelvin2cync(int(json_data["color_temp"])),
+                                        sub_id,
+                                    )
+                                )
+                            elif "color" in json_data:
+                                color = []
+                                for rgb in ("r", "g", "b"):
+                                    if rgb in json_data["color"]:
+                                        color.append(int(json_data["color"][rgb]))
+                                    else:
+                                        color.append(0)
+                                if sub_id is not None:
+                                    color.append(sub_id)
+                                tasks.append(node.set_rgb(*color))
+                        # binary payload does not start with a '{', so it is not JSON
                         else:
-                            logger.warning(
-                                f"{lp} Unknown payload: {payload}, skipping..."
-                            )
+                            str_payload = payload.decode("utf-8").strip()
+                            #  use a regex pattern to determine if it is a single word
+                            pattern = re.compile(r"^\w+$")
+                            if pattern.match(str_payload):
+                                # handle non-JSON payloads
+                                if str_payload.casefold() == "on":
+                                    logger.debug(
+                                        f"{lp} setting power to ON (non-JSON) for: {node.id}{' [sub ID: {}]'.format(sub_id) if sub_id else ''}"
+                                    ) if MQTT_DEBUG else None
+
+                                    tasks.append(node.set_power(1, sub_id))
+                                elif str_payload.casefold() == "off":
+                                    logger.debug(
+                                        f"{lp} setting power to OFF (non-JSON)"
+                                    ) if MQTT_DEBUG else None
+                                    tasks.append(node.set_power(0, sub_id))
+                            else:
+                                logger.warning(
+                                    f"{lp} Unknown payload: {payload}, skipping..."
+                                )
                 else:
                     logger.warning(f"{lp} Unknown command: {topic} => {payload}")
                 if tasks:
@@ -412,10 +446,10 @@ class MQTTClient:
                         # give HASS a moment (to register devices)
                         await asyncio.sleep(2)
                         # set the device online/offline and set its status
-                        for node in g.ncync_server.devices.values():
+                        for node in g.ncync_server.node_devices.values():
                             await self.pub_online(node.id, node.online)
-                            for epoint_state in node.endpoints.values():
-                                await self.parse_endpoint_state(
+                            for epoint_state in node.entities.values():
+                                await self.parse_entity_state(
                                     epoint_state,
                                     from_pkt="'hass_birth'",
                                 )
@@ -432,7 +466,7 @@ class MQTTClient:
         # set all devices offline
         if self._connected:
             logger.debug(f"{lp} Setting all Cync devices offline...")
-            for node in g.ncync_server.devices.values():
+            for node in g.ncync_server.node_devices.values():
                 node.online = False
             # ["state_topic"] = f"{self.topic}/status/bridge/mqtt_client/connected"
             await self.publish(
@@ -460,18 +494,18 @@ class MQTTClient:
         # no need for sub_id, if the parent device is online, children are online
         lp = f"{self.lp}pub_online:"
         if self._connected:
-            if device_id not in g.ncync_server.devices:
+            if device_id not in g.ncync_server.node_devices:
                 logger.error(
                     f"{lp} Device ID {device_id} not found?! Have you deleted or added any devices recently? "
                     f"You may need to re-export devices from your Cync account!"
                 )
                 return False
             availability = b"online" if status else b"offline"
-            device: CyncNode = g.ncync_server.devices[device_id]
+            device: CyncDevice = g.ncync_server.node_devices[device_id]
             device_uuid = f"{device.home_id}-{device_id}"
             data = []
             if device.has_multi_endpoints:
-                for child_id, child_name in device.endpoints.items():
+                for child_id, child_name in device.entities.items():
                     data.append(
                         (
                             f"{self.topic}/availability/{device_uuid}-{child_id}",
@@ -483,7 +517,11 @@ class MQTTClient:
             # logger.debug(f"{lp} Publishing availability: {availability}")
             for _d in data:
                 try:
-                    _ = await self.client.publish(_d[0], _d[1], qos=0) if not MQTT_DEAD else None
+                    _ = (
+                        await self.client.publish(_d[0], _d[1], qos=0)
+                        if not MQTT_DEAD
+                        else None
+                    )
                 except aiomqtt.MqttError as mqtt_code_exc:
                     logger.warning(f"{lp} [MqttError] -> {mqtt_code_exc}")
                     self._connected = False
@@ -491,12 +529,12 @@ class MQTTClient:
         return False
 
     async def update_endpoint_power(
-        self, node: CyncNode, state: int, sub_id: Optional[int] = None
+        self, node: CyncDevice, state: int, sub_id: Optional[int] = None
     ) -> bool:
         """Update the device state and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.endpoints.get(_id)
+        endpoint = node.entities.get(_id)
         endpoint.power = state
         power_status = "OFF" if state == 0 else "ON"
         mqtt_tgt_state = {"state": power_status}
@@ -507,12 +545,12 @@ class MQTTClient:
         return await self.pub_endpoint_state(node, mqtt_tgt_state, sub_id)
 
     async def update_brightness(
-        self, node: CyncNode, bri: int, sub_id: Optional[int] = None
+        self, node: CyncDevice, bri: int, sub_id: Optional[int] = None
     ) -> bool:
         """Update the device brightness and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.endpoints.get(_id)
+        endpoint = node.entities.get(_id)
         endpoint.brightness = bri
         state = "ON"
         if bri == 0:
@@ -523,12 +561,12 @@ class MQTTClient:
         )
 
     async def update_temperature(
-        self, node: CyncNode, temp: int, sub_id: Optional[int] = None
+        self, node: CyncDevice, temp: int, sub_id: Optional[int] = None
     ) -> bool:
         """Update the device temperature and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.endpoints.get(_id)
+        endpoint = node.entities.get(_id)
 
         if node.supports_temperature:
             mqtt_dev_state = {
@@ -546,12 +584,12 @@ class MQTTClient:
         return False
 
     async def update_rgb(
-        self, node: CyncNode, rgb: tuple[int, int, int], sub_id: Optional[int] = None
+        self, node: CyncDevice, rgb: tuple[int, int, int], sub_id: Optional[int] = None
     ) -> bool:
         """Update the device RGB and publish to MQTT for HASS devices to update. Intended for callbacks"""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.endpoints.get(_id)
+        endpoint = node.entities.get(_id)
 
         if node.supports_rgb and (
             any(
@@ -578,7 +616,7 @@ class MQTTClient:
 
     async def pub_endpoint_state(
         self,
-        node: CyncNode,
+        node: CyncDevice,
         msg: bytes,
         sub_id: Optional[int],
         from_pkt: Optional[str] = None,
@@ -590,8 +628,8 @@ class MQTTClient:
         if self._connected:
             tgt_id = f"{node.hass_id}" if not sub_id else f"{node.hass_id}-{sub_id}"
             logger.debug(
-                f"{lp} Sending {msg} for device: '{node.name}' (ID: {node.id}){" '{}' [sub ID: {}]".format(node.endpoints[sub_id].name, sub_id) if sub_id else ''}"
-            )  if MQTT_DEBUG else None
+                f"{lp} Sending {msg} for device: '{node.name}' (ID: {node.id}){" '{}' [sub ID: {}]".format(node.entities[sub_id].name, sub_id) if sub_id else ''}"
+            ) if MQTT_DEBUG else None
             tpc = f"{self.topic}/status/{tgt_id}"
             try:
                 await self.client.publish(
@@ -609,25 +647,25 @@ class MQTTClient:
                 return True
         return False
 
-    async def parse_endpoint_state(
+    async def parse_entity_state(
         self,
-        endpoint_state: EndpointState,
+        endpoint_state: EntityState,
         from_pkt: Optional[str] = None,
     ) -> bool:
         """Parse device status and publish to MQTT for HASS devices to update."""
         lp = f"{self.lp}parse state:"
-        node_id = endpoint_state.node_id
-        sub_id = endpoint_state.id
+        node_id = endpoint_state.dev_id
+        sub_id = endpoint_state.sub_id
         if from_pkt:
             lp = f"{lp}{from_pkt}:"
-        if node_id not in g.ncync_server.devices:
+        if node_id not in g.ncync_server.node_devices:
             logger.warning(
                 f"{lp} Device ID {node_id} not found! Device may be disabled in config file or "
                 f"you may need to re-export devices from your Cync account"
             )
             return False
-        node: CyncNode = g.ncync_server.devices[node_id]
-        endpoint = node.endpoints[sub_id]
+        node: CyncDevice = g.ncync_server.node_devices[node_id]
+        endpoint = node.entities[sub_id]
         power_status = "OFF" if endpoint.power == 0 else "ON"
         mqtt_dev_state: Union[Dict[str, Union[int, str, bytes, dict, list]], bytes] = {
             "state": power_status
@@ -714,7 +752,7 @@ class MQTTClient:
         return False
 
     async def _publish_entity(
-        self, device: CyncNode, registry_struct: dict, entity_uuid: str
+        self, device: CyncDevice, registry_struct: dict, entity_uuid: str
     ):
         tpc_str_template = "{0}/{1}/{2}/config"
         dev_type = "light"
@@ -731,12 +769,16 @@ class MQTTClient:
                 if device.supports_temperature:
                     registry_struct["supported_color_modes"].append("color_temp")
                     registry_struct["color_temp_kelvin"] = True
-                    registry_struct["min_kelvin"] = CYNC_MINK
-                    registry_struct["max_kelvin"] = CYNC_MAXK
+                    min_k = device.metadata.characteristics.min_kelvin if device.metadata.characteristics.min_kelvin is not None else CYNC_MINK
+                    max_k = device.metadata.characteristics.max_kelvin if device.metadata.characteristics.max_kelvin is not None else CYNC_MAXK
+                    registry_struct["min_kelvin"] = min_k
+                    registry_struct["max_kelvin"] = max_k
                 if device.supports_rgb:
                     registry_struct["supported_color_modes"].append("rgb")
                     registry_struct["effect"] = True
                     registry_struct["effect_list"] = list(FACTORY_EFFECTS_BYTES.keys())
+                if device.metadata.capabilities.dynamic:
+                    pass
                 # add brightness : True only when supported_color_modes are present
                 registry_struct.update({"brightness": True})
             if not registry_struct["supported_color_modes"]:
@@ -767,17 +809,53 @@ class MQTTClient:
 
         tpc = tpc_str_template.format(self.ha_topic, dev_type, entity_uuid)
         try:
-            _ = await self.client.publish(
-                tpc,
-                json.dumps(registry_struct).encode(),
-                qos=0,
-                retain=False,
-            ) if not MQTT_DEAD else None
+            _ = (
+                await self.client.publish(
+                    tpc,
+                    json.dumps(registry_struct).encode(),
+                    qos=0,
+                    retain=False,
+                )
+                if not MQTT_DEAD
+                else None
+            )
 
         except Exception as e:
             logger.error(
                 "%s - Unable to publish mqtt message... skipped -> %s" % (lp, e)
             )
+
+    def _get_device_registry(self, node: CyncDevice):
+        device_uuid = node.hass_id
+        unique_id = f"{node.home_id}_{node.id}"
+        obj_id = f"cync_lan_{unique_id}"
+        dev_fw_version = str(node.version)
+        ver_str = "Unknown"
+        fw_len = len(dev_fw_version)
+        if fw_len == 5:
+            if dev_fw_version != 00000:
+                ver_str = (
+                    f"{dev_fw_version[0]}.{dev_fw_version[1]}.{dev_fw_version[2:]}"
+                )
+        elif fw_len == 2:
+            ver_str = f"{dev_fw_version[0]}.{dev_fw_version[1]}"
+        model_str = "Unknown"
+        if node.type in device_type_map:
+            model_str = device_type_map[node.type].model_string
+        dev_connections = [("bluetooth", node.mac.casefold())]
+        if not node.bt_only:
+            dev_connections.append(("mac", node.wifi_mac.casefold()))
+        device_registry_struct = {
+            "identifiers": [unique_id],
+            "manufacturer": CYNC_MANUFACTURER,
+            "connections": dev_connections,
+            "name": node.name,
+            "sw_version": ver_str,
+            "model": model_str,
+            "via_device": str(g.uuid),
+        }
+
+        return device_registry_struct
 
     async def homeassistant_discovery(self) -> bool:
         """Build each configured Cync device for HASS device registry"""
@@ -787,25 +865,25 @@ class MQTTClient:
             logger.info(f"{lp} Starting device discovery...")
             await self.create_bridge_device()
             try:
-                for node in g.ncync_server.devices.values():
-                    device_uuid = node.hass_id
-                    if node.metadata is None:
+                for node_repr in g.ncync_server.node_devices.values():
+                    device_uuid = node_repr.hass_id
+                    if node_repr.metadata is None:
                         logger.warning(
-                            f"{lp} Device '{node.name}' (ID: {node.id} / Type: {node.type}) has no metadata,"
+                            f"{lp} Device '{node_repr.name}' (ID: {node_repr.id} / Type: {node_repr.type}) has no metadata,"
                             f" meaning this type hasn't been seen before and can not be controlled, please "
                             f"see: https://github.com/baudneo/cync-lan/issues/12 to have this device added"
                         )
                         continue
-                    supported = node.metadata.supported
+                    supported = node_repr.metadata.supported
                     if not supported:
                         logger.warning(
-                            f"{lp} Device '{node.name}' (ID: {node.id} / Type: {node.type}) is not supported, skipping HASS discovery..."
+                            f"{lp} Device '{node_repr.name}' (ID: {node_repr.id} / Type: {node_repr.type}) is not supported, skipping HASS discovery..."
                         )
                         continue
 
-                    unique_id = f"{node.home_id}_{node.id}"
+                    unique_id = f"{node_repr.home_id}_{node_repr.id}"
                     obj_id = f"cync_lan_{unique_id}"
-                    dev_fw_version = str(node.version)
+                    dev_fw_version = str(node_repr.version)
                     ver_str = "Unknown"
                     fw_len = len(dev_fw_version)
                     if fw_len == 5:
@@ -814,16 +892,16 @@ class MQTTClient:
                     elif fw_len == 2:
                         ver_str = f"{dev_fw_version[0]}.{dev_fw_version[1]}"
                     model_str = "Unknown"
-                    if node.type in device_type_map:
-                        model_str = device_type_map[node.type].model_string
-                    dev_connections = [("bluetooth", node.mac.casefold())]
-                    if not node.bt_only:
-                        dev_connections.append(("mac", node.wifi_mac.casefold()))
+                    if node_repr.type in device_type_map:
+                        model_str = device_type_map[node_repr.type].model_string
+                    dev_connections = [("bluetooth", node_repr.mac.casefold())]
+                    if not node_repr.bt_only:
+                        dev_connections.append(("mac", node_repr.wifi_mac.casefold()))
                     device_registry_struct = {
                         "identifiers": [unique_id],
                         "manufacturer": CYNC_MANUFACTURER,
                         "connections": dev_connections,
-                        "name": node.name,
+                        "name": node_repr.name,
                         "sw_version": ver_str,
                         "model": model_str,
                         "via_device": str(g.uuid),
@@ -850,15 +928,15 @@ class MQTTClient:
                         "optimistic": False,
                     }
 
-                    if node.has_multi_endpoints:
+                    if node_repr.has_multi_endpoints:
                         logger.debug(
-                            f"{lp} Device '{node.name}' (ID: {node.id}) has {len(node.endpoints)} endpoints, creating "
+                            f"{lp} Device '{node_repr.name}' (ID: {node_repr.id}) has {len(node_repr.entities)} endpoints, creating "
                             f"separate HASS entities for each endpoint..."
                         )
-                        for ep_id, ep_state in node.endpoints.items():
+                        for ep_id, ep_state in node_repr.entities.items():
                             cobj_id = f"cync_lan_{unique_id}_{ep_id}"
                             cdevice_uuid = (
-                                f"{node.hass_id}-{ep_id}"  # home_id-device_id-ep_id
+                                f"{node_repr.hass_id}-{ep_id}"  # home_id-device_id-ep_id
                             )
                             entity_registry_struct["command_topic"] = (
                                 "{0}/set/{1}".format(self.topic, cdevice_uuid)
@@ -873,16 +951,22 @@ class MQTTClient:
                             entity_registry_struct["default_entity_id"] = cobj_id
                             entity_registry_struct["name"] = ep_state.name
                             entity_registry_struct["unique_id"] = (
-                                f"{node.home_id}_{node.id}_{ep_id}"
+                                f"{node_repr.home_id}_{node_repr.id}_{ep_id}"
                             )
                             await self._publish_entity(
-                                node, entity_registry_struct, cdevice_uuid
+                                node_repr, entity_registry_struct, cdevice_uuid
                             )
                     else:
                         # single entity for a single device with no children
                         await self._publish_entity(
-                            node, entity_registry_struct, device_uuid
+                            node_repr, entity_registry_struct, device_uuid
                         )
+                    if node_repr.metadata and node_repr.metadata.type == DeviceClassification.LIGHT and node_repr.metadata.capabilities.dynamic:
+                        # todo: segmented lights; can be controlled as a whole and/or per segment?
+                        #  are segment lights only branded as 'dynamic', what about a music effects button?
+                        logger.debug(f"{lp} This device has been identified as a 'dynamic' light...")
+                        pass
+
 
             except aiomqtt.MqttCodeError as mqtt_code_exc:
                 logger.warning(
@@ -898,6 +982,38 @@ class MQTTClient:
                 ret = True
         logger.debug(f"{lp} Discovery complete (success: {ret})")
         return ret
+
+    async def add_mitm_button(self, node: CyncDevice):
+        """Add a MITM Mode button dynamically. Send empty message to the hass config topic to delete the entity."""
+        logger.debug(
+            f"{node.lp} Adding a 'MITM mode' button to node: '{node.name}' (ID: {node.id}) as it is "
+            f"connected via IP: {node.ip_address}"
+        )
+        device_uuid = node.hass_id
+        mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"
+        mitm_switch_conf = {
+            "name": f"{node.name} MITM Mode",
+            "unique_id": mitm_switch_unique_id,
+            "command_topic": f"{self.topic}/set/{device_uuid}/mitm",
+            "state_topic": f"{self.topic}/status/{device_uuid}/mitm",
+            "icon": "mdi:incognito",
+            "device": self._get_device_registry(node),
+            "platform": "switch",
+        }
+        await self.publish_json_msg(
+            f"{self.ha_topic}/switch/{mitm_switch_unique_id}/config", mitm_switch_conf
+        )
+        seeded = await self.publish(f"{self.topic}/status/{device_uuid}/mitm", b"OFF", retain=True)
+
+    async def remove_mitm_button(self, node: CyncDevice):
+        """Delete a MITM mode button"""
+        logger.debug(f"{node.lp} Removing 'MITM mode' button from node: '{node.name}'")
+        mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"
+        await self.publish(f"{self.topic}/status/{device_uuid}/mitm", b"OFF", retain=True)
+        # send empty payload to the config topic to delete the entity
+        await self.publish(
+            f"{self.ha_topic}/switch/{mitm_switch_unique_id}/config", b""
+        )
 
     async def create_bridge_device(self) -> bool:
         """Create the device / entity registry config for the CyncLAN bridge itself."""
@@ -916,7 +1032,8 @@ class MQTTClient:
         # Bridge device config
         bridge_device_reg_struct = {
             "identifiers": [str(g.uuid)],
-            "manufacturer": "baudneo",
+            # add 'Savant' so it shows when filtering by 'Savant' in mqtt device list
+            "manufacturer": "baudneo [not Savant]",
             "name": "CyncLAN Bridge",
             "sw_version": ver_str,
             "model": "Local Push Controller",
@@ -1113,11 +1230,11 @@ class MQTTClient:
         pub_tasks.append(
             self.publish(
                 f"{self.topic}/status/bridge/tcp_devices/connected",
-                str(len(g.ncync_server.tcp_devices)).encode(),
+                str(len(g.ncync_server.tcp_connections)).encode(),
             )
         )
         # total cync devices managed
-        total_cync_devs = len(g.ncync_server.devices)
+        total_cync_devs = len(g.ncync_server.node_devices)
         entity_unique_id = f"{bridge_base_unique_id}_total_cync_devices"
         total_cync_devs_entity_conf = num_tcp_devices_entity_conf.copy()
         total_cync_devs_entity_conf["default_entity_id"] = entity_unique_id
@@ -1172,20 +1289,54 @@ class MQTTClient:
             )
         )
 
+        # App Connections Sensor
+        app_count_unique_id = "cync_lan_bridge_app_count"
+        app_count_conf = {
+            "name": "Connected Cync Apps",
+            "unique_id": app_count_unique_id,
+            "state_topic": f"{self.topic}/status/bridge/apps/connected",
+            "icon": "mdi:cellphone-cog",
+            "device": bridge_device_reg_struct,
+            "platform": "sensor",
+        }
+        await self.publish_json_msg(
+            f"{self.ha_topic}/sensor/{app_count_unique_id}/config", app_count_conf
+        )
+
+        app_logging_unique_id = "cync_lan_bridge_app_logging"
+        app_logging_conf = {
+            "name": "Global App MITM Logging",
+            "unique_id": app_logging_unique_id,
+            "command_topic": f"{self.topic}/set/bridge/app_logging",
+            "state_topic": f"{self.topic}/status/bridge/app_logging",
+            "icon": "mdi:file-find",
+            "device": bridge_device_reg_struct,
+            "platform": "switch",
+        }
+        await self.publish_json_msg(
+            f"{self.ha_topic}/switch/{app_logging_unique_id}/config", app_logging_conf
+        )
+
         await asyncio.gather(*pub_tasks, return_exceptions=True)
         logger.debug(f"{lp} Bridge device config published and seeded")
         return ret
 
-    async def publish(self, topic: str, msg_data: bytes):
+    async def publish(self, topic: str, msg_data: bytes, retain: bool = None, qos: int = None):
         """Publish a message to the MQTT broker."""
         lp = f"{self.lp}publish:"
         if not self._connected:
             return False
+        if retain is None:
+            retain = False
+        if qos is None:
+            qos = 0
         try:
             if not MQTT_DEAD:
-                _ = await self.client.publish(topic, msg_data, qos=0, retain=False)
+                _ = await self.client.publish(topic, msg_data, qos=qos, retain=retain)
             else:
-                logger.debug(f"{lp} CYNC_MQTT_DEAD has been turned on, not publishing the message, change the env var if you want to sub/pub")
+                logger.debug(
+                    f"{lp} CYNC_MQTT_DEAD has been turned on, not publishing the message, change the env var if you want to sub/pub"
+                )
         except aiomqtt.MqttError as mqtt_code_exc:
             logger.warning(
                 f"{lp} [MqttError] (rc: {mqtt_code_exc.rc}) -> {mqtt_code_exc}"
@@ -1199,12 +1350,20 @@ class MQTTClient:
             return True
         return False
 
-    async def publish_json_msg(self, topic: str, msg_data: dict) -> bool:
+    async def publish_json_msg(self, topic: str, msg_data: dict, retain: bool = None, qos: int = None) -> bool:
         lp = f"{self.lp}publish_msg:"
+        if retain is None:
+            retain = False
+        if qos is None:
+            qos = 0
         try:
-            _ = await self.client.publish(
-                topic, json.dumps(msg_data).encode(), qos=0, retain=False
-            ) if not MQTT_DEAD else None
+            _ = (
+                await self.client.publish(
+                    topic, json.dumps(msg_data).encode(), qos=qos, retain=retain
+                )
+                if not MQTT_DEAD
+                else None
+            )
         except aiomqtt.MqttError as mqtt_code_exc:
             logger.warning(
                 f"{lp} [MqttError] (rc: {mqtt_code_exc.rc}) -> {mqtt_code_exc}"

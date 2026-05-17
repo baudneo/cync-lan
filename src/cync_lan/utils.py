@@ -18,7 +18,7 @@ from cync_lan.const import (
     LOCAL_TZ,
     YES_ANSWER,
 )
-from cync_lan.structs import EndpointState, GlobalObject
+from cync_lan.structs import EntityState, GlobalObject
 
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
@@ -104,6 +104,24 @@ def ints2bytes(ints: List[int]) -> bytes:
     return bytes(ints)
 
 
+def extract_firmware_dynamically(packet_data: bytes) -> tuple[str, str]:
+    """Finds the 86 01 signature and extracts the firmware string safely."""
+    # Find the magic signature 86 01
+    idx = packet_data.find(b"\x86\x01")
+    if idx == -1 or idx + 7 > len(packet_data):
+        return None, None
+
+    fw_type_byte = packet_data[idx + 2]
+    fw_type = "device" if fw_type_byte == 0x01 else "network"
+
+    # The next 5 bytes are the ASCII firmware string
+    fw_bytes = packet_data[idx + 3: idx + 8]
+
+    # Strip null terminators if the version is shorter than 5 chars
+    fw_str = fw_bytes.replace(b'\x00', b'').decode('ascii', errors='ignore')
+
+    return fw_type, fw_str
+
 def parse_unbound_firmware_version(
     data_struct: bytes, lp: str
 ) -> Optional[Tuple[str, int, str]]:
@@ -153,7 +171,7 @@ def parse_unbound_firmware_version(
 
 async def parse_config(cfg_file: Path):
     """Parse the exported Cync device config file and create devices from it."""
-    from cync_lan.devices import CyncNode
+    from cync_lan.devices import CyncDevice
 
     lp = "parse_config:"
     logger.debug(f"{lp} reading devices from Cync config file: {cfg_file.as_posix()}")
@@ -168,7 +186,7 @@ async def parse_config(cfg_file: Path):
         logger.error(f"{lp} Error reading config file: {e}", exc_info=True)
         raise e
 
-    nodes: Dict[int, CyncNode] = {}
+    nodes: Dict[int, CyncDevice] = {}
     # parse homes and devices
     main_key = "account data"
     if main_key not in raw_config:
@@ -244,19 +262,19 @@ async def parse_config(cfg_file: Path):
                 )
             if raw_endpoints:
                 for ep_id, ep_name in raw_endpoints.items():
-                    endpoints[ep_id] = EndpointState(
+                    endpoints[ep_id] = EntityState(
                         node_id=cync_id, id=ep_id, name=ep_name
                     )
 
-            nodes[cync_id] = CyncNode(
+            nodes[cync_id] = CyncDevice(
                 name=device_name,
-                node_id=cync_id,
+                dev_id=cync_id,
                 fw_version=fw_version,
                 home_id=home_id,
                 mac=btmac,
                 wifi_mac=wmac,
                 dev_type=dev_type,
-                endpoints=endpoints,
+                entities=endpoints,
             )
 
     return nodes
@@ -276,6 +294,7 @@ def check_for_uuid():
     lp = "check_uuid:"
     # create dir for cync_mesh.yaml and variable data if it does not exist
     persistent_dir = Path(CYNC_CONFIG_DIR).expanduser().resolve()
+    os.chmod(persistent_dir, 0o777)
     if not persistent_dir.exists():
         try:
             persistent_dir.mkdir(parents=True, exist_ok=True)
@@ -324,6 +343,7 @@ def check_for_uuid():
         g.uuid = uuid.uuid4()
         with open(uuid_file, "w") as f:
             f.write(str(g.uuid))
+            os.chmod(uuid_file, 0o777)
             logger.info(f"{lp} UUID written to disk: {uuid_file.as_posix()}")
 
 
@@ -332,3 +352,30 @@ def utc_to_local(utc_dt: datetime.datetime) -> datetime.datetime:
     # utc_time = datetime.datetime.now(datetime.UTC)
     local_time = utc_dt.astimezone(LOCAL_TZ)
     return local_time
+
+
+def format_socat_style(
+    data: bytes, direction: str, address: str, start_idx: int
+) -> str:
+    """
+    Formats binary data into a two-column hex/ASCII output with sequence tracking
+    to match 'socat -v' behavior.
+    """
+    dir_sym = ">" if direction == "to_cloud" else "<"
+    length = len(data)
+    end_idx = start_idx + length - 1 if length > 0 else start_idx
+    # header line: arrow, metadata and sequence indices
+    header = f"{dir_sym} {direction} length={length} from={start_idx} to={end_idx}"
+    lines = [header]
+    for i in range(0, length, 16):
+        chunk = data[i : i + 16]
+        # col 1: hex values (padded to 48 characters for alignment)
+        hex_part = " ".join(f"{b:02x}" for b in chunk)
+        hex_padded = hex_part.ljust(48)
+        # col 2: ascii characters (filtering non-printables)
+        ascii_part = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
+        # format matching socat: space, hex, double-space, ascii
+        lines.append(f" {hex_padded}  {ascii_part}")
+
+    lines.append("--")
+    return "\n".join(lines)

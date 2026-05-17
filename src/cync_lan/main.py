@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import logging.handlers
 import signal
 import sys
 from functools import partial
@@ -15,13 +16,13 @@ from cync_lan.const import (
     CYNC_DEBUG,
     CYNC_ENABLE_EXPORTER,
     CYNC_LOG_NAME,
+    CYNC_SECRET_KEY,
     CYNC_VERSION,
     EXPORT_SRV_START_TASK_NAME,
     FOREIGN_LOG_FORMATTER,
     LOG_FORMATTER,
     MQTT_CLIENT_START_TASK_NAME,
     nCYNC_START_TASK_NAME,
-    CYNC_SECRET_KEY
 )
 from cync_lan.exporter import ExportServer
 from cync_lan.mqtt_client import MQTTClient
@@ -113,7 +114,9 @@ class CyncLAN:
             )
         if CYNC_ENABLE_EXPORTER is True:
             if not CYNC_SECRET_KEY:
-                logger.critical(f"{lp} You must set an non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting...")
+                logger.critical(
+                    f"{lp} You must set an non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting..."
+                )
                 signal.raise_signal(signal.SIGTERM)
                 sys.exit(55)
             g.cloud_api = CyncCloudAPI()
@@ -122,7 +125,6 @@ class CyncLAN:
                 g.export_server.start(), name=EXPORT_SRV_START_TASK_NAME
             )
             tasks.append(x_start)
-
 
         try:
             # the components start() methods have long running tasks of their own
@@ -154,7 +156,7 @@ def parse_cli():
     parser.add_argument(
         "--env", help="Path to the environment file", default=None, type=Path
     )
-    g.cli_args = args = parser.parse_args()
+    args = parser.parse_args()
 
     if args.debug:
         logger.setLevel(logging.DEBUG)
