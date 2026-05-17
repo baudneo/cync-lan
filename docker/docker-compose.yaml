@@ -18,6 +18,9 @@ services:
       - ./config:/root/cync-lan/config
 #    env_file: ./env
     environment:
+      # Enable MITM logging of all Cync App requests (default: false), App is always proxied to the cloud,
+      # this just enables logging of the proxied data
+#      CYNC_APP_MITM_LOGGING: yes
       # secret key used to encrypt the cync cloud access token at rest
       # REQUIRED if export server is enabled, but can be any value. Just make sure to use a unique value and not the default for better security.
       CYNC_SECRET_KEY: "PLEASE_CHANGE_ME_TO_A_RANDOM_STRING"
