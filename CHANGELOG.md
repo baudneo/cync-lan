@@ -1,12 +1,24 @@
-### 0.0.5b3
+### 0.0.6b1
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
-- add deviceType's 53, 56, 155, 170
+- Proxy / MITM mode: Devices connected to CyncLAN via TCP will have a 'MITM Mode' button exposed
+  - Enabling will force the device to reconnect and all data will be proxied to the Cync cloud and logged to file and optionally to the log console
+  - While MITM mode is enabled, the device will not be able to be used to send any commands to Cync devices, but it will still report device state changes (can read, no write)
+  - It is recommended to have 1 TCP device connected that is not in MITM mode to be able to control the devices via HASS while you are gathering data on the MITM device
+  - This is intended to be used to gather data on new devices and functionality that CyncLAN does not expose, so I can add support for it; dynamic / music / per segment lighting state/effects, thermostat, etc.
+  - Currently only Cync devices support MITM mode, work is ongoing to allow Cync mobile apps and hopefully allow a way to add new devices to cloud accounts while network-wide DNS redirection is active.
+  - See an example [work flow]()
+- Cloud API refresh token logic added
+- Packet building logic refactoring
+- Optimizations
+- Add deviceType 151: Soft white decorative candle light (thanks [@tobyroworth](https://github.com/baudneo/cync-lan/commits?author=tobyroworth))
+
+### 0.0.5b3
+- add deviceTypes 53, 56, 155, 170
 
 ### 0.0.5b2
 - BREAKING CHANGES:
   - Add encryption for the cloud token cache at rest; Fernet with static seeded PBKDF2HMAC key.
   - REQUIRES: Setting a random alphanumeric string for CYNC_SECRET_KEY in the App config
-
 
 ### 0.0.5b1
 - BREAKING CHANGES:
