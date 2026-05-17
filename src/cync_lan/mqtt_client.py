@@ -233,7 +233,7 @@ class MQTTClient:
             tasks = []
             node = None
             sub_id: Optional[int] = None
-            logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}")
+            # logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}")
             if _topic[0] == CYNC_TOPIC:
                 if _topic[1] == "set":
                     # TOPIC: cync_lan_TEST/set/769962427-46/mitm // MESSAGE: b'ON'
@@ -769,8 +769,11 @@ class MQTTClient:
                 if device.supports_temperature:
                     registry_struct["supported_color_modes"].append("color_temp")
                     registry_struct["color_temp_kelvin"] = True
-                    min_k = device.metadata.characteristics.min_kelvin if device.metadata.characteristics.min_kelvin is not None else CYNC_MINK
-                    max_k = device.metadata.characteristics.max_kelvin if device.metadata.characteristics.max_kelvin is not None else CYNC_MAXK
+                    min_k = CYNC_MINK
+                    max_k = CYNC_MAXK
+                    if device.metadata.characteristics:
+                        min_k = device.metadata.characteristics.min_kelvin if device.metadata.characteristics.min_kelvin is not None else CYNC_MINK
+                        max_k = device.metadata.characteristics.max_kelvin if device.metadata.characteristics.max_kelvin is not None else CYNC_MAXK
                     registry_struct["min_kelvin"] = min_k
                     registry_struct["max_kelvin"] = max_k
                 if device.supports_rgb:

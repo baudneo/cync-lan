@@ -492,7 +492,7 @@ class CyncCloudAPI:
                         f"{lp} Staging sub-device ({sub_id}) named: '{dev_name}' with parent device ID {dev_id} in "
                         f"home '{raw_home['name']}' devices registry"
                     )
-                    state = EntityState(node_id=dev_id, id=sub_id, name=dev_name)
+                    state = EntityState(dev_id=dev_id, sub_id=sub_id, name=dev_name)
                     if dev_id in entity_reg:
                         entity_reg[dev_id][sub_id] = state.name
                     else:

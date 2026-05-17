@@ -263,7 +263,7 @@ async def parse_config(cfg_file: Path):
             if raw_endpoints:
                 for ep_id, ep_name in raw_endpoints.items():
                     endpoints[ep_id] = EntityState(
-                        node_id=cync_id, id=ep_id, name=ep_name
+                        dev_id=cync_id, sub_id=ep_id, name=ep_name
                     )
 
             nodes[cync_id] = CyncDevice(

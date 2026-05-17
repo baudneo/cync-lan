@@ -1336,7 +1336,7 @@ class CyncTCPSession:
             parsed_status = EntityState(
                 **{
                     "name": "",
-                    "node_id": dev_id,
+                    "dev_id": dev_id,
                     "recently_seen": recently_seen,
                     "power": power,
                     "brightness": bri,
@@ -1375,21 +1375,21 @@ class CyncTCPSession:
             )
 
         # Checksum Stream Logic, the LED light controller sends 0x83 in a stream of data with checksum mismatches
-        if list(packet_data[9:12]) == [17, 17, 17]:
-            if self.first_83_packet_checksum is None:
-                self.first_83_packet_checksum = checksum
-                if calc_chksum != checksum:
-                    logger.warning(
-                        f"{lp} [LED Controller?] Checksum mismatch in INITIAL STATUS STREAM - FIRST packet data [safe to ignore]..."
-                    )
-            else:
-                if checksum == self.first_83_packet_checksum:
-                    calc_chksum = self.first_83_packet_checksum
-                else:
-                    self.first_83_packet_checksum = None
-
-        if calc_chksum != checksum:
-            pass
+        # if list(packet_data[9:12]) == [17, 17, 17]:
+        #     if self.first_83_packet_checksum is None:
+        #         self.first_83_packet_checksum = checksum
+        #         if calc_chksum != checksum:
+        #             logger.warning(
+        #                 f"{lp} [LED Controller?] Checksum mismatch in INITIAL STATUS STREAM - FIRST packet data [safe to ignore]..."
+        #             )
+        #     else:
+        #         if checksum == self.first_83_packet_checksum:
+        #             calc_chksum = self.first_83_packet_checksum
+        #         else:
+        #             self.first_83_packet_checksum = None
+        #
+        # if calc_chksum != checksum:
+        #     pass
 
     async def _handle_73_mesh_control(
         self, packet_data: Optional[bytes], queue_id: bytes, msg_id: bytes, lp: str
@@ -1437,6 +1437,7 @@ class CyncTCPSession:
                             self.protocol_version, self.protocol_version_str = fw_ver, fw_str
 
         if not self.mitm_mode:
+            # logger.debug(f"DBG>>>> Queue ID = {queue_id.hex(' ')}")
             await self.write(PacketBuilder.build_73_ack(queue_id, msg_id))
 
     async def _process_73_mesh_info(
@@ -1537,7 +1538,7 @@ class CyncTCPSession:
                     # Standard single endpoint
                     e_state = EntityState(
                         name=node_repr.name,
-                        node_id=dev_id,
+                        dev_id=dev_id,
                         power=dev_state,
                         brightness=dev_bri,
                         temperature=dev_tmp,
@@ -2112,7 +2113,7 @@ class CyncTCPSession:
                                             # Standard single endpoint
                                             e_state = EntityState(
                                                 name=node_repr.name,
-                                                node_id=dev_id,
+                                                dev_id=dev_id,
                                                 power=power,
                                                 brightness=bri,
                                                 temperature=tmp,
@@ -2426,7 +2427,7 @@ class CyncTCPSession:
                                                         # Standard single endpoint
                                                         e_state = EntityState(
                                                             name=node_repr.name,
-                                                            node_id=dev_id,
+                                                            dev_id=dev_id,
                                                             power=dev_state,
                                                             brightness=dev_bri,
                                                             temperature=dev_tmp,
