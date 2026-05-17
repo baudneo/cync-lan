@@ -870,6 +870,13 @@ class CyncTCPSession:
                 f"{lp} Already setup for Node: '{self.name}' (ID: {self.node_id})"
             )
             return
+        # Differentiate between App (by IP) and Device (by ID)
+        conn_type = "dev"
+        if self.is_app:
+            conn_type = "app"
+            identifier = f"{conn_type}_{self.ip_address.replace('.', '-')}"
+        elif self.node_id:
+            identifier = f"{conn_type}_{self.node_id}"
         logger_name = f"MITM {conn_type}:{self.ip_address}"
         mitm_logger = logging.getLogger(logger_name)
         self.mitm_logger = mitm_logger
@@ -878,15 +885,6 @@ class CyncTCPSession:
                            f"not logging this proxied connection...")
             return
         self.log_start_time = datetime.datetime.now().strftime("%Y%m%d")
-
-        # Differentiate between App (by IP) and Device (by ID)
-        conn_type = "dev"
-        if self.is_app:
-            conn_type = "app"
-            identifier = f"{conn_type}_{self.ip_address.replace('.', '-')}"
-
-        elif self.node_id:
-            identifier = f"{conn_type}_{self.node_id}"
         log_dir = Path(CYNC_MITM_LOG_DIR)
         log_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(log_dir, 0o777)
