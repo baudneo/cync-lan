@@ -990,7 +990,7 @@ class MQTTClient:
         """Add a MITM Mode button dynamically. Send empty message to the hass config topic to delete the entity."""
         logger.debug(
             f"{node.lp} Adding a 'MITM mode' button to node: '{node.name}' (ID: {node.id}) as it is "
-            f"connected via IP: {node.ip_address}"
+            f"connected via IP: {node.tcp_session.ip_address}"
         )
         device_uuid = node.hass_id
         mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"

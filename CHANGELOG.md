@@ -6,7 +6,7 @@
   - It is recommended to have 1 TCP device connected that is not in MITM mode to be able to control the devices via HASS while you are gathering data on the MITM device
   - This is intended to be used to gather data on new devices and functionality that CyncLAN does not expose, so I can add support for it; dynamic / music / per segment lighting state/effects, thermostat, etc.
   - Currently only Cync devices support MITM mode, work is ongoing to allow Cync mobile apps and hopefully allow a way to add new devices to cloud accounts while network-wide DNS redirection is active.
-  - See an example [work flow]()
+  - See an example [work flow](https://github.com/baudneo/cync-lan/tree/add-mitm#workflow)
 - Cloud API refresh token logic added
 - Packet building logic refactoring
 - Optimizations
