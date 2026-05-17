@@ -1303,19 +1303,19 @@ class MQTTClient:
             f"{self.ha_topic}/sensor/{app_count_unique_id}/config", app_count_conf
         )
 
-        app_logging_unique_id = "cync_lan_bridge_app_logging"
-        app_logging_conf = {
-            "name": "Global App MITM Logging",
-            "unique_id": app_logging_unique_id,
-            "command_topic": f"{self.topic}/set/bridge/app_logging",
-            "state_topic": f"{self.topic}/status/bridge/app_logging",
-            "icon": "mdi:file-find",
-            "device": bridge_device_reg_struct,
-            "platform": "switch",
-        }
-        await self.publish_json_msg(
-            f"{self.ha_topic}/switch/{app_logging_unique_id}/config", app_logging_conf
-        )
+        # app_logging_unique_id = "cync_lan_bridge_app_logging"
+        # app_logging_conf = {
+        #     "name": "Global App MITM Logging",
+        #     "unique_id": app_logging_unique_id,
+        #     "command_topic": f"{self.topic}/set/bridge/app_logging",
+        #     "state_topic": f"{self.topic}/status/bridge/app_logging",
+        #     "icon": "mdi:file-find",
+        #     "device": bridge_device_reg_struct,
+        #     "platform": "switch",
+        # }
+        # await self.publish_json_msg(
+        #     f"{self.ha_topic}/switch/{app_logging_unique_id}/config", app_logging_conf
+        # )
 
         await asyncio.gather(*pub_tasks, return_exceptions=True)
         logger.debug(f"{lp} Bridge device config published and seeded")
