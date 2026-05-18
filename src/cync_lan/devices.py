@@ -1810,6 +1810,7 @@ class CyncTCPSession:
         finally:
             self.reader = None
 
+        g.mqtt_client.remove_mitm_button(self.node)
         self.closing = False
 
     @property
