@@ -6,7 +6,6 @@
 - Fix unbound error on MITM activation
 
 ### 0.0.6b1
-- NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
 - Proxy / MITM mode: Devices connected to CyncLAN via TCP will have a 'MITM Mode' button exposed
   - Enabling will force the device to reconnect and all data will be proxied to the Cync cloud and logged to file and optionally to the log console
   - While MITM mode is enabled, the device will not be able to be used to send any commands to Cync devices, but it will still report device state changes (can read, no write)
