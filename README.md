@@ -1,3 +1,6 @@
+# This branch is not used. only the `python` branch is
+
+
 # pycync_lan (cync_lan)
 ![GitHub Release](https://img.shields.io/github/v/release/baudneo/cync-lan) 
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/baudneo/cync-lan/container-package-publish.yml) 
