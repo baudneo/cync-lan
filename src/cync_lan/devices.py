@@ -33,7 +33,19 @@ from cync_lan.metadata.model_info import (
     DeviceTypeInfo,
     device_type_map,
 )
-from cync_lan.packet import PacketBuilder
+from cync_lan.packet import (
+    PacketBuilder,
+    Parsed43Broadcast,
+    Parsed43Timestamp,
+    Parsed83DeviceState,
+    compute_legacy_83_checksum,
+    parse_43_payload,
+    parse_73_control_ack,
+    parse_73_inner_struct,
+    parse_83_bulk_status,
+    parse_83_device_state,
+    parse_outer_packet,
+)
 from cync_lan.structs import (
     CacheData,
     ControlMessageCallback,
@@ -1125,22 +1137,19 @@ class CyncTCPSession:
     async def parse_packet(self, data: bytes):
         """Parse what type of packet based on header (first 12 bytes)."""
         if len(data) < 5:
-            # logger.warning(f"{self.lp} Packet too short to contain header: {data.hex(' ')}")
             return
-        packet_header = data[:12]
-        pkt_type = packet_header[0]
 
-        # Calculate length based on protocol (multiplier * 256 + length)
-        pkt_multiplier = packet_header[3] * 256
-        packet_length = packet_header[4] + pkt_multiplier
+        try:
+            outer_packet = parse_outer_packet(data)
+        except ValueError as exc:
+            logger.warning(f"{self.lp} Failed to parse packet: {exc}")
+            return
 
-        # queue_id = packet_header[5:10]
-        # 4 bytes
-        queue_id = packet_header[5:9]
-        # bytes
-        msg_id = packet_header[9:12]
-
-        packet_data = data[12:] if len(data) > 12 else None
+        pkt_type = outer_packet.packet_type
+        packet_length = outer_packet.packet_length
+        queue_id = outer_packet.queue_id
+        msg_id = outer_packet.msg_id
+        packet_data = outer_packet.payload if outer_packet.payload else None
         lp = f"{self.lp}0x{pkt_type:02x}:"
 
         # Route to the appropriate handler
@@ -1229,46 +1238,14 @@ class CyncTCPSession:
         self, packet_data: Optional[bytes], msg_id: bytes, packet_length: int, lp: str
     ):
         """Parses timestamps and broadcast status."""
-        if packet_data:
-            if packet_data[:2] == b"\xc7\x90":
-                # --- Timestamp Parsing ---
-                ts_idx = 3
-                # Gross hack for versions 3.x - 4.x
-                ts_end_idx = (
-                    -2 if (self.version and 30000 <= self.version <= 40000) else -1
-                )
-                ts = packet_data[ts_idx:ts_end_idx]
-
-                if ts:
-                    ts_ascii = ts.decode("ascii", errors="replace")
-                    if ts_ascii[-1] != "," and not ts_ascii[-1].isdigit():
-                        ts_ascii = ts_ascii[:-1]
-
-                    logger.debug(
-                        f"{lp} Device sent TIMESTAMP -> {ts_ascii} - replying..."
-                    )
-                    self.device_timestamp = ts_ascii
-                else:
-                    logger.debug(
-                        f"{lp} Could not decode timestamp from: {packet_data.hex(' ')}"
-                    )
-
-            else:
-                # --- Broadcast Status Parsing ---
-                struct_len = 20 if b"\x2e" in packet_data else 19
-                extractions = []
-
-                for i in range(0, packet_length, struct_len):
-                    extracted = packet_data[i : i + struct_len]
-                    if len(extracted) == struct_len:
-                        status_struct = extracted[3:10]
-                        status_struct += b"\x01"
-                        extractions.append((extracted.hex(" "), list(status_struct)))
-
-                if CYNC_RAW:
-                    logger.debug(
-                        f"{lp} Extracted data and STATUS struct => {extractions}"
-                    )
+        parsed_43 = parse_43_payload(packet_data, packet_length, self.version)
+        if isinstance(parsed_43, Parsed43Timestamp):
+            logger.debug(f"{lp} Device sent TIMESTAMP -> {parsed_43.timestamp} - replying...")
+            self.device_timestamp = parsed_43.timestamp
+        elif isinstance(parsed_43, Parsed43Broadcast) and CYNC_RAW:
+            logger.debug(
+                f"{lp} Extracted data and STATUS struct => {parsed_43.extractions}"
+            )
 
         # Always ACK a 0x43 ping/status
         if not self.mitm_mode:
@@ -1297,72 +1274,56 @@ class CyncTCPSession:
 
             # 0x7e Bound Internal Status
             elif packet_data[0] == DATA_BOUNDARY:
-                checksum = packet_data[-2]
-                ctrl_bytes = packet_data[5:7]
-                # inner_data = packet_data[6:-2]
-                inner_data = packet_data[6:-2]
-                calc_chksum = sum(inner_data) % 256
-
-                if ctrl_bytes == b"\xfa\xdb" and packet_data[7] == 0x13:
-                    await self._parse_83_device_state(
-                        packet_data, checksum, calc_chksum, lp
-                    )
-                elif ctrl_bytes == b"\xfa\xd9":
-                    # seems to be some sort of bulk status msg. seen when updating devices firmware,
-                    # it seemed to broadcast each devices percentage complete status
-                    devices = []
-                    try:
-                        payload_len = packet_data[7]
-                        device_count = packet_data[9]
-                        # Devices start at index 10, each block is 4 bytes
-                        idx = 10
-                        for _ in range(device_count):
-                            dev_id = packet_data[idx]
-                            sub_id = packet_data[idx + 1]
-                            status_type = packet_data[idx + 2]
-                            value = packet_data[idx + 3]
-                            devices.append({
-                                "node_id": dev_id, "sub_id": sub_id,
-                                "type": status_type, "value": value
-                            })
-                            idx += 4
-                        return devices
-                    except IndexError as e:
-                        return []
-                else:
+                try:
+                    parsed_state = parse_83_device_state(packet_data)
+                except ValueError as exc:
+                    checksum, calc_chksum = compute_legacy_83_checksum(packet_data)
                     logger.warning(
-                        f"{lp} UNKNOWN packet data (ctrl_bytes: {ctrl_bytes.hex(' ')} // checksum valid: "
-                        f"{checksum == calc_chksum})\n\nHEX: {packet_data[1:-1].hex(' ')}\nINT: {list(packet_data[1:-1])}"
+                        f"{lp} Malformed 0x83 state frame ({exc}) // checksum valid: "
+                        f"{checksum == calc_chksum}\n\nHEX: {packet_data[1:-1].hex(' ')}\n"
+                        f"INT: {list(packet_data[1:-1])}"
                     )
+                else:
+                    if parsed_state:
+                        await self._parse_83_device_state(parsed_state, lp)
+                        if not self.mitm_mode:
+                            await self.write(PacketBuilder.build_83_ack(msg_id))
+                        return
+
+                parsed_bulk = None
+                try:
+                    parsed_bulk = parse_83_bulk_status(packet_data)
+                except ValueError:
+                    pass
+
+                if parsed_bulk:
+                    return [
+                        {
+                            "node_id": dev.node_id,
+                            "sub_id": dev.sub_id,
+                            "type": dev.status_type,
+                            "value": dev.value,
+                        }
+                        for dev in parsed_bulk.devices
+                    ]
 
         if not self.mitm_mode:
             await self.write(PacketBuilder.build_83_ack(msg_id))
 
-    async def _parse_83_device_state(
-        self, packet_data: bytes, checksum: int, calc_chksum: int, lp: str
-    ):
-        if len(packet_data) < 26:
-            raise ValueError("Packet too short for standard status update")
-        try:
-            dev_id = packet_data[14]
-            recently_seen, power, bri, tmp, r, gr, b = struct.unpack(">BBBBBBB", packet_data[19:26])
-
-            parsed_status = EntityState(
-                **{
-                    "name": "",
-                    "dev_id": dev_id,
-                    "recently_seen": recently_seen,
-                    "power": power,
-                    "brightness": bri,
-                    "temperature": tmp,
-                    "red": r,
-                    "green": gr,
-                    "blue": b,
-                }
-            )
-        except struct.error as e:
-            logger.error(f"{lp} Failed to unpack status packet: {e}")
-            return
+    async def _parse_83_device_state(self, state: Parsed83DeviceState, lp: str):
+        parsed_status = EntityState(
+            **{
+                "name": "",
+                "dev_id": state.dev_id,
+                "recently_seen": state.recently_seen,
+                "power": state.power,
+                "brightness": state.brightness,
+                "temperature": state.temperature,
+                "red": state.red,
+                "green": state.green,
+                "blue": state.blue,
+            }
+        )
 
         node_repr: CyncDevice = g.ncync_server.node_devices.get(dev_id)
         if not node_repr:
@@ -1417,38 +1378,47 @@ class CyncTCPSession:
             logger.warning(f"{lp} packet with no data?!?")
         else:
             if packet_data[0] == DATA_BOUNDARY:
-                ctrl_bytes = packet_data[5:7]
-                end_bndry_idx = packet_data[1:].find(DATA_BOUNDARY) + 1
-                inner_struct = packet_data[1:end_bndry_idx]
+                try:
+                    inner_struct = parse_73_inner_struct(packet_data)
+                except ValueError as exc:
+                    logger.warning(f"{lp} malformed 0x73 inner frame: {exc}")
+                else:
+                    if not inner_struct:
+                        return
 
-                if ctrl_bytes == b"\xf9\x52":
-                    await self._process_73_mesh_info(inner_struct, queue_id, lp)
+                    ctrl_bytes = inner_struct[4:6]
 
-                elif ctrl_bytes[0] == 0xF9 and ctrl_bytes[1] in (0xD0, 0xF0, 0xE2):
-                    # Handle Callbacks for control messages
-                    ctrl_msg_id = packet_data[1]
-                    success = packet_data[7] == 1
-                    msg = self.messages.control.pop(ctrl_msg_id, None)
+                    if ctrl_bytes == b"\xf9\x52":
+                        await self._process_73_mesh_info(inner_struct, queue_id, lp)
 
-                    if success and msg:
-                        if callable(msg.callback):
-                            await msg.callback()
-                        else:
-                            await msg.callback
-                    elif success and not msg:
-                        logger.debug(
-                            f"{lp} CONTROL packet ACK callback NOT found for msg ID: {ctrl_msg_id}"
-                        )
-
-                elif ctrl_bytes == b"\xfa\x8e":
-                    if packet_data[1] == 0x00:
-                        fw_type, fw_ver, fw_str = extract_firmware_dynamically(
-                            packet_data[1:-1], lp
-                        )
-                        if fw_type == "device":
-                            self.version, self.version_str = fw_ver, fw_str
-                        else:
-                            self.protocol_version, self.protocol_version_str = fw_ver, fw_str
+                    else:
+                        try:
+                            ctrl_ack = parse_73_control_ack(packet_data)
+                        except ValueError:
+                            ctrl_ack = None
+                        if ctrl_ack:
+                            msg = self.messages.control.pop(ctrl_ack.msg_id, None)
+                            if ctrl_ack.success and msg:
+                                if callable(msg.callback):
+                                    await msg.callback()
+                                else:
+                                    await msg.callback
+                            elif ctrl_ack.success and not msg:
+                                logger.debug(
+                                    f"{lp} CONTROL packet ACK callback NOT found for msg ID: "
+                                    f"{ctrl_ack.msg_id}"
+                                )
+                        elif ctrl_bytes == b"\xfa\x8e" and inner_struct[0] == 0x00:
+                            fw_type, fw_ver, fw_str = extract_firmware_dynamically(
+                                inner_struct, lp
+                            )
+                            if fw_type == "device":
+                                self.version, self.version_str = fw_ver, fw_str
+                            else:
+                                self.protocol_version, self.protocol_version_str = (
+                                    fw_ver,
+                                    fw_str,
+                                )
 
         if not self.mitm_mode:
             # logger.debug(f"DBG>>>> Queue ID = {queue_id.hex(' ')}")
