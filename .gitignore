@@ -5,7 +5,7 @@ cync_mesh.yaml
 ./config
 uuid.txt
 ./tailwindcss
-./docker-compose.yaml
+docker-compose.yaml
 uv.lock
 dump.txt
 *.egg-info
