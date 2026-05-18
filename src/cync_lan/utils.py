@@ -191,10 +191,6 @@ async def parse_config(cfg_file: Path):
     main_key = "account data"
     if main_key not in raw_config:
         if "exported_homes" in raw_config:
-            logger.warning(
-                f"{lp} 'account data' key not found in config file, but 'exported_homes' key exists. This may be an "
-                f"older export format. Attempting to parse devices from 'exported_homes'..."
-            )
             main_key = "exported_homes"
     for cync_home_name, home_cfg in raw_config[main_key].items():
         home_id = home_cfg["id"]
