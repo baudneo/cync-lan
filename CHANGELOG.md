@@ -1,5 +1,11 @@
-### 0.0.6b3
+### 0.0.6b4
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Various CyncLAN lib fixes
+- Add MQTT debug logging toggle in HASS app config
+  - When disabled, it wont display debug level logs from the MQTT client WHEN the MAIN debug level is enabled, which can be very verbose when you have a lot of devices or have `raw_debug` enabled in the cync-lan config
+  - When enabled, it will display debug level logs from the MQTT client, WHEN the MAIN debug level is enabled
+
+### 0.0.6b3
 - Fix stop_mitm() method, now reverts device back to normal operation on being turned off
 
 ### 0.0.6b2
