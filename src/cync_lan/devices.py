@@ -814,27 +814,45 @@ class CyncTCPSession:
 
     async def stop_mitm(self):
         """Close cloud connection and stop proxying."""
-        if self.cloud_writer:
-            self.cloud_writer.close()
-            await self.cloud_writer.wait_closed()
-        self.cloud_reader.feed_eof()
-        self.cloud_reader = None
-        self.cloud_writer = None
+        lp = f"{self.lp}close mitm:"
+        logger.debug(f"{lp} closing...")
+        # cancel the proxy task first so it stops reading from cloud_reader
         if self.tasks.proxy_task and not self.tasks.proxy_task.done():
+            logger.debug(f"{lp} cancelling proxy task...")
             self.tasks.proxy_task.cancel()
             try:
                 await self.tasks.proxy_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
-            except Exception as e:
-                logger.debug(f"{self.lp} proxy task exception: {e}")
-
         self.tasks.proxy_task = None
+        logger.debug(f"{lp} proxy task stopped")
+
+        if self.cloud_reader:
+            try:
+                self.cloud_reader.feed_eof()
+                logger.debug(f"{lp} fed eof to cloud_reader")
+            except Exception as e:
+                logger.debug(f"{lp} cloud_reader feed_eof error (ignored): {e}")
+        self.cloud_reader = None
+
+        if self.cloud_writer:
+            logger.debug(f"{lp} closing cloud_writer...")
+            try:
+                self.cloud_writer.close()
+                await asyncio.wait_for(self.cloud_writer.wait_closed(), timeout=5.0)
+                logger.debug(f"{lp} cloud_writer closed cleanly")
+            except asyncio.TimeoutError:
+                logger.warning(f"{lp} cloud_writer.wait_closed() timed out, continuing anyway")
+            except Exception as e:
+                logger.debug(f"{lp} cloud_writer close error (ignored): {e}")
+        self.cloud_writer = None
+
         self.mitm_logger = None
         self.mitm_bytes_to_cloud = 0
         self.mitm_bytes_from_cloud = 0
         self.mitm_mode = False
-        logger.info(f"{self.lp} MITM Mode disabled.")
+        logger.info(f"{self.lp} MITM Mode disabled, forcing disconnect to enable normal operation...")
+        await self.close()
 
     async def _cloud_proxy_task(self):
         """Reads from cloud and writes to device."""
@@ -856,11 +874,6 @@ class CyncTCPSession:
                     await self.writer.drain()
         except Exception as e:
             logger.error(f"{lp} Error in cloud proxy: {e}")
-        finally:
-            logger.debug(
-                "DBG>>> in MITM cloud proxy task finally: block, stopping mitm mode...."
-            )
-            await self.stop_mitm()
 
     def _setup_mitm_logger(self):
         """Initializes a rotating file logger for this specific connection."""
