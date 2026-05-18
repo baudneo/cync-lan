@@ -115,7 +115,7 @@ class PacketBuilder:
     @staticmethod
     def build_73_ack(queue_id: bytes, msg_id: bytes) -> bytes:
         """Respond to a 0x73 packet from the device."""
-        PacketBuilder._require_len("queue_id", queue_id, 5)
+        PacketBuilder._require_len("queue_id", queue_id, 4)
         PacketBuilder._require_len("msg_id", msg_id, 3)
         return struct.pack(">BBBBB", 0x78, 0x00, 0x00, 0x00, 0x07) + queue_id + msg_id
 

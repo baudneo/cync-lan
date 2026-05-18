@@ -1134,7 +1134,10 @@ class CyncTCPSession:
         pkt_multiplier = packet_header[3] * 256
         packet_length = packet_header[4] + pkt_multiplier
 
-        queue_id = packet_header[5:10]
+        # queue_id = packet_header[5:10]
+        # 4 bytes
+        queue_id = packet_header[5:9]
+        # bytes
         msg_id = packet_header[9:12]
 
         packet_data = data[12:] if len(data) > 12 else None
@@ -1181,7 +1184,7 @@ class CyncTCPSession:
     ):
         """Routes device requests to their specific parsing logic."""
         if pkt_type == 0x23:
-            self.queue_id = raw_data[6:10]
+            self.queue_id = queue_id
             if not self.mitm_mode:
                 if CYNC_RAW:
                     logger.debug(
@@ -1449,7 +1452,7 @@ class CyncTCPSession:
 
         if not self.mitm_mode:
             # logger.debug(f"DBG>>>> Queue ID = {queue_id.hex(' ')}")
-            await self.write(PacketBuilder.build_73_ack(queue_id, msg_id))
+            await self.write(PacketBuilder.build_73_ack(self.queue_id, msg_id))
 
     async def _process_73_mesh_info(
         self, inner_struct: bytes, queue_id: bytes, lp: str
