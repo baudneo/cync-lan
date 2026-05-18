@@ -22,6 +22,12 @@ from .types import (
     Parsed83DeviceState,
 )
 
+V3_MIN_VERSION = 30000
+V4_MAX_VERSION = 40000
+BROADCAST_DOT_MARKER = 0x2E
+BROADCAST_STRUCT_LEN = 19
+BROADCAST_STRUCT_LEN_DOT = 20
+
 
 def parse_outer_packet(packet: bytes) -> OuterPacket:
     if len(packet) < 5:
@@ -94,7 +100,8 @@ def parse_43_payload(
 
     if packet_data[:2] == b"\xc7\x90":
         ts_idx = 3
-        ts_end_idx = -2 if version and 30000 <= version <= 40000 else -1
+        # 3.x through 4.0.0 firmware includes an extra trailing marker byte here.
+        ts_end_idx = -2 if version and V3_MIN_VERSION <= version <= V4_MAX_VERSION else -1
         ts = packet_data[ts_idx:ts_end_idx]
         if not ts:
             return None
@@ -105,7 +112,12 @@ def parse_43_payload(
 
         return Parsed43Timestamp(timestamp=timestamp)
 
-    struct_len = 20 if b"\x2e" in packet_data else 19
+    # Broadcast payloads that include a '.' marker use a 20-byte struct variant.
+    struct_len = (
+        BROADCAST_STRUCT_LEN_DOT
+        if bytes([BROADCAST_DOT_MARKER]) in packet_data
+        else BROADCAST_STRUCT_LEN
+    )
     extractions: list[tuple[str, list[int]]] = []
 
     for idx in range(0, packet_length, struct_len):

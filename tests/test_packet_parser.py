@@ -87,6 +87,8 @@ def test_parse_inner_frame_malformed_escaping() -> None:
 
 def test_parse_inner_frame_malformed_boundaries() -> None:
     bad = b"\x00\x01\x02\x03\x04"
+    assert bad[0] != 0x7E
+    assert bad[-1] != 0x7E
 
     try:
         parse_inner_frame(bad)
@@ -96,7 +98,7 @@ def test_parse_inner_frame_malformed_boundaries() -> None:
         raise AssertionError("Expected ValueError for malformed boundaries")
 
 
-def test_parse_83_device_state_direct_device_case() -> None:
+def test_parse_83_device_state_valid_frame() -> None:
     arguments = bytes(
         [
             0x00,
@@ -134,7 +136,7 @@ def test_parse_83_device_state_direct_device_case() -> None:
     assert parsed.brightness == 0x64
 
 
-def test_parse_83_bulk_status_direct_device_case() -> None:
+def test_parse_83_bulk_status_valid_frame() -> None:
     arguments = bytes(
         [
             0x00,

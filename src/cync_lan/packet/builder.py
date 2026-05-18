@@ -193,7 +193,7 @@ class PacketBuilder:
         op_code: int,
         command_payload: bytes,
     ) -> bytes:
-        """Build the inner 0x7E-bounded packet structure for 0x73 control messages."""
+        """Build an escaped 0x7E-framed inner control payload for 0x73 mesh packets."""
         PacketBuilder._require_u8("msg_id", msg_id)
         PacketBuilder._require_u8("target_id", target_id)
         PacketBuilder._require_u8("sub_id", sub_id)

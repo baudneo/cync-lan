@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from cync_lan.const import DATA_BOUNDARY
 
+ESCAPE_PREFIX = 0x7D
+ESCAPED_BOUNDARY_SUFFIX = 0x5E
+ESCAPED_ESCAPE_SUFFIX = 0x5D
+
 
 def require_exact_length(name: str, data: bytes, expected_len: int) -> None:
     if len(data) != expected_len:
@@ -25,8 +29,12 @@ def verify_checksum8(data: bytes, expected: int) -> bool:
 
 
 def escape_inner_frame(data: bytes) -> bytes:
-    escaped = data.replace(b"\x7d", b"\x7d\x5d")
-    return escaped.replace(bytes([DATA_BOUNDARY]), b"\x7d\x5e")
+    escaped = data.replace(
+        bytes([ESCAPE_PREFIX]), bytes([ESCAPE_PREFIX, ESCAPED_ESCAPE_SUFFIX])
+    )
+    return escaped.replace(
+        bytes([DATA_BOUNDARY]), bytes([ESCAPE_PREFIX, ESCAPED_BOUNDARY_SUFFIX])
+    )
 
 
 def unescape_inner_frame(data: bytes) -> bytes:
@@ -34,19 +42,19 @@ def unescape_inner_frame(data: bytes) -> bytes:
     idx = 0
     while idx < len(data):
         current = data[idx]
-        if current != 0x7D:
+        if current != ESCAPE_PREFIX:
             out.append(current)
             idx += 1
             continue
 
         if idx + 1 >= len(data):
-            raise ValueError("Malformed escaping: dangling 0x7D in inner frame")
+            raise ValueError("Malformed escaping: dangling escape prefix (0x7D)")
 
         nxt = data[idx + 1]
-        if nxt == 0x5E:
+        if nxt == ESCAPED_BOUNDARY_SUFFIX:
             out.append(DATA_BOUNDARY)
-        elif nxt == 0x5D:
-            out.append(0x7D)
+        elif nxt == ESCAPED_ESCAPE_SUFFIX:
+            out.append(ESCAPE_PREFIX)
         else:
             raise ValueError(
                 f"Malformed escaping: unsupported sequence 0x7D 0x{nxt:02X}"

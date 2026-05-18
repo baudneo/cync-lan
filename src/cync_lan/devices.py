@@ -1325,27 +1325,27 @@ class CyncTCPSession:
             }
         )
 
-        node_repr: CyncDevice = g.ncync_server.node_devices.get(dev_id)
-        if not node_repr:
+        node_device: CyncDevice = g.ncync_server.node_devices.get(parsed_status.dev_id)
+        if not node_device:
             logger.warning(
                 f"{lp} Received internal STATUS for unknown device [group/room?, safe to ignore]: {parsed_status}"
             )
             return
 
-        if node_repr.type in MULTI_ENDPOINT_TYPES:
-            if node_repr.type == 67:
+        if node_device.type in MULTI_ENDPOINT_TYPES:
+            if node_device.type == 67:
                 # bri used as bitmask
-                for e_state_ in node_repr.entities.values():
+                for e_state_ in node_device.entities.values():
                     bit_shift = e_state_.sub_id - 1
                     e_state_.power = (
                         1 if (parsed_status.brightness & (1 << bit_shift)) else 0
                     )
                     logger.debug(f"{lp} Internal STATUS for {e_state_}")
-                    await node_repr.handle_entity_update(e_state_, from_pkt="0x83")
+                    await node_device.handle_entity_update(e_state_, from_pkt="0x83")
         else:
-            parsed_status.name = node_repr.name
+            parsed_status.name = node_device.name
             logger.debug(f"{lp} Internal STATUS for {parsed_status}")
-            await node_repr.handle_entity_update(
+            await node_device.handle_entity_update(
                 parsed_status, from_pkt="0x83"
             )
 

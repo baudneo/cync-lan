@@ -27,7 +27,7 @@ def test_build_control_packet_escapes_boundary_byte() -> None:
 
     assert packet[0] == PacketBuilder.DATA_BOUNDARY
     assert packet[-1] == PacketBuilder.DATA_BOUNDARY
-    assert b"\x7e" not in packet[1:-1]
+    assert bytes([PacketBuilder.DATA_BOUNDARY]) not in packet[1:-1]
     assert b"\x7d\x5e" in packet
     assert (
         packet.hex()
