@@ -663,6 +663,7 @@ device_type_map = {
     153: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Light (Unknown)",
+        protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
     ),
     154: DeviceTypeInfo(
