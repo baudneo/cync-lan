@@ -1289,7 +1289,7 @@ class CyncTCPSession:
         else:
             # Unbound Firmware Packet
             if packet_data[0] == 0x00:
-                fw_type, fw_ver, fw_str = extract_firmware_dynamically(packet_data, lp)
+                fw_type, fw_ver, fw_str = extract_firmware_dynamically(packet_data)
                 if fw_type == "device":
                     self.version, self.version_str = fw_ver, fw_str
                 else:
@@ -1443,7 +1443,7 @@ class CyncTCPSession:
                 elif ctrl_bytes == b"\xfa\x8e":
                     if packet_data[1] == 0x00:
                         fw_type, fw_ver, fw_str = extract_firmware_dynamically(
-                            packet_data[1:-1], lp
+                            packet_data[1:-1]
                         )
                         if fw_type == "device":
                             self.version, self.version_str = fw_ver, fw_str
@@ -2045,7 +2045,7 @@ class CyncTCPSession:
 
                         if packet_data[0] == 0x00:
                             fw_type, fw_ver, fw_str = extract_firmware_dynamically(
-                                packet_data, lp
+                                packet_data
                             )
                             if fw_type == "device":
                                 self.version = fw_ver
@@ -2540,7 +2540,7 @@ class CyncTCPSession:
                                         )
                                         fw_type, fw_ver, fw_str = (
                                             extract_firmware_dynamically(
-                                                packet_data[1:-1], lp
+                                                packet_data[1:-1]
                                             )
                                         )
                                         if fw_type == "device":
