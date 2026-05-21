@@ -1184,7 +1184,7 @@ class CyncTCPSession:
     ):
         """Routes device requests to their specific parsing logic."""
         if pkt_type == 0x23:
-            self.queue_id = queue_id
+            self.queue_id = raw_data[6:10]
             if not self.mitm_mode:
                 if CYNC_RAW:
                     logger.debug(
