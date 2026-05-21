@@ -546,7 +546,7 @@ class CyncDevice:
                 else:
                     tasks.append(bridge_device.write(full_packet))
                     if CYNC_RAW:
-                        logger.debug(f"{lp} {full_packet.hex(" ")} || {m_cb}")
+                        logger.debug(f"{lp} Sending to device: {full_packet.hex(" ")}")
 
         if tasks:
             await asyncio.gather(*tasks)
