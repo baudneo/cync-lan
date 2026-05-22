@@ -233,7 +233,7 @@ class MQTTClient:
             tasks = []
             node = None
             sub_id: Optional[int] = None
-            logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}")
+            logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}") if MQTT_DEBUG is True else None
             if _topic[0] == CYNC_TOPIC:
                 if _topic[1] == "set":
                     # TOPIC: cync_lan_TEST/set/769962427-46/mitm // MESSAGE: b'ON'

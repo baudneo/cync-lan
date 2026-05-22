@@ -546,15 +546,11 @@ class CyncDevice:
                         f" not writing data >>> \n\n{full_packet.hex(" ")}")
                 else:
                     tasks.append(bridge_device.write(full_packet))
-                    # str_appnd = "..."
-                    str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node_id}|queue_id: {bridge_device.queue_id.hex(" ")}]):\n'
-                                 f'HEX: {full_packet.hex(" ")}\n'
-                                 f'INT: {bytes2list(full_packet)}\n')
                     if CYNC_RAW:
                         str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node_id}|queue_id: {bridge_device.queue_id.hex(" ")}):\n'
                                      f'HEX: {full_packet.hex(" ")}\n'
                                      f'INT: {bytes2list(full_packet)}\n')
-                    logger.debug(f"{lp} Sending{str_appnd}")
+                        logger.debug(f"{lp} Sending{str_appnd}")
 
         if tasks:
             await asyncio.gather(*tasks)
@@ -1451,7 +1447,7 @@ class CyncTCPSession:
                             await msg.callback()
                         else:
                             await msg.callback
-                        logger.debug(f"{lp} Received a command success reply: {msg}")
+                        # logger.debug(f"{lp} Received a command success reply: {msg}")
                     elif success and not msg:
                         logger.debug(
                             f"{lp} CONTROL packet ACK callback NOT found for msg ID: {ctrl_msg_id}"
