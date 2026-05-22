@@ -1445,13 +1445,16 @@ class CyncTCPSession:
 
                 elif ctrl_bytes == b"\xfa\x8e":
                     if packet_data[1] == 0x00:
-                        fw_type, fw_ver, fw_str = extract_firmware_dynamically(
-                            packet_data[1:-1]
-                        )
-                        if fw_type == "device":
-                            self.version, self.version_str = fw_ver, fw_str
-                        else:
-                            self.protocol_version, self.protocol_version_str = fw_ver, fw_str
+                        try:
+                            fw_type, fw_ver, fw_str = extract_firmware_dynamically(
+                                packet_data[1:-1]
+                            )
+                            if fw_type == "device":
+                                self.version, self.version_str = fw_ver, fw_str
+                            else:
+                                self.protocol_version, self.protocol_version_str = fw_ver, fw_str
+                        except Exception as e:
+                            logger.debug(f"{lp} Exception during firmware parsing: {e}")
 
         if not self.mitm_mode:
             # logger.debug(f"DBG>>>> Queue ID = {queue_id.hex(' ')}")
