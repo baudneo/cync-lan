@@ -183,6 +183,7 @@ class PacketBuilder:
             target_id: int,
             sub_id: int,
             op_code: int,
+            cmd_code: int,
             command_payload: bytes
     ) -> bytes:
         """Builds the inner 0x7E bound packet structure."""
@@ -197,7 +198,7 @@ class PacketBuilder:
 
         # Header: msg_id (1 byte), 3 null padding bytes, 0xF8, op_code, 0x0D, 0x00
         # Format >BxxxBBBB = 1 + 3 + 1 + 1 + 1 + 1 = 8 bytes total
-        header = struct.pack(">B xxx B B B B", msg_id, 0xF8, op_code, 0x0D, 0x00)
+        header = struct.pack(">B xxx B B B B", msg_id, 0xF8, op_code, cmd_code, 0x00)
         # Routing: msg_id (1 byte), 4 null padding bytes, target_id, sub_id
         # Format >BxxxxBB = 1 + 4 + 1 + 1 = 7 bytes total
         routing = struct.pack(">B xxxx B B", msg_id, target_id, sub_id)

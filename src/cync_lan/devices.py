@@ -507,7 +507,7 @@ class CyncDevice:
         # logger.debug(f"{lp} new data: ctrl_byte={id_byte} rollover_byte={rollover_byte} // {self.control_bytes=}")
         return self.control_bytes
 
-    async def send_command(self, op: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str):
+    async def send_command(self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str):
         tasks = []
         tcp_pool = [d for d in g.ncync_server.tcp_connections.values() if not d.is_app]
         if not tcp_pool:
@@ -527,6 +527,7 @@ class CyncDevice:
                     target_id=self.id,
                     sub_id=sub_id,
                     op_code=op,
+                    cmd_code=cmd_,
                     command_payload=payload
                 )
 
@@ -545,8 +546,15 @@ class CyncDevice:
                         f" not writing data >>> \n\n{full_packet.hex(" ")}")
                 else:
                     tasks.append(bridge_device.write(full_packet))
+                    # str_appnd = "..."
+                    str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node_id}|queue_id: {bridge_device.queue_id.hex(" ")}]):\n'
+                                 f'HEX: {full_packet.hex(" ")}\n'
+                                 f'INT: {bytes2list(full_packet)}\n')
                     if CYNC_RAW:
-                        logger.debug(f"{lp} Sending to device: {full_packet.hex(" ")}")
+                        str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node_id}|queue_id: {bridge_device.queue_id.hex(" ")}):\n'
+                                     f'HEX: {full_packet.hex(" ")}\n'
+                                     f'INT: {bytes2list(full_packet)}\n')
+                    logger.debug(f"{lp} Sending{str_appnd}")
 
         if tasks:
             await asyncio.gather(*tasks)
@@ -594,6 +602,7 @@ class CyncDevice:
             return
 
         op = 0xD0
+        cmd_ = 0x0D
         _sub_id = sub_id if sub_id is not None else 0x00
         payload = struct.pack(">BBBBB", 0x11, 0x02, state, 0x00, 0x00)
         m_cb = ControlMessageCallback(
@@ -604,7 +613,7 @@ class CyncDevice:
                 g.mqtt_client.update_endpoint_power, self, state, _sub_id
             ),
         )
-        await self.send_command(op, _sub_id, payload, m_cb, lp)
+        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
     async def set_brightness(self, bri: int, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_brightness:"
@@ -613,6 +622,7 @@ class CyncDevice:
             return
 
         op = 0xD2 if self.is_sol_lamp else 0xF0
+        cmd_ = 0x10
         _sub_id = sub_id if sub_id is not None else 0x00
 
         # Payload: 0x11 (command), 0x02, 0x01, brightness, padding
@@ -628,7 +638,7 @@ class CyncDevice:
             callback=partial(g.mqtt_client.update_brightness, self, bri),
         )
 
-        await self.send_command(op, _sub_id, payload, m_cb, lp)
+        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
     async def set_temperature(self, temp: int, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_temperature:"
@@ -637,6 +647,8 @@ class CyncDevice:
             return
 
         op = 0xE2 if self.is_sol_lamp else 0xF0
+        cmd_ = 0x10
+        # cmd_ = 0x0D works for all commands to the dual outlet plug
         _sub_id = sub_id if sub_id is not None else 0x00
 
         if self.is_sol_lamp:
@@ -653,7 +665,7 @@ class CyncDevice:
             sent_at=0.0,
             callback=partial(g.mqtt_client.update_temperature, self, temp),
         )
-        await self.send_command(op, _sub_id, payload, m_cb, lp)
+        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
     async def set_rgb(
             self, red: int, green: int, blue: int, sub_id: Optional[int] = None
@@ -664,6 +676,7 @@ class CyncDevice:
             return
 
         op = 0xF0
+        cmd_ = 0x10
         _sub_id = sub_id if sub_id is not None else 0x00
 
         # Payload: 0x11, 0x02, 0x01, 0xFF, 0xFE, red, green, blue (8 bytes)
@@ -678,7 +691,7 @@ class CyncDevice:
                 g.mqtt_client.update_rgb, self, (red, green, blue)
             ),
         )
-        await self.send_command(op, _sub_id, payload, m_cb, lp)
+        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
     async def set_lightshow(self, show: str, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_lightshow:"
@@ -689,6 +702,7 @@ class CyncDevice:
 
         chosen = FACTORY_EFFECTS_BYTES[show]
         op = 0xE2
+        cmd_ = 0x0E
         _sub_id = sub_id if sub_id is not None else 0x00
 
         # Payload: 0x11, 0x02, 0x07, 0x01, byte1, byte2 (6 bytes)
@@ -699,7 +713,7 @@ class CyncDevice:
             sent_at=0.0,
             callback=partial(asyncio.sleep, 0),
         )
-        await self.send_command(op, _sub_id, payload, m_cb, lp)
+        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
 
 class CyncTCPSession:
@@ -1185,11 +1199,10 @@ class CyncTCPSession:
         """Routes device requests to their specific parsing logic."""
         if pkt_type == 0x23:
             self.queue_id = raw_data[6:10]
+            logger.debug(
+                f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {raw_data.hex(' ')}"
+            )
             if not self.mitm_mode:
-                if CYNC_RAW:
-                    logger.debug(
-                        f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {raw_data.hex(' ')}"
-                    )
                 await self.write(PacketBuilder.build_23_ack())
                 await asyncio.sleep(0.5)
                 await self.send_a3()
@@ -1438,6 +1451,7 @@ class CyncTCPSession:
                             await msg.callback()
                         else:
                             await msg.callback
+                        logger.debug(f"{lp} Received a command success reply: {msg}")
                     elif success and not msg:
                         logger.debug(
                             f"{lp} CONTROL packet ACK callback NOT found for msg ID: {ctrl_msg_id}"
@@ -1646,6 +1660,7 @@ class CyncTCPSession:
         try:
             while True:
                 await asyncio.sleep(delay_seconds)
+                lp = f"{self.lp}callback_clean:"
                 now = time.time()
                 current_keys = list(self.messages.control.keys())
                 logger.info(
