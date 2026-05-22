@@ -1,5 +1,13 @@
-### 0.0.6b4
+### 0.0.6b5
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Fix firmware parsing
+- Fix non-awaited `remove_mitm_button()` method
+
+### 0.0.6b5
+- Fix dynamic firmware parsing and _update_app_stats
+- Add verbose logging to track weird edge case
+
+### 0.0.6b4
 - Various CyncLAN lib fixes
 - Add MQTT debug logging toggle in HASS app config
   - When disabled, it wont display debug level logs from the MQTT client WHEN the MAIN debug level is enabled, which can be very verbose when you have a lot of devices or have `raw_debug` enabled in the cync-lan config
