@@ -1,5 +1,8 @@
-### 0.0.6b5
-- NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+### 0.0.6b7
+- NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer, and while I try to be careful, mistakes happen. I have not had any reports of data loss or other major issues, but it is always better to be safe than sorry.
+- Fix command packet builder; restore changing brightness, white temp and RGB for non-plug devices.
+
+### 0.0.6b6
 - Fix firmware parsing
 - Fix non-awaited `remove_mitm_button()` method
 
