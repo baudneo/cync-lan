@@ -104,29 +104,28 @@ def ints2bytes(ints: List[int]) -> bytes:
     return bytes(ints)
 
 
-def extract_firmware_dynamically(packet_data: bytes) -> tuple[str, str]:
-    """Finds the 86 01 signature and extracts the firmware string safely."""
-    # Find the magic signature 86 01
+def extract_firmware_dynamically(
+    packet_data: bytes,
+) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+    """Find firmware data by 86 01 signature and return (type, int_version, str_version)."""
     idx = packet_data.find(b"\x86\x01")
     if idx == -1 or idx + 7 > len(packet_data):
-        return None, None
+        return None, None, None
 
     fw_type_byte = packet_data[idx + 2]
     fw_type = "device" if fw_type_byte == 0x01 else "network"
-
-    # The next 5 bytes are the ASCII firmware string
     fw_bytes = packet_data[idx + 3: idx + 8]
+    fw_str = fw_bytes.replace(b"\x00", b"").decode("ascii", errors="ignore")
+    digits_only = "".join(ch for ch in fw_str if ch.isdigit())
+    fw_int = int(digits_only) if digits_only else None
 
-    # Strip null terminators if the version is shorter than 5 chars
-    fw_str = fw_bytes.replace(b'\x00', b'').decode('ascii', errors='ignore')
-
-    return fw_type, fw_str
+    return fw_type, fw_int, fw_str
 
 def parse_unbound_firmware_version(
     data_struct: bytes, lp: str
 ) -> Optional[Tuple[str, int, str]]:
     """Parse the firmware version from binary hex data. Unbound means not bound by 0x7E boundaries"""
-    # LED controller sends this data after cync app connects via BTLE
+    # LED controller sends this data after cync app connects via BTLE, makes sense as the app asks for fw versions to see if devices have updates
     # 1f 00 00 00 fa 8e 14 00 50 22 33 08 00 ff ff ea 11 02 08 a1 [01 03 01 00 00 00 00 00 f8
     lp = f"{lp}firmware_version:"
     if data_struct[0] != 0x00:
