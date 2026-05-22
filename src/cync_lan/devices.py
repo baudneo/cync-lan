@@ -716,7 +716,7 @@ class CyncTCPSession:
     read_cache = []
     needs_more_data = False
     is_app: bool
-    node: CyncDevice
+    node: Optional[CyncDevice] = None
 
     def __init__(
         self,
@@ -1813,7 +1813,8 @@ class CyncTCPSession:
         finally:
             self.reader = None
 
-        g.mqtt_client.remove_mitm_button(self.node)
+        if self.node:
+            await g.mqtt_client.remove_mitm_button(self.node)
         self.closing = False
 
     @property
