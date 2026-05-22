@@ -1289,11 +1289,14 @@ class CyncTCPSession:
         else:
             # Unbound Firmware Packet
             if packet_data[0] == 0x00:
-                fw_type, fw_ver, fw_str = extract_firmware_dynamically(packet_data)
-                if fw_type == "device":
-                    self.version, self.version_str = fw_ver, fw_str
-                else:
-                    self.protocol_version, self.protocol_version_str = fw_ver, fw_str
+                try:
+                    fw_type, fw_ver, fw_str = extract_firmware_dynamically(packet_data)
+                    if fw_type == "device":
+                        self.version, self.version_str = fw_ver, fw_str
+                    else:
+                        self.protocol_version, self.protocol_version_str = fw_ver, fw_str
+                except Exception as e:
+                    logger.debug(f"{lp} exception during firmware parsing: {e}")
 
             # 0x7e Bound Internal Status
             elif packet_data[0] == DATA_BOUNDARY:
