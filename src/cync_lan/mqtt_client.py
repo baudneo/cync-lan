@@ -387,7 +387,7 @@ class MQTTClient:
                             if "color_temp" in json_data:
                                 tasks.append(
                                     node.set_temperature(
-                                        self.kelvin2cync(int(json_data["color_temp"])),
+                                        self.kelvin2cync(int(json_data["color_temp"]), node),
                                         sub_id,
                                     )
                                 )
@@ -572,7 +572,7 @@ class MQTTClient:
             mqtt_dev_state = {
                 "state": "ON",
                 "color_mode": "color_temp",
-                "color_temp": self.cync2kelvin(temp),
+                "color_temp": self.cync2kelvin(temp, node),
             }
             endpoint.temperature = temp
             endpoint.red = 0
@@ -699,6 +699,8 @@ class MQTTClient:
                     mqtt_dev_state["color_mode"] = "color_temp"
                     mqtt_dev_state["color_temp"] = self.cync2kelvin(
                         endpoint.temperature
+                        endpoint.temperature,
+                        node
                     )
             mqtt_dev_state = json.dumps(mqtt_dev_state).encode()
 
@@ -1379,10 +1381,15 @@ class MQTTClient:
             return True
         return False
 
-    def kelvin2cync(self, k):
+    def kelvin2cync(self, k: int, node: CyncDevice):
         """Convert Kelvin value to Cync white temp (0-100) with step size: 1"""
         max_k = CYNC_MAXK
         min_k = CYNC_MINK
+        if node.metadata and node.metadata.characteristics:
+            if node.metadata.characteristics.min_kelvin:
+                min_k = node.metadata.characteristics.min_kelvin
+            if node.metadata.characteristics.max_kelvin:
+                max_k = node.metadata.characteristics.max_kelvin
         if k < min_k:
             return 0
         elif k > max_k:
@@ -1392,10 +1399,15 @@ class MQTTClient:
         # logger.debug(f"{self.lp} Converting Kelvin: {k} using scale: {scale} (max_k={max_k}, min_k={min_k}) -> return value: {ret}")
         return ret
 
-    def cync2kelvin(self, ct):
+    def cync2kelvin(self, ct: int, node: CyncDevice):
         """Convert Cync white temp (0-100) to Kelvin value"""
         max_k = CYNC_MAXK
         min_k = CYNC_MINK
+        if node.metadata and node.metadata.characteristics:
+            if node.metadata.characteristics.min_kelvin:
+                min_k = node.metadata.characteristics.min_kelvin
+            if node.metadata.characteristics.max_kelvin:
+                max_k = node.metadata.characteristics.max_kelvin
         if ct <= 0:
             return min_k
         elif ct >= 100:
