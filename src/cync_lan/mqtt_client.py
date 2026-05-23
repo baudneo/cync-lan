@@ -58,7 +58,7 @@ class MQTTClient:
 
     def __init__(self):
         self._connected = False
-        self.tasks: Optional[List[Union[asyncio.Task, Coroutine]]] = None
+        self.tasks: Optional[List[Union[asyncio.Task, Coroutine]]] = []
         lp = f"{self.lp}init:"
         if not CYNC_TOPIC:
             topic = "cync_lan"
@@ -279,15 +279,18 @@ class MQTTClient:
                             # Find the TCP device instance and trigger start/stop
                             for tcp_dev in g.ncync_server.tcp_connections.values():
                                 if tcp_dev.node_id == node.id:
+                            tcp_pool = await g.ncync_server.get_dev_tcp_pool()
+                            for tcp_dev in tcp_pool:
+                                if tcp_dev.node and tcp_dev.node.id == node.id:
                                     if is_on:
-                                        await tcp_dev.start_mitm()
+                                        self.tasks.append(asyncio.create_task(tcp_dev.start_mitm(), name=f"MQTT_START_MITM-{tcp_dev.ip_address}"))
                                     else:
                                         logger.debug(
                                             "DBG>>> MITM mqtt command is calling mitm_stop()"
                                         )
-                                        await tcp_dev.stop_mitm()
+                                        asyncio.create_task(tcp_dev.stop_mitm(), name=f"MQTT_STOP_MITM-{tcp_dev.ip_address}")
                             await self.publish(
-                                f"{self.topic}/status/{device_uuid_}/mitm", payload
+                                f"{self.topic}/status/{device_uuid_}/mitm", payload, retain=True
                             )
                         elif extra_data[0] == "restart":
                             if norm_pl == "press":
@@ -489,6 +492,17 @@ class MQTTClient:
             if self.start_task and not self.start_task.done():
                 logger.debug(f"{lp} FINISHING: Cancelling start task")
                 self.start_task.cancel()
+            for task in self.tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        logger.debug(f"{lp} Exception during self.task iteration and cancellation: {e}")
+            self.tasks = []
+
 
     async def pub_online(self, device_id: int, status: bool) -> bool:
         # no need for sub_id, if the parent device is online, children are online
@@ -698,7 +712,6 @@ class MQTTClient:
                 elif node.supports_temperature and (0 <= endpoint.temperature <= 100):
                     mqtt_dev_state["color_mode"] = "color_temp"
                     mqtt_dev_state["color_temp"] = self.cync2kelvin(
-                        endpoint.temperature
                         endpoint.temperature,
                         node
                     )
