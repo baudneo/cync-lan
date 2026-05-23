@@ -41,7 +41,7 @@ from cync_lan.structs import (
     FanSpeed,
     GlobalObject,
     MessageCache,
-    Tasks,
+    Tasks, ConnectionType,
 )
 from cync_lan.utils import bytes2list, extract_firmware_dynamically, format_socat_style
 
@@ -540,18 +540,20 @@ class CyncDevice:
                     queue_id=bridge_device.queue_id,
                     inner_packet=inner_pkt
                 )
-                m_cb.id = cmsg_id
-                m_cb.message = full_packet
-                m_cb.sent_at = time.time()
-                bridge_device.messages.control[cmsg_id] = m_cb
+
                 if bridge_device.mitm_mode is True:
                     logger.debug(
-                        f"{lp} MITM mode active for this device: {bridge_device.ip_address} (ID: {bridge_device.node_id})"
+                        f"{lp} MITM mode active for this device: {bridge_device.ip_address} (ID: {bridge_device.node.id})"
                         f" not writing data >>> \n\n{full_packet.hex(" ")}")
                 else:
+                    m_cb.id = cmsg_id
+                    m_cb.message = full_packet
+                    m_cb.sent_at = time.time()
+                    bridge_device.messages.control[cmsg_id] = m_cb
                     tasks.append(bridge_device.write(full_packet))
+                    str_appnd = "..."
                     if CYNC_RAW:
-                        str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node_id}|queue_id: {bridge_device.queue_id.hex(" ")}):\n'
+                        str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node.id}|queue_id: {bridge_device.queue_id.hex(" ")}):\n'
                                      f'HEX: {full_packet.hex(" ")}\n'
                                      f'INT: {bytes2list(full_packet)}\n')
                         logger.debug(f"{lp} Sending{str_appnd}")
@@ -711,7 +713,10 @@ class CyncDevice:
             msg_id=0x00,
             message=None,
             sent_at=0.0,
-            callback=partial(asyncio.sleep, 0),
+            # set to black to make it standout
+            callback=partial(
+                g.mqtt_client.update_rgb, self, (0, 0, 0)
+            ),
         )
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
@@ -731,7 +736,9 @@ class CyncTCPSession:
     needs_more_data = False
     is_app: bool
     node: Optional[CyncDevice] = None
-    last_packet_ts: Optional[float] = None
+    dev_last_packet_ts: Optional[float] = None
+    proxy_last_packet_ts: Optional[float] = None
+    mitm_button_added: bool
 
     def __init__(
         self,
@@ -744,8 +751,8 @@ class CyncTCPSession:
                 f"A valid IP address must be provided to {CyncTCPSession.__class__.__name__} constructor"
             )
         self.lp = f"{ip_address}:"
-        self._py_id = id(self)
         self.tasks = Tasks()
+        self.mitm_button_added = False
         self.is_app = False
         self.name: Optional[str] = None
         self.first_83_packet_checksum: Optional[int] = None
@@ -757,7 +764,6 @@ class CyncTCPSession:
         self.device_type_id: Optional[int] = None
         self.device_timestamp: Optional[str] = None
         self.messages = MessageCache()
-        self.node_id: Optional[int] = None
         self.xa3_msg_id: bytes = bytes([0x00, 0x00, 0x00])
         self.queue_id: bytes = b""
         self.ip_address: Optional[str] = ip_address
@@ -775,8 +781,9 @@ class CyncTCPSession:
         self.cloud_reader: asyncio.StreamReader = None
         self.cloud_writer: asyncio.StreamWriter = None
         self.allowed_to_connect: bool = False
-        self.closed = False
+        self._closed = False
         self.closing = False
+        self.mitm_button_added = False
 
 
     async def existing_init(self):
@@ -796,9 +803,43 @@ class CyncTCPSession:
         self.device_timestamp: Optional[str] = None
         self.messages = MessageCache()
         self.lp = f"{self.ip_address}:"
-        self._py_id = id(self)
         self.tasks = Tasks()
+        if self.mitm_mode is True:
+            logger.debug(f"{lp} MITM mode is active, making sure the proxy is started...")
+            if self.node:
+                await g.mqtt_client.add_mitm_button(self.node)
+            if not self.is_proxy_good():
+                await self.stop_proxy()
+                await asyncio.sleep(0.25)
+                await self.start_proxy()
+            else:
+                logger.debug(f"{lp} Proxy connection is up!")
 
+
+    async def start_proxy(self):
+        lp = f"{self.lp}start proxy:"
+        try:
+            ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            logger.info(
+                f"{lp} Connecting to Cync Cloud via IP ({CYNC_CLOUD_IP}:23779)..."
+            )
+            self.cloud_reader, self.cloud_writer = await asyncio.open_connection(
+                CYNC_CLOUD_IP, 23779, ssl=ssl_context
+            )
+            self.tasks.proxy_task = asyncio.create_task(
+                self._cloud_proxy_task(),
+                name=f"proxy_task-{self.ip_address}_ID:{self.node.id}",
+            )
+            self.tasks.proxy_conn_watcher = asyncio.create_task(
+                self.connection_watcher_task(ConnectionType.proxy),
+                name=f"proxy_connection_watcher-{self.ip_address}"
+            )
+        except Exception as e:
+            logger.error(f"{lp} Failed to start MITM: {e}")
+            await self.stop_proxy()
 
     async def start_mitm(self):
         """Connect to Cync Cloud and start proxying."""
@@ -810,69 +851,107 @@ class CyncTCPSession:
             return
         self._setup_mitm_logger()
         try:
-            # Create SSL context for cloud connection (client side)
-            ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-
-            logger.info(
-                f"{lp} Connecting to Cync Cloud via IP ({CYNC_CLOUD_IP}:23779)..."
-            )
-            self.cloud_reader, self.cloud_writer = await asyncio.open_connection(
-                CYNC_CLOUD_IP, 23779, ssl=ssl_context
-            )
-            self.mitm_mode = True
-            self.tasks.proxy_task = asyncio.create_task(
-                self._cloud_proxy_task(),
-                name=f"mitm_{self.ip_address}_ID:{self.node_id}",
-            )
+            await self.start_proxy()
             logger.info(
                 f"{lp} MITM mode enabled, closing TCP connection to force device to reconnect and handshake with cloud through this proxy..."
             )
-            await self.close()
+            # close the conneciton but dont remove the mitm button
+            asyncio.create_task(self.close(False))
+        except asyncio.CancelledError:
+            logger.debug(f"{lp} start_mitm task was cancelled...")
         except Exception as e:
-            logger.error(f"{lp} Failed to start MITM: {e}")
-            await self.stop_mitm()
+            logger.exception(f"{lp} Failed to start MITM: {e}")
+
+        else:
+            self.mitm_mode = True
+
+    def is_proxy_good(self):
+        if self.tasks.proxy_task and not self.tasks.proxy_task.done():
+            logger.debug(f"{self.lp} Proxy task is active!")
+        elif not self.tasks.proxy_task:
+            logger.debug(f"{self.lp} Proxy receive task is None, need to restart...")
+            return False
+        elif self.tasks.proxy_task.done():
+            logger.debug(f"{self.lp} Proxy receive task is done, need to restart...")
+            return False
+
+        if self.tasks.proxy_conn_watcher and not self.tasks.proxy_conn_watcher.done():
+            logger.debug(f"{self.lp} Proxy connection watcher task is active!")
+        elif not self.tasks.proxy_conn_watcher:
+            logger.debug(f"{self.lp} Proxy connection watcher task is None, need to restart...")
+            return False
+        elif self.tasks.proxy_conn_watcher.done():
+            logger.debug(f"{self.lp} Proxy connection watcher task is done, need to restart...")
+            return False
+
+        if self.cloud_reader:
+            logger.debug(f"{self.lp} Cloud reader is active!")
+        else:
+            logger.debug(f"{self.lp} Cloud reader is None, need to restart...")
+            return False
+
+        if self.cloud_writer:
+            logger.debug(f"{self.lp} Cloud writer is active!")
+        else:
+            logger.debug(f"{self.lp} Cloud writer is None, need to restart...")
+            return False
+
+        return True
+
+    async def stop_proxy(self):
+        lp = f"{self.lp}stop proxy:"
+        if self.tasks.proxy_task and not self.tasks.proxy_task.done():
+            logger.debug(f"{lp} Cancelling proxy task...")
+            self.tasks.proxy_task.cancel()
+            try:
+                await self.tasks.proxy_task
+            except Exception:
+                pass
+        self.tasks.proxy_task = None
+        logger.debug(f"{lp} Proxy task stopped")
+
+        if self.tasks.proxy_conn_watcher and not self.tasks.proxy_conn_watcher.done():
+            logger.debug(f"{lp} Cancelling proxy connection watcher task...")
+            self.tasks.proxy_conn_watcher.cancel()
+            try:
+                await self.tasks.proxy_conn_watcher
+            except Exception:
+                pass
+            self.tasks.proxy_conn_watcher = None
+            logger.debug(f"{lp} Proxy connection watcher task stopped")
+
+        if self.cloud_reader:
+            try:
+                self.cloud_reader.feed_eof()
+                logger.debug(f"{lp} Fed eof to cloud_reader")
+            except Exception as e:
+                logger.debug(f"{lp} Cloud reader feed_eof error (ignored): {e}")
+        self.cloud_reader = None
+
+        if self.cloud_writer:
+            logger.debug(f"{lp} Closing cloud writer...")
+            try:
+                self.cloud_writer.close()
+                await asyncio.wait_for(self.cloud_writer.wait_closed(), timeout=5.0)
+                logger.debug(f"{lp} Cloud writer closed cleanly")
+            except asyncio.TimeoutError:
+                logger.warning(f"{lp} Cloud writer.wait_closed() timed out, continuing anyway")
+            except Exception as e:
+                logger.debug(f"{lp} Cloud writer close error (ignored): {e}")
+        self.cloud_writer = None
+
+        self.mitm_bytes_to_cloud = 0
+        self.mitm_bytes_from_cloud = 0
+        logger.debug(f"{lp} Proxy closed!")
 
     async def stop_mitm(self):
         """Close cloud connection and stop proxying."""
         lp = f"{self.lp}close mitm:"
         logger.debug(f"{lp} closing...")
-        # cancel the proxy task first so it stops reading from cloud_reader
-        if self.tasks.proxy_task and not self.tasks.proxy_task.done():
-            logger.debug(f"{lp} cancelling proxy task...")
-            self.tasks.proxy_task.cancel()
-            try:
-                await self.tasks.proxy_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        self.tasks.proxy_task = None
-        logger.debug(f"{lp} proxy task stopped")
-
-        if self.cloud_reader:
-            try:
-                self.cloud_reader.feed_eof()
-                logger.debug(f"{lp} fed eof to cloud_reader")
-            except Exception as e:
-                logger.debug(f"{lp} cloud_reader feed_eof error (ignored): {e}")
-        self.cloud_reader = None
-
-        if self.cloud_writer:
-            logger.debug(f"{lp} closing cloud_writer...")
-            try:
-                self.cloud_writer.close()
-                await asyncio.wait_for(self.cloud_writer.wait_closed(), timeout=5.0)
-                logger.debug(f"{lp} cloud_writer closed cleanly")
-            except asyncio.TimeoutError:
-                logger.warning(f"{lp} cloud_writer.wait_closed() timed out, continuing anyway")
-            except Exception as e:
-                logger.debug(f"{lp} cloud_writer close error (ignored): {e}")
-        self.cloud_writer = None
-
-        self.mitm_logger = None
-        self.mitm_bytes_to_cloud = 0
-        self.mitm_bytes_from_cloud = 0
+        # if self.mitm is True or self.cloud_reader or self.cloud_writer:
+        await self.stop_proxy()
         self.mitm_mode = False
+        self.mitm_logger = None
         logger.info(f"{self.lp} MITM Mode disabled, forcing disconnect to enable normal operation...")
         await self.close()
 
@@ -881,11 +960,12 @@ class CyncTCPSession:
         lp = f"{self.lp}mitm:proxy:"
         logger.debug(f"{lp} listening for data from the Cync cloud...")
         try:
-            while self.mitm_mode and self.cloud_reader:
+            while self.cloud_reader:
                 data = await self.cloud_reader.read(STREAM_CHUNK_SIZE)
                 if not data:
                     pass
                 else:
+                    self.proxy_last_packet_ts = time.time()
                     self.mitm_logger.debug(
                         format_socat_style(
                             data, "from_cloud", self.ip_address, self.mitm_bytes_from_cloud
@@ -894,15 +974,20 @@ class CyncTCPSession:
                     self.mitm_bytes_from_cloud += len(data)
                     self.writer.write(data)
                     await self.writer.drain()
+        except asyncio.CancelledError:
+            logger.debug(f"{lp} Task {name} CANCELED cleanly, re-raising...")
+            raise
         except Exception as e:
             logger.error(f"{lp} Error in cloud proxy: {e}")
+
+        logger.debug(f"{lp} FINISHED")
 
     def _setup_mitm_logger(self):
         """Initializes a rotating file logger for this specific connection."""
         lp = f"{self.lp}mitm logger:"
         if self.mitm_logger:
             logger.debug(
-                f"{lp} Already setup for Node: '{self.name}' (ID: {self.node_id})"
+                f"{lp} Already setup for Node: '{self.name}' (ID: {self.node.id})"
             )
             return
         # Differentiate between App (by IP) and Device (by ID)
@@ -910,8 +995,8 @@ class CyncTCPSession:
         if self.is_app:
             conn_type = "app"
             identifier = f"{conn_type}_{self.ip_address.replace('.', '-')}"
-        elif self.node_id:
-            identifier = f"{conn_type}_{self.node_id}"
+        elif self.node:
+            identifier = f"{conn_type}_{self.node.id}"
         logger_name = f"MITM {conn_type}:{self.ip_address}"
         mitm_logger = logging.getLogger(logger_name)
         self.mitm_logger = mitm_logger
@@ -941,7 +1026,7 @@ class CyncTCPSession:
             self.mitm_logger.addHandler(stdout_handler)
         os.chmod(log_file, 0o777)
         logger.debug(
-            f"Created a MITM logger for node: '{self.name}' (ID: {self.node_id}) -> {log_file}"
+            f"Created a MITM logger for node: '{self.name}' (ID: {self.node.id}) -> {log_file}"
         )
 
     async def blackhole(self, reason: str, should_sleep: bool):
@@ -1021,27 +1106,24 @@ class CyncTCPSession:
                 pass
 
         if (
-            self.tasks.conn_watcher
-            and not self.tasks.conn_watcher.done()
+            self.tasks.dev_conn_watcher
+            and not self.tasks.dev_conn_watcher.done()
         ):
-            self.tasks.conn_watcher.cancel()
+            self.tasks.dev_conn_watcher.cancel()
             try:
-                await self.tasks.conn_watcher
+                await self.tasks.dev_conn_watcher
             except asyncio.CancelledError:
                 pass
 
 
-
         # python will garbage collect the task if you dont keep a reference
         self.tasks.receive = asyncio.create_task(
-            self.receive_task(), name=f"receive_task-{self._py_id}"
+            self.receive_task(), name=f"receive_task-{self.ip_address}"
         )
         self.tasks.callback_cleanup = asyncio.create_task(
-            self.callback_cleanup_task(), name=f"callback_cleanup-{self._py_id}"
+            self.callback_cleanup_task(), name=f"callback_cleanup-{self.ip_address}"
         )
-        self.tasks.conn_watcher = asyncio.create_task(
-            self.connection_watcher_task(), name=f"connection_watcher-{self._py_id}"
-        )
+
 
     def get_ctrl_msg_id_bytes(self) -> List[int, int]:
         """
@@ -1062,7 +1144,7 @@ class CyncTCPSession:
 
     async def parse_raw_data(self, data: bytes):
         """Extract single packets from raw data stream using metadata."""
-        self.last_packet_ts = ts = time.time()
+        self.dev_last_packet_ts = ts = time.time()
         lp = f"{self.lp}extract:"
         if not data:
             logger.debug(f"{lp} No data to parse?")
@@ -1194,16 +1276,17 @@ class CyncTCPSession:
                     f"{lp} Device has been identified as the Cync mobile app, enabling proxying to the Cync cloud for all App connections..."
                 )
                 self.is_app = True
-                g.ncync_server.app_tcp_connections[self.ip_address] = g.ncync_server.tcp_connections.pop(self.ip_address)
-                # update app / node / tcp conn stats
-                g.ncync_server._update_app_stats()
-
-                # always proxy apps, app mitm logging to file is configurable
-                # This way its easier to add factory reset devices to your account if you have network wide DNS redirection
-                # still working on a way to detect a device that is being provisioned, then we can auto-proxy so it will
-                # be added to the cloud device list, meaning a user with network-wide DNS redirection doesnt need
-                # to disable it to add new dvices
-                await self.start_mitm()
+                await self.blackhole("is app", True)
+                # g.ncync_server.app_tcp_connections[self.ip_address] = g.ncync_server.tcp_connections.pop(self.ip_address)
+                # # update app / node / tcp conn stats
+                # g.ncync_server._update_app_stats()
+                #
+                # # always proxy apps, app mitm logging to file is configurable
+                # # This way its easier to add factory reset devices to your account if you have network wide DNS redirection
+                # # still working on a way to detect a device that is being provisioned, then we can auto-proxy so it will
+                # # be added to the cloud device list, meaning a user with network-wide DNS redirection doesnt need
+                # # to disable it to add new dvices
+                # await self.start_mitm()
         else:
             logger.debug(
                 f"{lp} sent UNKNOWN HEADER! Don't know how to respond! {data.hex(' ')}"
@@ -1222,6 +1305,9 @@ class CyncTCPSession:
         """Routes device requests to their specific parsing logic."""
         if pkt_type == 0x23:
             self.queue_id = raw_data[6:10]
+            self.tasks.dev_conn_watcher = asyncio.create_task(
+                self.connection_watcher_task(ConnectionType.device), name=f"connection_watcher-{self.ip_address}"
+            )
             logger.debug(
                 f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {raw_data.hex(' ')}"
             )
@@ -1552,26 +1638,39 @@ class CyncTCPSession:
                     # byte 3 (idx 2) is a device type byte but,
                     # it only reports on the first item (itself)
                     # convert to int, and it is the same as deviceType from cloud.
-                    if not self.node_id:
-                        self.node_id = dev_id
+                    if not self.node:
                         self.node = node_repr
                         self.node.tcp_session = self
                         self.name = node_repr.name
-                        self.lp = f"{self.ip_address}[{self.node_id}]:"
+                        self.lp = f"{self.ip_address}[{self.node.id}]:"
                         logger.debug(
                             f"{self.lp}0x73: Setting TCP"
-                            f" Node ID to: {self.node_id}"
+                            f" Node ID to: {self.node.id}"
                         )
-                        # dynamically add the MITM mode button for nodes that aree connected via TCP
+                        # dynamically add the MITM mode button for nodes that are connected via TCP
+                        self.mitm_button_added = True
                         await g.mqtt_client.add_mitm_button(node_repr)
+                        # check mqtt mitm button retain state
+                        payload = g.mqtt_client.get_startup_topic_state_sync(
+                            f"{g.mqtt_client.topic}/status/{node_repr.home_id}-{node_repr.id}/mitm")
+                        if payload is not None:
+                            # Find the TCP device instance and trigger start/stop
                             tcp_pool = g.ncync_server.get_dev_tcp_pool_sync()
+                            for tcp_dev in tcp_pool:
+                                if tcp_dev.node.id == self.node.id:
+                                    if payload.upper() == "ON":
+                                        await tcp_dev.start_mitm()
 
-                    elif self.node_id and self.node_id != dev_id:
-                        logger.warning(
-                            f"{self.lp}0x73: node_id MISMATCH "
-                            f"open an issue on github. current: {self.node_id} "
-                            f"// proposed: {dev_id}"
-                        )
+                    elif self.node:
+                        if self.mitm_button_added is False:
+                            self.mitm_button_added = True
+                            await g.mqtt_client.add_mitm_button(node_repr)
+                        if self.node.id != dev_id:
+                            logger.warning(
+                                f"{self.lp}0x73: node_id MISMATCH "
+                                f"open an issue on github. current: {self.node.id} "
+                                f"// proposed: {dev_id}"
+                            )
                     lp = f"{self.lp}0x73:"
                     if dev_type_id:
                         self.device_type_id = dev_type_id
@@ -1675,48 +1774,58 @@ class CyncTCPSession:
         await self.ask_for_mesh_info()
 
 
-    async def connection_watcher_task(self):
+    async def connection_watcher_task(self, conn_type: ConnectionType):
         """Go through the callback queue and remove any callbacks that are older than 5 minutes"""
         lp = f"{self.lp}conn_watch:"
-        if self.mitm_mode is True or self.is_app is True:
-            return
-        logger.debug(f"{lp} Starting background task...")
+        logger.debug(f"{lp} Starting background {conn_type.value} task")
+        # most devices send a d3 ping every 20 seconds if no other data has come through
+        threshold = 22.5
         delay_seconds = 5
-
+        if not self.is_app:
+            return
         try:
             while True:
                 await asyncio.sleep(delay_seconds)
-                lp = f"{self.lp}conn_watch:"
                 now = time.time()
-                last_packet_ts = self.last_packet_ts
+                lp = f"{self.lp}conn_watch:"
+                if conn_type in (ConnectionType.device, ConnectionType.app):
+                    name = self.tasks.dev_conn_watcher.get_name()
+                    last_packet_ts = self.dev_last_packet_ts
+                elif conn_type == ConnectionType.proxy:
+                    name = self.tasks.proxy_conn_watcher.get_name()
+                    last_packet_ts = self.proxy_last_packet_ts
+                    threshold = 40
                 if last_packet_ts:
                     elapsed = now - last_packet_ts
-                    # most devices send a d3 ping every 20 seconds if no other data has come through
-                    if elapsed > 23.5:
-                        logger.debug(f"{lp} This connection hasnt received any data from the device in over "
-                                     f"{elapsed:.1f} seconds, closing connection...")
-                        asyncio.create_task(self.close())
+                    if elapsed > threshold:
+                        logger.debug(f"{lp} This {conn_type.value} connection hasnt received any data in "
+                                     f"{elapsed:.1f} seconds, closing...")
+                        task = self.close if conn_type in (ConnectionType.device, ConnectionType.app) else self.stop_proxy
+                        asyncio.create_task(task())
                         break
 
-
         except asyncio.CancelledError:
-            logger.debug(f"{lp} Task CANCELLED cleanly.")
+            logger.debug(f"{lp} Task {name} CANCELLED cleanly, re-raising")
             raise
         except Exception as e:
             logger.error(f"{lp} Unexpected crash: {e}", exc_info=True)
+
         logger.info(f"{lp} FINISHED")
 
 
     async def callback_cleanup_task(self):
         """Go through the callback queue and remove any callbacks that are older than 5 minutes"""
         lp = f"{self.lp}callback_clean:"
-        logger.debug(f"{lp} Starting background task...")
+        name = self.tasks.callback_cleanup.get_name()
+        logger.debug(f"{lp} Starting background task: {name}")
         delay_mins = 5
         delay_seconds = delay_mins * 60
 
         try:
             while True:
                 await asyncio.sleep(delay_seconds)
+                if self.mitm_mode:
+                    return
                 lp = f"{self.lp}callback_clean:"
                 now = time.time()
                 current_keys = list(self.messages.control.keys())
@@ -1724,7 +1833,6 @@ class CyncTCPSession:
                     f"{lp} there are {len(current_keys)} control messages to check"
                 ) if len(current_keys) else None
                 for ctrl_msg_id in current_keys:
-                    # Re-fetch the message in case it was deleted by another task mid-loop
                     ctrl_msg = self.messages.control.get(ctrl_msg_id)
                     if not ctrl_msg:
                         continue
@@ -1733,21 +1841,20 @@ class CyncTCPSession:
                     if now > timeout:
                         logger.info(f"{lp} Removing STALE {ctrl_msg}")
                         ctrl_msg.callback = None
-                        # Use pop to avoid KeyError if already deleted
                         self.messages.control.pop(ctrl_msg_id, None)
 
             logger.info(f"{lp} the while true loop has exited")
 
         except asyncio.CancelledError:
-            logger.debug(f"{lp} Task CANCELLED cleanly.")
-            raise  # Re-raise to ensure asyncio knows it was cancelled
+            logger.debug(f"{lp} Task {name} CANCELLED cleanly, re-raising")
+            raise
         except Exception as e:
             logger.error(f"{lp} Unexpected crash: {e}", exc_info=True)
         logger.info(f"{lp} FINISHED")
 
     async def receive_task(self):
         """Receive data from the device and respond to it. This is the main task for the device."""
-        lp = f"{self.ip_address}:raw read:"
+        lp = f"{self.lp}:rcv data:"
         started_at = time.time()
         name = self.tasks.receive.get_name()
         logger.debug(f"{lp} receive_task CALLED") if CYNC_RAW is True else None
@@ -1755,6 +1862,7 @@ class CyncTCPSession:
             while True:
                 try:
                     data: bytes = await self.read()
+                    lp = f"{self.lp}:rcv data:"
                     if data is False:
                         logger.debug(
                             f"{lp} read() returned False, exiting {name} "
@@ -1767,22 +1875,20 @@ class CyncTCPSession:
                     await self.parse_raw_data(data)
 
                 except Exception as e:
-                    logger.error(f"{lp} Exception in {name} LOOP: {e}", exc_info=True)
+                    logger.error(f"{lp} Exception in task {name} LOOP: {e}", exc_info=True)
                     break
-        except asyncio.CancelledError as cancel_exc:
-            pass
-            raise cancel_exc
+        except asyncio.CancelledError:
+            logger.debug(f"{lp} Task {name} CANCELLED cleanly, re-raising...")
+            raise
 
         logger.debug(f"{lp} {name} FINISHED")
 
     async def read(self, chunk: Optional[int] = None):
         """Read data from the device if there is an open connection"""
         lp = f"{self.lp}read:"
-        if self.closing is True:
-            logger.debug(f"{lp} closing is True, exiting read()...")
+        if self.is_closed() is True:
+            logger.debug(f"{lp} Device is closing/closed, exiting read()...")
             return False
-        elif self.closed:
-            logger.debug(f"{dev.lp} device is closed, can't read data")
         else:
             if chunk is None:
                 chunk = STREAM_CHUNK_SIZE
@@ -1817,10 +1923,8 @@ class CyncTCPSession:
         if not isinstance(data, bytes):
             raise ValueError(f"Data must be bytes, not type: {type(data)}")
         self
-        if self.closing:
-            logger.warning(f"{self.lp} device is closing, not writing data")
-        elif self.closed:
-            logger.debug(f"{self.lp} device is closed, can't write data")
+        if self.is_closed():
+            logger.debug(f"{self.lp} Device is closing/closed, can't write data")
         else:
             if self.writer is not None:
                 async with self.write_lock:
@@ -1832,7 +1936,7 @@ class CyncTCPSession:
 
                     # check if the underlying writer is closing
                     if self._writer.is_closing():
-                        if self.closing is False:
+                        if self.is_closed() is False:
                             # this is probably a connection that was closed by the device (turned off), delete it
                             logger.warning(
                                 f"{self.lp} underlying writer is closing but, "
@@ -1840,8 +1944,7 @@ class CyncTCPSession:
                                 f"dropped the connection (lost power). Removing {self.ip_address}"
                             )
                             off_dev = await g.ncync_server.remove_tcp_device(self)
-                            # await off_dev.close()
-                            del off_dev
+                            asyncio.create_task(off_dev.close())
 
                         else:
                             logger.debug(
@@ -1863,7 +1966,7 @@ class CyncTCPSession:
                 logger.warning(f"{self.lp} writer is None, can't write data!")
             return None
 
-    async def close(self):
+    async def close(self, remove_mitm_button: bool = True):
         lp = f"{self.ip_address}:close:"
         logger.debug(f"{lp} Cancelling device tasks...")
         try:
@@ -1896,25 +1999,25 @@ class CyncTCPSession:
         finally:
             self.reader = None
 
-        if self.node:
+        if self.node and remove_mitm_button:
             await g.mqtt_client.remove_mitm_button(self.node)
         self.closing = False
-        self.closed = True
+        self._closed = True
         if self.ip_address in g.ncync_server.tcp_connections:
             # check if states match
             g_dev = g.ncync_server.tcp_connections.pop(self.ip_address)
             state_closing = self.closing == g_dev.closing
-            state_closed = self.closed == g_dev.closed
+            state_closed = self._closed == g_dev.closed
             if state_closed is False or state_closing is False:
                 logger.debug(f"{lp} There is a mismatch between states in the global device and this device: closed: {state_closed | closing: {state_closing}}, replacing...")
                 del g_dev
-                g.ncync_server[self.ip_address] = self
+                g.ncync_server.tcp_connections[self.ip_address] = self
             elif g_dev != self:
                 logger.debug(f"{lp} There is a python object mismatch between the global device and this one...")
                 del g_dev
-                g.ncync_server[self.ip_address] = self
+                g.ncync_server.tcp_connections[self.ip_address] = self
             else:
-                g.ncync_server[self.ip_address] = g_dev
+                g.ncync_server.tcp_connections[self.ip_address] = g_dev
 
     @property
     def reader(self):
@@ -1939,6 +2042,19 @@ class CyncTCPSession:
     @closing.setter
     def closing(self, value: bool):
         self._closing = value
+
+    @property
+    def closed(self):
+        return self._closed
+
+    @closed.setter
+    def closed(self, value: bool):
+        self._closed = value
+
+    def is_closed(self):
+        if self.closed or self.closing:
+            return True
+        return False
 
     async def parse_packet_OLD(self, data: bytes):
         """Parse what type of packet based on header (first 4 bytes 0x43, 0x83, 0x73, etc.)"""

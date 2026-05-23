@@ -160,16 +160,17 @@ class Tasks:
     send: Optional[asyncio.Task] = None
     callback_cleanup: Optional[asyncio.Task] = None
     proxy_task: Optional[asyncio.Task] = None
-    conn_watcher: Optional[asyncio.Task] = None
+    dev_conn_watcher: Optional[asyncio.Task] = None
+    proxy_conn_watcher: Optional[asyncio.Task] = None
 
     def __iter__(self):
-        tasks = [self.receive, self.send, self.callback_cleanup, self.conn_watcher]
+        tasks = [self.receive, self.send, self.callback_cleanup, self.dev_conn_watcher]
         for task in tasks:
             if task is not None:
                 yield task
 
     def __len__(self):
-        tasks = [self.receive, self.send, self.callback_cleanup, self.conn_watcher]
+        tasks = [self.receive, self.send, self.callback_cleanup, self.dev_conn_watcher]
         # remove any that are None
         tasks = [task for task in tasks if task is not None]
         return len(list(tasks))
@@ -185,7 +186,7 @@ class Tasks:
         self.receive = None
         self.send = None
         self.callback_cleanup = None
-        self.conn_watcher = None
+        self.dev_conn_watcher = None
 
 
 class ControlMessageCallback:
@@ -323,3 +324,8 @@ class   EntityState(BaseModel):
 
     def __repr__(self):
         return self.__str__()
+
+class ConnectionType(StrEnum):
+    device: str = "device"
+    proxy: str = "proxy"
+    app: str = "app"
