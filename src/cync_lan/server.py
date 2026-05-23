@@ -106,13 +106,13 @@ class nCyncServer:
         if not g.mqtt_client:
             return
         apps = self.app_tcp_connections.values()
-        app_ips = [d.ip_address for d in apps]
+        # app_ips = [d.ip_address for d in apps]
         # todo: add app ip addresses as an attribute
         await g.mqtt_client.publish(
             f"{g.env.mqtt_topic}/status/bridge/apps/connected", str(len(apps)).encode()
         )
 
-        devs = self.tcp_connections.values()
+        devs = [c for c in self.tcp_connections.values() if not c.closed or not c.closing or not c.is_app]
         await g.mqtt_client.publish(
             f"{g.env.mqtt_topic}/status/bridge/tcp_devices/connected",
             str(len(devs)).encode(),

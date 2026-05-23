@@ -456,9 +456,11 @@ class CyncDevice:
                 if not self.metadata.supported:
                     return False
 
-            # logger.debug(f"{self.lp}{sub_fmt_str} seems to have STALE data (no BT mesh activity)")
+            logger.debug(f"{self.lp}{sub_fmt_str} seems to have STALE data (no BT mesh activity)")
             self.num_late_states += 1
-            tcp_count = len(g.ncync_server.tcp_connections) or 1
+            tcp_pool = [d for d in g.ncync_server.tcp_connections.values() if not d.closing or not d.closed or not d.is_app]
+
+            tcp_count = len(tcp_pool) or 1
             # With one TCP node, stale data immediately marks offline.
             # With multiple TCP nodes, wait until stale reports match node count.
             should_mark_offline = tcp_count == 1 or self.num_late_states >= tcp_count
@@ -475,6 +477,9 @@ class CyncDevice:
                         f"(stale state count {self.num_late_states} / num tcp nodes {tcp_count})"
                     )
                 return True
+            else:
+                logger.debug(f"{self.lp} recently seeen: {is_recent} but its marked as shouldnt be offline: "
+                             f"stale state count {self.num_late_states} / num tcp nodes {tcp_count}\nTCP pool: {tcp_pool}")
 
         if not self.online:
             logger.info(
@@ -509,7 +514,7 @@ class CyncDevice:
 
     async def send_command(self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str):
         tasks = []
-        tcp_pool = [d for d in g.ncync_server.tcp_connections.values() if not d.is_app]
+        tcp_pool = [d for d in g.ncync_server.tcp_connections.values() if not d.is_app and not d.closed or not d.closing]
         if not tcp_pool:
             logger.debug(f"{lp} no eligible TCP connections available for command broadcast")
             return
@@ -727,6 +732,7 @@ class CyncTCPSession:
     needs_more_data = False
     is_app: bool
     node: Optional[CyncDevice] = None
+    last_packet_ts: Optional[float] = None
 
     def __init__(
         self,
@@ -770,9 +776,13 @@ class CyncTCPSession:
         self.cloud_reader: asyncio.StreamReader = None
         self.cloud_writer: asyncio.StreamWriter = None
         self.allowed_to_connect: bool = False
+        self.closed = False
+        self.closing = False
 
     def existing_init(self):
         """Used when replacing an existing TCP connection, when a device reconnects"""
+        self.closed = False
+        self.closing = False
         self.xa3_msg_id: bytes = bytes([0x00, 0x00, 0x00])
         self.queue_id: bytes = b""
         self.first_83_packet_checksum: Optional[int] = None
@@ -787,6 +797,7 @@ class CyncTCPSession:
         self.lp = f"{self.ip_address}:"
         self._py_id = id(self)
         self.tasks = Tasks()
+
 
     async def start_mitm(self):
         """Connect to Cync Cloud and start proxying."""
@@ -1008,12 +1019,27 @@ class CyncTCPSession:
             except asyncio.CancelledError:
                 pass
 
+        if (
+            self.tasks.conn_watcher
+            and not self.tasks.conn_watcher.done()
+        ):
+            self.tasks.conn_watcher.cancel()
+            try:
+                await self.tasks.conn_watcher
+            except asyncio.CancelledError:
+                pass
+
+
+
         # python will garbage collect the task if you dont keep a reference
         self.tasks.receive = asyncio.create_task(
             self.receive_task(), name=f"receive_task-{self._py_id}"
         )
         self.tasks.callback_cleanup = asyncio.create_task(
             self.callback_cleanup_task(), name=f"callback_cleanup-{self._py_id}"
+        )
+        self.tasks.conn_watcher = asyncio.create_task(
+            self.connection_watcher_task(), name=f"connection_watcher-{self._py_id}"
         )
 
     def get_ctrl_msg_id_bytes(self) -> List[int, int]:
@@ -1035,7 +1061,7 @@ class CyncTCPSession:
 
     async def parse_raw_data(self, data: bytes):
         """Extract single packets from raw data stream using metadata."""
-        ts = time.time()
+        self.last_packet_ts = ts = time.time()
         lp = f"{self.lp}extract:"
         if not data:
             logger.debug(f"{lp} No data to parse?")
@@ -1358,8 +1384,7 @@ class CyncTCPSession:
         try:
             dev_id = packet_data[14]
             recently_seen, power, bri, tmp, r, gr, b = struct.unpack(">BBBBBBB", packet_data[19:26])
-
-            parsed_status = EntityState(
+            parsed_state = EntityState(
                 **{
                     "name": "",
                     "dev_id": dev_id,
@@ -1376,28 +1401,29 @@ class CyncTCPSession:
             logger.error(f"{lp} Failed to unpack status packet: {e}")
             return
 
-        node_repr: CyncDevice = g.ncync_server.node_devices.get(dev_id)
-        if not node_repr:
+        cync_device: CyncDevice = g.ncync_server.node_devices.get(dev_id)
+        if not cync_device:
             logger.warning(
-                f"{lp} Received internal STATUS for unknown device [group/room?, safe to ignore]: {parsed_status}"
+                f"{lp} Received internal STATUS for unknown device [group/room?, safe to ignore]: {parsed_state}"
             )
             return
 
-        if node_repr.type in MULTI_ENDPOINT_TYPES:
-            if node_repr.type == 67:
+        if cync_device.type in MULTI_ENDPOINT_TYPES:
+            if cync_device.type == 67:
                 # bri used as bitmask
-                for e_state_ in node_repr.entities.values():
+                for e_state_ in cync_device.entities.values():
                     bit_shift = e_state_.sub_id - 1
                     e_state_.power = (
-                        1 if (parsed_status.brightness & (1 << bit_shift)) else 0
+                        1 if (parsed_state.brightness & (1 << bit_shift)) else 0
                     )
+                    e_state_.recently_seen = recently_seen
                     logger.debug(f"{lp} Internal STATUS for {e_state_}")
-                    await node_repr.handle_entity_update(e_state_, from_pkt="0x83")
+                    await cync_device.handle_entity_update(e_state_, from_pkt="0x83")
         else:
-            parsed_status.name = node_repr.name
-            logger.debug(f"{lp} Internal STATUS for {parsed_status}")
-            await node_repr.handle_entity_update(
-                parsed_status, from_pkt="0x83"
+            parsed_state.name = cync_device.name
+            logger.debug(f"{lp} Internal STATUS for {parsed_state}")
+            await cync_device.handle_entity_update(
+                parsed_state, from_pkt="0x83"
             )
 
         # Checksum Stream Logic, the LED light controller sends 0x83 in a stream of data with checksum mismatches
@@ -1646,6 +1672,39 @@ class CyncTCPSession:
         await asyncio.sleep(1.5)
         await self.ask_for_mesh_info()
 
+
+    async def connection_watcher_task(self):
+        """Go through the callback queue and remove any callbacks that are older than 5 minutes"""
+        lp = f"{self.lp}conn_watch:"
+        if self.mitm_mode is True or self.is_app is True:
+            return
+        logger.debug(f"{lp} Starting background task...")
+        delay_seconds = 5
+
+        try:
+            while True:
+                await asyncio.sleep(delay_seconds)
+                lp = f"{self.lp}conn_watch:"
+                now = time.time()
+                last_packet_ts = self.last_packet_ts
+                if last_packet_ts:
+                    elapsed = now - last_packet_ts
+                    # most devices send a d3 ping every 20 seconds if no other data has come through
+                    if elapsed > 23.5:
+                        logger.debug(f"{lp} This connection hasnt received any data from the device in over "
+                                     f"{elapsed:.1f} seconds, closing connection...")
+                        asyncio.create_task(self.close())
+                        break
+
+
+        except asyncio.CancelledError:
+            logger.debug(f"{lp} Task CANCELLED cleanly.")
+            raise
+        except Exception as e:
+            logger.error(f"{lp} Unexpected crash: {e}", exc_info=True)
+        logger.info(f"{lp} FINISHED")
+
+
     async def callback_cleanup_task(self):
         """Go through the callback queue and remove any callbacks that are older than 5 minutes"""
         lp = f"{self.lp}callback_clean:"
@@ -1709,7 +1768,8 @@ class CyncTCPSession:
                     logger.error(f"{lp} Exception in {name} LOOP: {e}", exc_info=True)
                     break
         except asyncio.CancelledError as cancel_exc:
-            logger.debug("%s %s CANCELLED: %s" % (lp, name, cancel_exc))
+            pass
+            raise cancel_exc
 
         logger.debug(f"{lp} {name} FINISHED")
 
@@ -1719,6 +1779,8 @@ class CyncTCPSession:
         if self.closing is True:
             logger.debug(f"{lp} closing is True, exiting read()...")
             return False
+        elif self.closed:
+            logger.debug(f"{dev.lp} device is closed, can't read data")
         else:
             if chunk is None:
                 chunk = STREAM_CHUNK_SIZE
@@ -1752,12 +1814,14 @@ class CyncTCPSession:
         """
         if not isinstance(data, bytes):
             raise ValueError(f"Data must be bytes, not type: {type(data)}")
-        dev = self
-        if dev.closing:
-            logger.warning(f"{dev.lp} device is closing, not writing data")
+        self
+        if self.closing:
+            logger.warning(f"{self.lp} device is closing, not writing data")
+        elif self.closed:
+            logger.debug(f"{self.lp} device is closed, can't write data")
         else:
-            if dev.writer is not None:
-                async with dev.write_lock:
+            if self.writer is not None:
+                async with self.write_lock:
                     # if broadcast is True:inner_struct__
                     #     # replace queue id with the sending device's queue id
                     #     new_data = bytes2list(data)
@@ -1765,36 +1829,36 @@ class CyncTCPSession:
                     #     data = bytes(new_data)
 
                     # check if the underlying writer is closing
-                    if dev._writer.is_closing():
-                        if dev.closing is False:
+                    if self._writer.is_closing():
+                        if self.closing is False:
                             # this is probably a connection that was closed by the device (turned off), delete it
                             logger.warning(
-                                f"{dev.lp} underlying writer is closing but, "
+                                f"{self.lp} underlying writer is closing but, "
                                 f"the device itself hasn't called close(). The device probably "
-                                f"dropped the connection (lost power). Removing {dev.ip_address}"
+                                f"dropped the connection (lost power). Removing {self.ip_address}"
                             )
-                            off_dev = await g.ncync_server.remove_tcp_device(dev)
+                            off_dev = await g.ncync_server.remove_tcp_device(self)
                             # await off_dev.close()
                             del off_dev
 
                         else:
                             logger.debug(
-                                f"{dev.lp} TCP device is closing, not writing data... "
+                                f"{self.lp} TCP device is closing, not writing data... "
                             )
                     else:
-                        dev.writer.write(data)
+                        self.writer.write(data)
                         # logger.debug(f"{dev.lp} writing data -> {data}")
                         try:
-                            await asyncio.wait_for(dev.writer.drain(), timeout=2.0)
+                            await asyncio.wait_for(self.writer.drain(), timeout=2.0)
                         except TimeoutError as to_exc:
                             logger.error(
-                                f"{dev.lp} writing data to the device timed out, likely powered off"
+                                f"{self.lp} writing data to the device timed out, likely powered off"
                             )
                             raise to_exc
                         else:
                             return True
             else:
-                logger.warning(f"{dev.lp} writer is None, can't write data!")
+                logger.warning(f"{self.lp} writer is None, can't write data!")
             return None
 
     async def close(self):
@@ -1810,11 +1874,11 @@ class CyncTCPSession:
                 async with self.write_lock:
                     self.writer.close()
                     task = self.writer.wait_closed()
-                    await asyncio.wait_for(task, 5.0)
-        except AttributeError:
+                    await asyncio.wait_for(task, 3.0)
+        except (AttributeError, TimeoutError):
             pass
         except Exception as e:
-            logger.exception(f"{lp}writer: EXCEPTION: {e}")
+            logger.debug(f"{lp}writer: EXCEPTION: {e}")
         finally:
             self.writer = None
 
@@ -1822,7 +1886,7 @@ class CyncTCPSession:
             if self.reader:
                 async with self.read_lock:
                     self.reader.feed_eof()
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0.03)
         except AttributeError:
             pass
         except Exception as e:
@@ -1833,6 +1897,22 @@ class CyncTCPSession:
         if self.node:
             await g.mqtt_client.remove_mitm_button(self.node)
         self.closing = False
+        self.closed = True
+        if self.ip_address in g.ncync_server.tcp_connections:
+            # check if states match
+            g_dev = g.ncync_server.tcp_connections.pop(self.ip_address)
+            state_closing = self.closing == g_dev.closing
+            state_closed = self.closed == g_dev.closed
+            if state_closed is False or state_closing is False:
+                logger.debug(f"{lp} There is a mismatch between states in the global device and this device: closed: {state_closed | closing: {state_closing}}, replacing...")
+                del g_dev
+                g.ncync_server[self.ip_address] = self
+            elif g_dev != self:
+                logger.debug(f"{lp} There is a python object mismatch between the global device and this one...")
+                del g_dev
+                g.ncync_server[self.ip_address] = self
+            else:
+                g.ncync_server[self.ip_address] = g_dev
 
     @property
     def reader(self):

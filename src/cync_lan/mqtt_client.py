@@ -1012,7 +1012,7 @@ class MQTTClient:
         """Delete a MITM mode button"""
         logger.debug(f"{node.lp} Removing 'MITM mode' button from node: '{node.name}'")
         mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"
-        await self.publish(f"{self.topic}/status/{device_uuid}/mitm", b"OFF", retain=True)
+        await self.publish(f"{self.topic}/status/{node.hass_id}/mitm", b"OFF", retain=True)
         # send empty payload to the config topic to delete the entity
         await self.publish(
             f"{self.ha_topic}/switch/{mitm_switch_unique_id}/config", b""

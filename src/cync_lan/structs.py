@@ -160,15 +160,16 @@ class Tasks:
     send: Optional[asyncio.Task] = None
     callback_cleanup: Optional[asyncio.Task] = None
     proxy_task: Optional[asyncio.Task] = None
+    conn_watcher: Optional[asyncio.Task] = None
 
     def __iter__(self):
-        tasks = [self.receive, self.send, self.callback_cleanup]
+        tasks = [self.receive, self.send, self.callback_cleanup, self.conn_watcher]
         for task in tasks:
             if task is not None:
                 yield task
 
     def __len__(self):
-        tasks = [self.receive, self.send, self.callback_cleanup]
+        tasks = [self.receive, self.send, self.callback_cleanup, self.conn_watcher]
         # remove any that are None
         tasks = [task for task in tasks if task is not None]
         return len(list(tasks))
@@ -184,6 +185,7 @@ class Tasks:
         self.receive = None
         self.send = None
         self.callback_cleanup = None
+        self.conn_watcher = None
 
 
 class ControlMessageCallback:
@@ -283,7 +285,7 @@ class FanSpeed(StrEnum):
     MAX = "max"
 
 
-class EntityState(BaseModel):
+class   EntityState(BaseModel):
     """
     Holds the individual state for a specific entity (outlet, bulb, etc.).
     entity is the logical device. Node is the physical device (TCP/BTLE conn).
@@ -316,7 +318,7 @@ class EntityState(BaseModel):
     def __str__(self):
         return (
             f"{self.name} ({self.dev_id}{'/{}'.format(self.sub_id) if self.sub_id > 0 else ''}): pow={self.power} bri={self.brightness} temp={self.temperature} ["
-            f"r={self.red} g={self.green} b={self.blue}] stale: {self.recently_seen == 0}"
+            f"r={self.red} g={self.green} b={self.blue}] recently seen: {self.recently_seen}"
         )
 
     def __repr__(self):
