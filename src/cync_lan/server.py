@@ -43,6 +43,12 @@ class nCyncServer:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    async def get_dev_tcp_pool(self):
+        return [d for d in self.tcp_connections.values() if not d.is_closed() or not d.is_app]
+
+    def get_dev_tcp_pool_sync(self):
+        return [d for d in self.tcp_connections.values() if not d.is_closed() or not d.is_app]
+
     def __init__(self, node_map: Dict[int, "CyncDevice"]):
         self.node_devices: Dict[int, "CyncDevice"] = node_map
         self.tcp_conn_attempts: dict = {}
@@ -112,7 +118,7 @@ class nCyncServer:
             f"{g.env.mqtt_topic}/status/bridge/apps/connected", str(len(apps)).encode()
         )
 
-        devs = [c for c in self.tcp_connections.values() if not c.closed or not c.closing or not c.is_app]
+        devs = self.get_dev_tcp_pool_sync()
         await g.mqtt_client.publish(
             f"{g.env.mqtt_topic}/status/bridge/tcp_devices/connected",
             str(len(devs)).encode(),

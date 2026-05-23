@@ -458,8 +458,7 @@ class CyncDevice:
 
             logger.debug(f"{self.lp}{sub_fmt_str} seems to have STALE data (no BT mesh activity)")
             self.num_late_states += 1
-            tcp_pool = [d for d in g.ncync_server.tcp_connections.values() if not d.closing or not d.closed or not d.is_app]
-
+            tcp_pool = await g.ncync_server.get_dev_tcp_pool()
             tcp_count = len(tcp_pool) or 1
             # With one TCP node, stale data immediately marks offline.
             # With multiple TCP nodes, wait until stale reports match node count.
@@ -514,7 +513,7 @@ class CyncDevice:
 
     async def send_command(self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str):
         tasks = []
-        tcp_pool = [d for d in g.ncync_server.tcp_connections.values() if not d.is_app and not d.closed or not d.closing]
+        tcp_pool = await g.ncync_server.get_dev_tcp_pool()
         if not tcp_pool:
             logger.debug(f"{lp} no eligible TCP connections available for command broadcast")
             return
@@ -1563,6 +1562,7 @@ class CyncTCPSession:
                         )
                         # dynamically add the MITM mode button for nodes that aree connected via TCP
                         await g.mqtt_client.add_mitm_button(node_repr)
+                            tcp_pool = g.ncync_server.get_dev_tcp_pool_sync()
 
                     elif self.node_id and self.node_id != dev_id:
                         logger.warning(
