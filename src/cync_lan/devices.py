@@ -778,9 +778,11 @@ class CyncTCPSession:
         self.closed = False
         self.closing = False
 
-    def existing_init(self):
+
+    async def existing_init(self):
         """Used when replacing an existing TCP connection, when a device reconnects"""
-        self.closed = False
+        lp = f"{self.lp}existing init:"
+        self._closed = False
         self.closing = False
         self.xa3_msg_id: bytes = bytes([0x00, 0x00, 0x00])
         self.queue_id: bytes = b""

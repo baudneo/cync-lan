@@ -282,7 +282,7 @@ class nCyncServer:
                     existing_device.reader = reader
                     existing_device.writer = writer
                     existing_device.ip_address = client_addr
-                    existing_device.existing_init()
+                    await existing_device.existing_init()
                     dev2add = existing_device
             else:
                 dev2add = CyncTCPSession(reader, writer, client_addr)
