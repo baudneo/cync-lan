@@ -3,10 +3,14 @@ import json
 import logging
 import random
 import re
+import time
 from json import JSONDecodeError
 from typing import Coroutine, Dict, List, Optional, Union
 
 import aiomqtt
+import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
+from paho.mqtt.enums import CallbackAPIVersion
 
 from cync_lan.const import (
     CYNC_BRIDGE_DEVICE_REGISTRY_CONF,
@@ -277,8 +281,6 @@ class MQTTClient:
                         elif extra_data[0] == "mitm":
                             is_on = payload.decode().upper() == "ON"
                             # Find the TCP device instance and trigger start/stop
-                            for tcp_dev in g.ncync_server.tcp_connections.values():
-                                if tcp_dev.node_id == node.id:
                             tcp_pool = await g.ncync_server.get_dev_tcp_pool()
                             for tcp_dev in tcp_pool:
                                 if tcp_dev.node and tcp_dev.node.id == node.id:
@@ -1429,3 +1431,61 @@ class MQTTClient:
         ret = min_k + int(scale * ct)
         # logger.debug(f"{self.lp} Converting Cync temp: {ct} using scale: {scale} (max_k={max_k}, min_k={min_k}) -> return value: {ret}")
         return ret
+
+    def get_startup_topic_state_sync(self, topic_str: str, timeout_seconds: float = 3.0) -> getattr:
+        """
+        Synchronously connects to the MQTT broker using Paho v2.1.0 guidelines,
+        waits up to timeout_seconds for a retained message, and returns the string payload.
+        """
+        lp = f"{self.lp}startup check:"
+        received_payload: Optional[str] = None
+        operation_completed = False
+
+        # 1. Define compliance-safe v2.x callbacks
+        def v2_on_connect(client, userdata, flags, reason_code, properties=None):
+            if reason_code == 0:
+                logger.debug(f"{lp} Connected successfully. Subscribing to: {topic_str}")
+                client.subscribe(topic_str)
+            else:
+                logger.error(f"{lp} Connection failed with reason code: {reason_code}")
+
+        def v2_on_message(client, userdata, msg):
+            nonlocal received_payload, operation_completed
+            try:
+                received_payload = msg.payload.decode("utf-8")
+                logger.debug(f"{lp} Retrieved retained payload: {received_payload}")
+            except Exception as err:
+                logger.error(f"{lp} Error decoding payload: {err}")
+                received_payload = None
+            operation_completed = True
+
+        # 2. Correctly instantiate the v2.1.0 Client object instance
+        client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+        client.on_connect = v2_on_connect
+        client.on_message = v2_on_message
+
+        # Apply credentials if configured
+        if CYNC_MQTT_USER and CYNC_MQTT_PASS:
+            client.username_pw_set(CYNC_MQTT_USER, CYNC_MQTT_PASS)
+
+        # 3. Establish the network connection
+        try:
+            client.connect(CYNC_MQTT_HOST, int(CYNC_MQTT_PORT), keepalive=10)
+        except Exception as connection_err:
+            logger.exception(f"{lp} Unable to connect to broker at startup: {connection_err}")
+            return None
+
+        # 4. Execute a manual timed loop to process incoming packets
+        start_time = time.time()
+        while not operation_completed:
+            # Process network events for up to 100ms per iteration
+            client.loop(timeout=0.1)
+
+            # Enforce execution time limit
+            if (time.time() - start_time) > timeout_seconds:
+                logger.info(f"{lp} Timeout reached ({timeout_seconds}s). No retained message found")
+                break
+
+        # 5. Clean up connection assets gracefully
+        client.disconnect()
+        return received_payload
