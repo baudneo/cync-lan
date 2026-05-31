@@ -1,5 +1,10 @@
-### 0.0.6b7
+### 0.0.6b8
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Add device/proxy connection watcher to close zombie TCP sessions gracefully
+- Check for retained MITM button state messages on HASS discovery to persist state between reconnections
+- Use a devices configured kelvin range for white temp conversions instead of hardcoded 2-7k range
+
+### 0.0.6b7
 - Fix command packet builder; restore changing brightness, white temp and RGB for non-plug devices
 
 ### 0.0.6b6
