@@ -4,6 +4,7 @@ import logging
 import random
 import re
 import time
+from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import Coroutine, Dict, List, Optional, Union
 
@@ -46,6 +47,13 @@ g = GlobalObject()
 bridge_device_reg_struct = CYNC_BRIDGE_DEVICE_REGISTRY_CONF
 # Log all loggers in the logger manager
 # logging.getLogger().manager.loggerDict.keys()
+
+
+@dataclass
+class ParseResult:
+    matched: bool = False
+    handled: bool = False
+    reason: str = ""
 
 
 class MQTTClient:
@@ -221,250 +229,296 @@ class MQTTClient:
             return True
         return False
 
+    def _parse_device_target(self, device_uuid: str, lp: str) -> tuple[Optional[CyncDevice], Optional[int]]:
+        if device_uuid == "bridge":
+            return None, None
+
+        ids = device_uuid.split("-")
+        if len(ids) < 2:
+            logger.warning(f"{lp} Invalid device UUID format: {device_uuid}")
+            return None, None
+
+        try:
+            device_id = int(ids[1])
+            sub_id = int(ids[-1]) if len(ids) >= 3 else None
+        except ValueError:
+            logger.warning(f"{lp} Invalid numeric device/sub ID in UUID: {device_uuid}")
+            return None, None
+
+        if device_id not in g.ncync_server.node_devices:
+            logger.warning(
+                f"{lp} Device ID {device_id} not found, device is disabled in config file or have you deleted / added any devices recently?"
+            )
+            return None, sub_id
+
+        return g.ncync_server.node_devices[device_id], sub_id
+
+    async def _handle_bridge_extra(self, extra_data: List[str], payload: bytes, lp: str) -> bool:
+        norm_pl = payload.decode(errors="ignore").casefold()
+        upper_pl = payload.decode(errors="ignore").upper()
+
+        if extra_data[0] == "app_logging":
+            is_on = upper_pl == "ON"
+            g.env.app_mitm_logging = is_on
+            await self.publish(f"{self.topic}/status/bridge/app_logging", payload)
+            logger.info(f"{lp} Global App MITM Logging set to {'ON' if is_on else 'OFF'}")
+            return True
+
+        if extra_data[0] == "restart" and norm_pl == "press":
+            logger.info(
+                f"{lp} Restart button pressed! Restarting Cync LAN bridge (NOT IMPLEMENTED)..."
+            )
+            return True
+
+        # Strict topic fix: only support set/bridge/export/start (not start_export).
+        if len(extra_data) >= 2 and extra_data[0] == "export" and extra_data[1] == "start":
+            if norm_pl == "press":
+                logger.info(
+                    f"{lp} Start Export button pressed! Starting Cync Export (NOT IMPLEMENTED)..."
+                )
+                return True
+            return False
+
+        if extra_data[0] == "otp" and len(extra_data) >= 2:
+            if extra_data[1] == "submit":
+                logger.info(f"{lp} OTP submit button pressed! (NOT IMPLEMENTED)...")
+                return True
+            if extra_data[1] == "input":
+                logger.info(f"{lp} OTP input received: {norm_pl} (NOT IMPLEMENTED)...")
+                return True
+
+        return False
+
+    async def _handle_mitm_extra(self, node: CyncDevice, device_uuid: str, payload: bytes) -> bool:
+        is_on = payload.decode(errors="ignore").upper() == "ON"
+        tcp_pool = await g.ncync_server.get_dev_tcp_pool()
+        for tcp_dev in tcp_pool:
+            if tcp_dev.node and tcp_dev.node.id == node.id:
+                if is_on:
+                    self.tasks.append(
+                        asyncio.create_task(
+                            tcp_dev.start_mitm(),
+                            name=f"MQTT_START_MITM-{tcp_dev.ip_address}",
+                        )
+                    )
+                else:
+                    logger.debug("DBG>>> MITM mqtt command is calling mitm_stop()")
+                    asyncio.create_task(
+                        tcp_dev.stop_mitm(),
+                        name=f"MQTT_STOP_MITM-{tcp_dev.ip_address}",
+                    )
+        await self.publish(f"{self.topic}/status/{device_uuid}/mitm", payload, retain=True)
+        return True
+
+    def _queue_fan_extra(self, node: CyncDevice, extra_data: List[str], payload: bytes, tasks: list, lp: str) -> bool:
+        if not node.is_fan_controller:
+            return False
+
+        norm_pl = payload.decode(errors="ignore").casefold()
+        if extra_data[0] == "percentage":
+            percentage = int(norm_pl)
+            if percentage == 0:
+                tasks.append(node.set_brightness(0))
+            elif percentage <= 25:
+                logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'low' preset")
+                tasks.append(node.set_brightness(25))
+            elif percentage <= 50:
+                logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'medium' preset")
+                tasks.append(node.set_brightness(50))
+            elif percentage <= 75:
+                logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'high' preset")
+                tasks.append(node.set_brightness(75))
+            elif percentage <= 100:
+                logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'max' preset")
+                tasks.append(node.set_brightness(100))
+            else:
+                logger.warning(
+                    f"{lp} Fan percentage received: {percentage} is out of range (0-100), skipping..."
+                )
+                return False
+            return True
+
+        if extra_data[0] == "preset":
+            if norm_pl == "off":
+                tasks.append(node.set_fan_speed(FanSpeed.OFF))
+            elif norm_pl == "low":
+                tasks.append(node.set_fan_speed(FanSpeed.LOW))
+            elif norm_pl == "medium":
+                tasks.append(node.set_fan_speed(FanSpeed.MEDIUM))
+            elif norm_pl == "high":
+                tasks.append(node.set_fan_speed(FanSpeed.HIGH))
+            elif norm_pl == "max":
+                tasks.append(node.set_fan_speed(FanSpeed.MAX))
+            else:
+                logger.warning(f"{lp} Unknown preset mode: {norm_pl}, skipping...")
+                return False
+            return True
+
+        return False
+
+    def _queue_json_payload(self, node: CyncDevice, payload: bytes, sub_id: Optional[int], tasks: list, lp: str) -> bool:
+        try:
+            json_data = json.loads(payload)
+        except JSONDecodeError as e:
+            logger.error("%s bad json message: {%s} EXCEPTION => %s" % (lp, payload, e))
+            return False
+        except Exception as e:
+            logger.error("%s error will decoding a string into JSON: '%s' EXCEPTION => %s" % (lp, payload, e))
+            return False
+
+        if "state" in json_data and "brightness" not in json_data:
+            if "effect" in json_data:
+                tasks.append(node.set_lightshow(json_data["effect"], sub_id))
+            elif str(json_data["state"]).upper() == "ON":
+                tasks.append(node.set_power(1, sub_id))
+            else:
+                tasks.append(node.set_power(0, sub_id))
+        if "brightness" in json_data:
+            tasks.append(node.set_brightness(int(json_data["brightness"]), sub_id))
+
+        if "color_temp" in json_data:
+            tasks.append(
+                node.set_temperature(
+                    self.kelvin2cync(int(json_data["color_temp"]), node),
+                    sub_id,
+                )
+            )
+        elif "color" in json_data:
+            color = []
+            for rgb in ("r", "g", "b"):
+                color.append(int(json_data["color"].get(rgb, 0)))
+            if sub_id is not None:
+                color.append(sub_id)
+            tasks.append(node.set_rgb(*color))
+        return True
+
+    def _queue_non_json_payload(self, node: CyncDevice, payload: bytes, sub_id: Optional[int], tasks: list, lp: str) -> bool:
+        str_payload = payload.decode("utf-8").strip()
+        if not re.compile(r"^\w+$").match(str_payload):
+            logger.warning(f"{lp} Unknown payload: {payload}, skipping...")
+            return False
+
+        if str_payload.casefold() == "on":
+            logger.debug(
+                f"{lp} setting power to ON (non-JSON) for: {node.id}{' [sub ID: {}]'.format(sub_id) if sub_id else ''}"
+            ) if MQTT_DEBUG else None
+            tasks.append(node.set_power(1, sub_id))
+            return True
+        if str_payload.casefold() == "off":
+            logger.debug(f"{lp} setting power to OFF (non-JSON)") if MQTT_DEBUG else None
+            tasks.append(node.set_power(0, sub_id))
+            return True
+        return False
+
+    async def _handle_cync_set(self, topic_parts: List[str], payload: bytes, lp: str) -> ParseResult:
+        result = ParseResult(matched=True, handled=False, reason="")
+        if len(topic_parts) < 3:
+            result.reason = "missing_device_uuid"
+            return result
+
+        device_uuid = topic_parts[2]
+        extra_data = topic_parts[3:] if len(topic_parts) > 3 else None
+        node, sub_id = self._parse_device_target(device_uuid, lp)
+        if device_uuid != "bridge" and node is None:
+            result.reason = "unknown_device"
+            return result
+
+        tasks = []
+        if extra_data:
+            if device_uuid == "bridge":
+                result.handled = await self._handle_bridge_extra(extra_data, payload, lp)
+            elif extra_data[0] == "mitm":
+                result.handled = await self._handle_mitm_extra(node, device_uuid, payload)
+            else:
+                result.handled = self._queue_fan_extra(node, extra_data, payload, tasks, lp)
+                if not result.handled:
+                    result.reason = "unknown_extra_command"
+        else:
+            if node is None:
+                result.reason = "bridge_command_requires_extra_path"
+                return result
+            if payload.startswith(b"{"):
+                result.handled = self._queue_json_payload(node, payload, sub_id, tasks, lp)
+            else:
+                result.handled = self._queue_non_json_payload(node, payload, sub_id, tasks, lp)
+
+        if tasks:
+            await asyncio.gather(*tasks)
+            result.handled = True
+
+        if not result.reason and not result.handled:
+            result.reason = "not_handled"
+        return result
+
+    async def _handle_hass_status(self, topic_parts: List[str], payload: bytes, lp: str) -> ParseResult:
+        result = ParseResult(matched=True, handled=False, reason="")
+        if len(topic_parts) < 2 or topic_parts[1] != CYNC_HASS_STATUS_TOPIC:
+            result.reason = "unknown_hass_topic"
+            return result
+
+        msg = payload.decode(errors="ignore").casefold()
+        if msg == CYNC_HASS_BIRTH_MSG.casefold():
+            birth_delay = random.randint(5, 15)
+            logger.info(
+                f"{lp} HASS has sent MQTT BIRTH message, re-announcing device discovery, availability and status after a random delay of {birth_delay} seconds..."
+            )
+            await asyncio.sleep(birth_delay)
+            await self.homeassistant_discovery()
+            await asyncio.sleep(2)
+            for node in g.ncync_server.node_devices.values():
+                await self.pub_online(node.id, node.online)
+                for epoint_state in node.entities.values():
+                    await self.parse_entity_state(epoint_state, from_pkt="'hass_birth'")
+            result.handled = True
+            return result
+
+        if msg == CYNC_HASS_WILL_MSG.casefold():
+            logger.info(f"{lp} received Last Will msg from Home Assistant, HASS is offline!")
+            result.handled = True
+            return result
+
+        logger.warning(f"{lp} Unknown HASS status message: {payload}")
+        result.reason = "unknown_hass_status"
+        return result
+
+    async def async_parse_mqtt_msg(self, message: aiomqtt.message.Message) -> bool:
+        lp = f"{self.lp}parse msg:"
+        topic = message.topic
+        payload = message.payload
+        if (payload is None) or (payload is not None and not payload):
+            logger.debug(
+                f"{lp} Received empty/None payload ({payload}) for topic: {topic} , skipping..."
+            )
+            return False
+
+        topic_parts = topic.value.split("/")
+        logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}") if MQTT_DEBUG else None
+
+        result = ParseResult(matched=False, handled=False, reason="")
+        if topic_parts[0] == CYNC_TOPIC:
+            result.matched = True
+            if len(topic_parts) > 1 and topic_parts[1] == "set":
+                result = await self._handle_cync_set(topic_parts, payload, lp)
+            else:
+                logger.warning(f"{lp} Unknown command: {topic} => {payload}")
+                result.reason = "unknown_cync_command"
+        elif topic_parts[0] == self.ha_topic:
+            result = await self._handle_hass_status(topic_parts, payload, lp)
+        else:
+            result.reason = "topic_not_for_client"
+
+        logger.debug(
+            f"{lp} parse result: matched={result.matched} handled={result.handled} reason={result.reason or 'ok'}"
+        ) if MQTT_DEBUG else None
+        return result.handled
+
     async def start_receiver_task(self):
         """Start listening for MQTT messages on subscribed topics"""
         lp = f"{self.lp}rcv:"
         async for message in self.client.messages:
-            message: aiomqtt.message.Message
-            topic = message.topic
-            payload = message.payload
-            if (payload is None) or (payload is not None and not payload):
-                logger.debug(
-                    f"{lp} Received empty/None payload ({payload}) for topic: {topic} , skipping..."
-                )
-                continue
-            _topic = topic.value.split("/")
-            tasks = []
-            node = None
-            sub_id: Optional[int] = None
-            logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}") if MQTT_DEBUG is True else None
-            if _topic[0] == CYNC_TOPIC:
-                if _topic[1] == "set":
-                    # TOPIC: cync_lan_TEST/set/769962427-46/mitm // MESSAGE: b'ON'
-                    device_uuid_ = _topic[2]
-                    # homeID-deviceID-childID / no -childID when no children
-                    _ids = device_uuid_.split("-")
-                    _home_id = _ids[0]
-                    device_id = int(_ids[1])
-                    if len(_ids) >= 3:
-                        sub_id = int(_ids[-1])
+            succ = await self.async_parse_mqtt_msg(message)
 
-                    extra_data = _topic[3:] if len(_topic) > 3 else None
-                    if device_uuid_ == "bridge":
-                        pass
-                    else:
-                        if device_id not in g.ncync_server.node_devices:
-                            logger.warning(
-                                f"{lp} Device ID {device_id} not found, device is disabled in config file or have you deleted / added any "
-                                f"devices recently?"
-                            )
-                            continue
-                        node: CyncDevice = g.ncync_server.node_devices[device_id]
-                    # bridge or fan, extra data
-                    if extra_data:
-                        norm_pl = payload.decode().casefold()
-                        # logger.debug(f"{lp} Extra data found: {extra_data}")
-                        if extra_data[0] == "app_logging":
-                            # Determine the new state
-                            is_on = payload.decode().upper() == "ON"
 
-                            # Update the global state
-                            g.env.app_mitm_logging = is_on
-
-                            # Publish the new status back to MQTT
-                            await self.publish(
-                                f"{self.topic}/status/bridge/app_logging", payload
-                            )
-                            logger.info(
-                                f"{lp} Global App MITM Logging set to {'ON' if is_on else 'OFF'}"
-                            )
-                        elif extra_data[0] == "mitm":
-                            is_on = payload.decode().upper() == "ON"
-                            # Find the TCP device instance and trigger start/stop
-                            tcp_pool = await g.ncync_server.get_dev_tcp_pool()
-                            for tcp_dev in tcp_pool:
-                                if tcp_dev.node and tcp_dev.node.id == node.id:
-                                    if is_on:
-                                        self.tasks.append(asyncio.create_task(tcp_dev.start_mitm(), name=f"MQTT_START_MITM-{tcp_dev.ip_address}"))
-                                    else:
-                                        logger.debug(
-                                            "DBG>>> MITM mqtt command is calling mitm_stop()"
-                                        )
-                                        asyncio.create_task(tcp_dev.stop_mitm(), name=f"MQTT_STOP_MITM-{tcp_dev.ip_address}")
-                            await self.publish(
-                                f"{self.topic}/status/{device_uuid_}/mitm", payload, retain=True
-                            )
-                        elif extra_data[0] == "restart":
-                            if norm_pl == "press":
-                                logger.info(
-                                    f"{lp} Restart button pressed! Restarting Cync LAN bridge (NOT IMPLEMENTED)..."
-                                )
-                        elif extra_data[0] == "start_export":
-                            if norm_pl == "press":
-                                logger.info(
-                                    f"{lp} Start Export button pressed! Starting Cync Export (NOT IMPLEMENTED)..."
-                                )
-                        elif extra_data[0] == "otp":
-                            if extra_data[1] == "submit":
-                                logger.info(
-                                    f"{lp} OTP submit button pressed! (NOT IMPLEMENTED)..."
-                                )
-                            elif extra_data[1] == "input":
-                                logger.info(
-                                    f"{lp} OTP input received: {norm_pl} (NOT IMPLEMENTED)..."
-                                )
-                        elif node and node.is_fan_controller:
-                            if extra_data[0] == "percentage":
-                                percentage = int(norm_pl)
-                                if percentage == 0:
-                                    tasks.append(node.set_brightness(0))
-                                elif percentage <= 25:
-                                    logger.debug(
-                                        f"{lp} Fan percentage received: {percentage}, translated to: 'low' preset"
-                                    )
-                                    tasks.append(node.set_brightness(25))
-                                elif percentage <= 50:
-                                    logger.debug(
-                                        f"{lp} Fan percentage received: {percentage}, translated to: 'medium' preset"
-                                    )
-                                    tasks.append(node.set_brightness(50))
-                                elif percentage <= 75:
-                                    logger.debug(
-                                        f"{lp} Fan percentage received: {percentage}, translated to: 'high' preset"
-                                    )
-                                    tasks.append(node.set_brightness(75))
-                                elif percentage <= 100:
-                                    logger.debug(
-                                        f"{lp} Fan percentage received: {percentage}, translated to: 'max' preset"
-                                    )
-                                    tasks.append(node.set_brightness(100))
-                                else:
-                                    logger.warning(
-                                        f"{lp} Fan percentage received: {percentage} is out of range (0-100), skipping..."
-                                    )
-                            elif extra_data[0] == "preset":
-                                preset_mode = norm_pl
-                                if preset_mode == "off":
-                                    tasks.append(node.set_fan_speed(FanSpeed.OFF))
-                                elif preset_mode == "low":
-                                    tasks.append(node.set_fan_speed(FanSpeed.LOW))
-                                elif preset_mode == "medium":
-                                    tasks.append(node.set_fan_speed(FanSpeed.MEDIUM))
-                                elif preset_mode == "high":
-                                    tasks.append(node.set_fan_speed(FanSpeed.HIGH))
-                                elif preset_mode == "max":
-                                    tasks.append(node.set_fan_speed(FanSpeed.MAX))
-                                else:
-                                    logger.warning(
-                                        f"{lp} Unknown preset mode: {preset_mode}, skipping..."
-                                    )
-
-                    else:
-                        if payload.startswith(b"{"):
-                            try:
-                                json_data = json.loads(payload)
-                            except JSONDecodeError as e:
-                                logger.error(
-                                    "%s bad json message: {%s} EXCEPTION => %s"
-                                    % (lp, payload, e)
-                                )
-                                continue
-                            except Exception as e:
-                                logger.error(
-                                    "%s error will decoding a string into JSON: '%s' EXCEPTION => %s"
-                                    % (lp, payload, e)
-                                )
-                                continue
-
-                            if "state" in json_data and "brightness" not in json_data:
-                                if "effect" in json_data:
-                                    effect = json_data["effect"]
-                                    tasks.append(node.set_lightshow(effect, sub_id))
-                                else:
-                                    if json_data["state"].upper() == "ON":
-                                        tasks.append(node.set_power(1, sub_id))
-                                    else:
-                                        tasks.append(node.set_power(0, sub_id))
-                            if "brightness" in json_data:
-                                lum = int(json_data["brightness"])
-                                tasks.append(node.set_brightness(lum, sub_id))
-
-                            if "color_temp" in json_data:
-                                tasks.append(
-                                    node.set_temperature(
-                                        self.kelvin2cync(int(json_data["color_temp"]), node),
-                                        sub_id,
-                                    )
-                                )
-                            elif "color" in json_data:
-                                color = []
-                                for rgb in ("r", "g", "b"):
-                                    if rgb in json_data["color"]:
-                                        color.append(int(json_data["color"][rgb]))
-                                    else:
-                                        color.append(0)
-                                if sub_id is not None:
-                                    color.append(sub_id)
-                                tasks.append(node.set_rgb(*color))
-                        # binary payload does not start with a '{', so it is not JSON
-                        else:
-                            str_payload = payload.decode("utf-8").strip()
-                            #  use a regex pattern to determine if it is a single word
-                            pattern = re.compile(r"^\w+$")
-                            if pattern.match(str_payload):
-                                # handle non-JSON payloads
-                                if str_payload.casefold() == "on":
-                                    logger.debug(
-                                        f"{lp} setting power to ON (non-JSON) for: {node.id}{' [sub ID: {}]'.format(sub_id) if sub_id else ''}"
-                                    ) if MQTT_DEBUG else None
-
-                                    tasks.append(node.set_power(1, sub_id))
-                                elif str_payload.casefold() == "off":
-                                    logger.debug(
-                                        f"{lp} setting power to OFF (non-JSON)"
-                                    ) if MQTT_DEBUG else None
-                                    tasks.append(node.set_power(0, sub_id))
-                            else:
-                                logger.warning(
-                                    f"{lp} Unknown payload: {payload}, skipping..."
-                                )
-                else:
-                    logger.warning(f"{lp} Unknown command: {topic} => {payload}")
-                if tasks:
-                    await asyncio.gather(*tasks)
-
-            # messages sent to the hass mqtt topic
-            elif _topic[0] == self.ha_topic:
-                # birth / will
-                if _topic[1] == CYNC_HASS_STATUS_TOPIC:
-                    if payload.decode().casefold() == CYNC_HASS_BIRTH_MSG.casefold():
-                        birth_delay = random.randint(5, 15)
-                        logger.info(
-                            f"{lp} HASS has sent MQTT BIRTH message, re-announcing device discovery, availability and status after a random delay of {birth_delay} seconds..."
-                        )
-                        # Give HASS some time to start up, from docs:
-                        # To avoid high IO loads on the MQTT broker, adding some random delay in sending the discovery payload is recommended.
-                        # this is a well known issue with HASS when they send the birth message. maybe its fixed, but this works
-                        await asyncio.sleep(birth_delay)
-                        # register devices
-                        await self.homeassistant_discovery()
-                        # give HASS a moment (to register devices)
-                        await asyncio.sleep(2)
-                        # set the device online/offline and set its status
-                        for node in g.ncync_server.node_devices.values():
-                            await self.pub_online(node.id, node.online)
-                            for epoint_state in node.entities.values():
-                                await self.parse_entity_state(
-                                    epoint_state,
-                                    from_pkt="'hass_birth'",
-                                )
-
-                    elif payload.decode().casefold() == CYNC_HASS_WILL_MSG.casefold():
-                        logger.info(
-                            f"{lp} received Last Will msg from Home Assistant, HASS is offline!"
-                        )
-                    else:
-                        logger.warning(f"{lp} Unknown HASS status message: {payload}")
 
     async def stop(self):
         lp = f"{self.lp}stop:"
@@ -1436,13 +1490,14 @@ class MQTTClient:
     def get_startup_topic_state_sync(self, topic_str: str, timeout_seconds: float = 3.0) -> getattr:
         """
         Synchronously connects to the MQTT broker using Paho v2.1.0 guidelines,
-        waits up to timeout_seconds for a retained message, and returns the string payload.
+        waits up to timeout_seconds for a retained message, and returns the string payload. Use case:
+        Check for retained states, topic_str should be a /status/ topic so we can send it a b'OFF'
+        payload to seed it as off if there are no retained states
         """
         lp = f"{self.lp}startup check:"
         received_payload: Optional[str] = None
         operation_completed = False
 
-        # 1. Define compliance-safe v2.x callbacks
         def v2_on_connect(client, userdata, flags, reason_code, properties=None):
             if reason_code == 0:
                 logger.debug(f"{lp} Connected successfully. Subscribing to: {topic_str}")
@@ -1460,33 +1515,28 @@ class MQTTClient:
                 received_payload = None
             operation_completed = True
 
-        # 2. Correctly instantiate the v2.1.0 Client object instance
         client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
         client.on_connect = v2_on_connect
         client.on_message = v2_on_message
 
-        # Apply credentials if configured
         if CYNC_MQTT_USER and CYNC_MQTT_PASS:
             client.username_pw_set(CYNC_MQTT_USER, CYNC_MQTT_PASS)
 
-        # 3. Establish the network connection
         try:
             client.connect(CYNC_MQTT_HOST, int(CYNC_MQTT_PORT), keepalive=10)
         except Exception as connection_err:
             logger.exception(f"{lp} Unable to connect to broker at startup: {connection_err}")
             return None
 
-        # 4. Execute a manual timed loop to process incoming packets
         start_time = time.time()
         while not operation_completed:
-            # Process network events for up to 100ms per iteration
             client.loop(timeout=0.1)
 
-            # Enforce execution time limit
             if (time.time() - start_time) > timeout_seconds:
-                logger.info(f"{lp} Timeout reached ({timeout_seconds}s). No retained message found")
+                logger.info(f"{lp} Timeout reached ({timeout_seconds}s). No retained message found, seeding off...")
+                publish_info = client.publish(topic_str, b"OFF", qos=0, retain=True)
+                publish_info.wait_for_publish(timeout=1.0)
                 break
 
-        # 5. Clean up connection assets gracefully
         client.disconnect()
         return received_payload
