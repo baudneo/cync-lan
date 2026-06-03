@@ -1859,7 +1859,7 @@ class CyncTCPSession:
 
     async def receive_task(self):
         """Receive data from the device and respond to it. This is the main task for the device."""
-        lp = f"{self.lp}:rcv data:"
+        lp = f"{self.lp}rcv data:"
         started_at = time.time()
         name = self.tasks.receive.get_name()
         logger.debug(f"{lp} receive_task CALLED") if CYNC_RAW is True else None
@@ -1867,7 +1867,7 @@ class CyncTCPSession:
             while True:
                 try:
                     data: bytes = await self.read()
-                    lp = f"{self.lp}:rcv data:"
+                    lp = f"{self.lp}rcv data:"
                     if data is False:
                         logger.debug(
                             f"{lp} read() returned False, exiting {name} "
@@ -1881,6 +1881,7 @@ class CyncTCPSession:
 
                 except Exception as e:
                     logger.error(f"{lp} Exception in task {name} LOOP: {e}", exc_info=True)
+                    asyncio.create_task(self.close())
                     break
         except asyncio.CancelledError:
             logger.debug(f"{lp} Task {name} CANCELLED cleanly, re-raising...")
