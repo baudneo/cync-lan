@@ -637,7 +637,7 @@ class MQTTClient:
             entity = node.entities.get(0)
             tpc = f"{self.topic}/status/{node.hass_id}/preset"
             return await self.pub_entity_state(
-                node, speed.encode(), tpc=tpc
+                node, speed.encode(), 0, tpc=tpc
             )
         else:
             logger.warning(f"{self.lp} Tried to set fan speed on a device which isnt a fan controller, skipping...")
