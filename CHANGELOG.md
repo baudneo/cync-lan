@@ -1,5 +1,8 @@
-### 0.0.6b9
+### 0.0.6b10
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Fix unbound `tgt_id`
+
+### 0.0.6b9
 - Add fan controller speed state syncing in HASS
   - Don't rely on HASS 'optimistic' state, use async callback pattern
 
