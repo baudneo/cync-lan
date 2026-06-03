@@ -1,5 +1,9 @@
-### 0.0.6b8
+### 0.0.6b9
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Add fan controller speed state syncing in HASS
+  - Don't rely on HASS 'optimistic' state, use async callback pattern
+
+### 0.0.6b8
 - Add device/proxy connection watcher to close zombie TCP sessions gracefully
 - Check for retained MITM button state messages on HASS discovery to persist state between reconnections
 - Use a devices configured kelvin range for white temp conversions instead of hardcoded 2-7k range
