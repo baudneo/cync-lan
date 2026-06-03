@@ -635,7 +635,7 @@ class MQTTClient:
         node.online = True
         if node.is_fan_controller:
             entity = node.entities.get(0)
-            tpc = f"{self.topic}/status/{tgt_id}/preset"
+            tpc = f"{self.topic}/status/{node.hass_id}/preset"
             return await self.pub_entity_state(
                 node, speed.encode(), tpc=tpc
             )
