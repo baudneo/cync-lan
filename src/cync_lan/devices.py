@@ -10,7 +10,7 @@ import sys
 import time
 from functools import partial
 from pathlib import Path
-from typing import Coroutine, Dict, List, Optional, Union
+from typing import Coroutine, Dict, List, Optional, Union, Callable
 
 from cync_lan.const import (
     CYNC_CLOUD_IP,
@@ -242,7 +242,7 @@ class CyncDevice:
         self._is_plug = value
 
     @property
-    def has_multi_endpoints(self) -> bool:
+    def has_multi_entities(self) -> bool:
         return len(self.entities) > 1
 
     @property
@@ -574,21 +574,23 @@ class CyncDevice:
             )
             return False
         try:
+            bri = 0
             if speed == FanSpeed.OFF:
-                await self.set_brightness(0)
+                pass
             elif speed == FanSpeed.LOW:
-                await self.set_brightness(25)
+                bri = 25
             elif speed == FanSpeed.MEDIUM:
-                await self.set_brightness(50)
+                bri = 50
             elif speed == FanSpeed.HIGH:
-                await self.set_brightness(75)
+                bri = 75
             elif speed == FanSpeed.MAX:
-                await self.set_brightness(100)
+                bri = 100
             else:
                 logger.error(
                     f"{self.lp} Invalid fan speed: {speed}, must be one of {list(FanSpeed)}"
                 )
                 return False
+            await self.set_brightness(bri, callback=partial(g.mqtt_client.update_fan_speed, self, speed))
         except asyncio.CancelledError as ce:
             raise ce
         except Exception as e:
@@ -612,12 +614,12 @@ class CyncDevice:
             message=None,
             sent_at=0.0,
             callback=partial(
-                g.mqtt_client.update_endpoint_power, self, state, _sub_id
+                g.mqtt_client.update_entity_power, self, state, _sub_id
             ),
         )
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
-    async def set_brightness(self, bri: int, sub_id: Optional[int] = None):
+    async def set_brightness(self, bri: int, sub_id: Optional[int] = None, callback = None):
         lp = f"{self.lp}set_brightness:"
         if not (0 <= bri <= 100):
             logger.error(f"{lp} Invalid brightness: {bri} must be 0-100")
@@ -633,11 +635,13 @@ class CyncDevice:
         else:
             # 8 bytes, all unsigned chars
             payload = struct.pack(">BBBBBBBB", 0x11, 0x02, 0x01, bri, 0xFF, 0xFF, 0xFF, 0xFF)
+        if callback is None:
+            callback = partial(g.mqtt_client.update_brightness, self, bri)
         m_cb = ControlMessageCallback(
             msg_id=0x00,
             message=None,
             sent_at=0.0,
-            callback=partial(g.mqtt_client.update_brightness, self, bri),
+            callback=callback,
         )
 
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)

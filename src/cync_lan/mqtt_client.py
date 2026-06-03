@@ -133,8 +133,8 @@ class MQTTClient:
                         tasks = []
                         # set the device online/offline and set its status
                         for node in g.ncync_server.node_devices.values():
-                            # key is entity id (sub_id), value is state class which has node and endpoint id
-                            # map is for easy lookup based on endpoint id, rather than iterating a list of endpoints
+                            # key is entity id (sub_id), value is state class which has node and entity id
+                            # map is for easy lookup based on entity id, rather than iterating a list of entitys
                             for epoint_state in node.entities.values():
                                 tasks.append(self.pub_online(node.id, node.online))
                                 tasks.append(
@@ -147,7 +147,6 @@ class MQTTClient:
                             await asyncio.gather(*tasks)
                     logger.debug(f"{lp} Starting MQTT receiver...")
                     lp: str = f"{self.lp}rcv:"
-                    # todo: monitor current endpoint state in MQTT? use for syncing?
                     topics = [
                         (f"{self.topic}/set/#", 0),
                         (f"{self.ha_topic}/status", 0),
@@ -318,19 +317,19 @@ class MQTTClient:
         if extra_data[0] == "percentage":
             percentage = int(norm_pl)
             if percentage == 0:
-                tasks.append(node.set_brightness(0))
+                tasks.append(node.set_fan_speed(FanSpeed.OFF))
             elif percentage <= 25:
                 logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'low' preset")
-                tasks.append(node.set_brightness(25))
+                tasks.append(node.set_fan_speed(FanSpeed.LOW))
             elif percentage <= 50:
                 logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'medium' preset")
-                tasks.append(node.set_brightness(50))
+                tasks.append(node.set_fan_speed(FanSpeed.MEDIUM))
             elif percentage <= 75:
                 logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'high' preset")
-                tasks.append(node.set_brightness(75))
+                tasks.append(node.set_fan_speed(FanSpeed.HIGH))
             elif percentage <= 100:
                 logger.debug(f"{lp} Fan percentage received: {percentage}, translated to: 'max' preset")
-                tasks.append(node.set_brightness(100))
+                tasks.append(node.set_fan_speed(FanSpeed.MAX))
             else:
                 logger.warning(
                     f"{lp} Fan percentage received: {percentage} is out of range (0-100), skipping..."
@@ -518,8 +517,6 @@ class MQTTClient:
         async for message in self.client.messages:
             succ = await self.async_parse_mqtt_msg(message)
 
-
-
     async def stop(self):
         lp = f"{self.lp}stop:"
         # set all devices offline
@@ -574,7 +571,7 @@ class MQTTClient:
             device: CyncDevice = g.ncync_server.node_devices[device_id]
             device_uuid = f"{device.home_id}-{device_id}"
             data = []
-            if device.has_multi_endpoints:
+            if device.has_multi_entities:
                 for child_id, child_name in device.entities.items():
                     data.append(
                         (
@@ -598,21 +595,21 @@ class MQTTClient:
             return True
         return False
 
-    async def update_endpoint_power(
+    async def update_entity_power(
         self, node: CyncDevice, state: int, sub_id: Optional[int] = None
     ) -> bool:
         """Update the device state and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.entities.get(_id)
-        endpoint.power = state
+        entity = node.entities.get(_id)
+        entity.power = state
         power_status = "OFF" if state == 0 else "ON"
         mqtt_tgt_state = {"state": power_status}
         if node.is_plug or node.is_switch:
             mqtt_tgt_state = power_status.encode()  # send ON or OFF if plug
         else:
             mqtt_tgt_state = json.dumps(mqtt_tgt_state).encode()  # send JSON
-        return await self.pub_endpoint_state(node, mqtt_tgt_state, sub_id)
+        return await self.pub_entity_state(node, mqtt_tgt_state, sub_id)
 
     async def update_brightness(
         self, node: CyncDevice, bri: int, sub_id: Optional[int] = None
@@ -620,15 +617,30 @@ class MQTTClient:
         """Update the device brightness and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.entities.get(_id)
-        endpoint.brightness = bri
+        entity = node.entities.get(_id)
+        entity.brightness = bri
         state = "ON"
         if bri == 0:
             state = "OFF"
         mqtt_dev_state = {"state": state, "brightness": bri}
-        return await self.pub_endpoint_state(
+        return await self.pub_entity_state(
             node, json.dumps(mqtt_dev_state).encode(), sub_id
         )
+
+    async def update_fan_speed(
+            self,
+            node: CyncDevice,
+            speed: str,
+    ) -> bool:
+        node.online = True
+        if node.is_fan_controller:
+            entity = node.entities.get(0)
+            tpc = f"{self.topic}/status/{tgt_id}/preset"
+            return await self.pub_entity_state(
+                node, speed.encode(), tpc=tpc
+            )
+        else:
+            logger.warning(f"{self.lp} Tried to set fan speed on a device which isnt a fan controller, skipping...")
 
     async def update_temperature(
         self, node: CyncDevice, temp: int, sub_id: Optional[int] = None
@@ -636,7 +648,7 @@ class MQTTClient:
         """Update the device temperature and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.entities.get(_id)
+        entity = node.entities.get(_id)
 
         if node.supports_temperature:
             mqtt_dev_state = {
@@ -644,11 +656,11 @@ class MQTTClient:
                 "color_mode": "color_temp",
                 "color_temp": self.cync2kelvin(temp, node),
             }
-            endpoint.temperature = temp
-            endpoint.red = 0
-            endpoint.green = 0
-            endpoint.blue = 0
-            return await self.pub_endpoint_state(
+            entity.temperature = temp
+            entity.red = 0
+            entity.green = 0
+            entity.blue = 0
+            return await self.pub_entity_state(
                 node, json.dumps(mqtt_dev_state).encode(), sub_id
             )
         return False
@@ -659,7 +671,7 @@ class MQTTClient:
         """Update the device RGB and publish to MQTT for HASS devices to update. Intended for callbacks"""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        endpoint = node.entities.get(_id)
+        entity = node.entities.get(_id)
 
         if node.supports_rgb and (
             any(
@@ -675,21 +687,22 @@ class MQTTClient:
                 "color_mode": "rgb",
                 "color": {"r": rgb[0], "g": rgb[1], "b": rgb[2]},
             }
-            endpoint.red = rgb[0]
-            endpoint.green = rgb[1]
-            endpoint.blue = rgb[2]
-            endpoint.temperature = 254
-            return await self.pub_endpoint_state(
+            entity.red = rgb[0]
+            entity.green = rgb[1]
+            entity.blue = rgb[2]
+            entity.temperature = 254
+            return await self.pub_entity_state(
                 node, json.dumps(mqtt_tgt_state).encode(), sub_id
             )
         return False
 
-    async def pub_endpoint_state(
+    async def pub_entity_state(
         self,
         node: CyncDevice,
         msg: bytes,
         sub_id: Optional[int],
         from_pkt: Optional[str] = None,
+        tpc: Optional[str] = None
     ) -> bool:
 
         lp = f"{self.lp}device_status:"
@@ -700,7 +713,8 @@ class MQTTClient:
             logger.debug(
                 f"{lp} Sending {msg} for device: '{node.name}' (ID: {node.id}){" '{}' [sub ID: {}]".format(node.entities[sub_id].name, sub_id) if sub_id else ''}"
             ) if MQTT_DEBUG else None
-            tpc = f"{self.topic}/status/{tgt_id}"
+            if tpc is None:
+                tpc = f"{self.topic}/status/{tgt_id}"
             try:
                 await self.client.publish(
                     tpc,
@@ -709,23 +723,24 @@ class MQTTClient:
                     timeout=3.0,
                 ) if not MQTT_DEAD else None
             except aiomqtt.MqttError as mqtt_code_exc:
-                logger.warning(f"{lp} [MqttError] -> {mqtt_code_exc}")
+                logger.warning(f"{lp} {mqtt_code_exc}")
                 self._connected = False
             except asyncio.CancelledError as can_exc:
-                logger.debug(f"{lp} [Task Cancelled] -> {can_exc}")
+                logger.debug(f"{lp} {can_exc}")
+                raise
             else:
                 return True
         return False
 
     async def parse_entity_state(
         self,
-        endpoint_state: EntityState,
+        entity_state: EntityState,
         from_pkt: Optional[str] = None,
     ) -> bool:
         """Parse device status and publish to MQTT for HASS devices to update."""
         lp = f"{self.lp}parse state:"
-        node_id = endpoint_state.dev_id
-        sub_id = endpoint_state.sub_id
+        node_id = entity_state.dev_id
+        sub_id = entity_state.sub_id
         if from_pkt:
             lp = f"{lp}{from_pkt}:"
         if node_id not in g.ncync_server.node_devices:
@@ -735,8 +750,8 @@ class MQTTClient:
             )
             return False
         node: CyncDevice = g.ncync_server.node_devices[node_id]
-        endpoint = node.entities[sub_id]
-        power_status = "OFF" if endpoint.power == 0 else "ON"
+        entity = node.entities[sub_id]
+        power_status = "OFF" if entity.power == 0 else "ON"
         mqtt_dev_state: Union[Dict[str, Union[int, str, bytes, dict, list]], bytes] = {
             "state": power_status
         }
@@ -745,35 +760,35 @@ class MQTTClient:
             mqtt_dev_state = power_status.encode()
 
         else:
-            if endpoint.brightness is not None:
-                mqtt_dev_state["brightness"] = endpoint.brightness
+            if entity.brightness is not None:
+                mqtt_dev_state["brightness"] = entity.brightness
 
-            if endpoint.temperature is not None:
+            if entity.temperature is not None:
                 if node.supports_rgb and (
                     any(
                         [
-                            endpoint.red is not None,
-                            endpoint.green is not None,
-                            endpoint.blue is not None,
+                            entity.red is not None,
+                            entity.green is not None,
+                            entity.blue is not None,
                         ]
                     )
-                    and endpoint.temperature == 254
+                    and entity.temperature == 254
                 ):
                     mqtt_dev_state["color_mode"] = "rgb"
                     mqtt_dev_state["color"] = {
-                        "r": endpoint.red,
-                        "g": endpoint.green,
-                        "b": endpoint.blue,
+                        "r": entity.red,
+                        "g": entity.green,
+                        "b": entity.blue,
                     }
-                elif node.supports_temperature and (0 <= endpoint.temperature <= 100):
+                elif node.supports_temperature and (0 <= entity.temperature <= 100):
                     mqtt_dev_state["color_mode"] = "color_temp"
                     mqtt_dev_state["color_temp"] = self.cync2kelvin(
-                        endpoint.temperature,
+                        entity.temperature,
                         node
                     )
             mqtt_dev_state = json.dumps(mqtt_dev_state).encode()
 
-        return await self.pub_endpoint_state(
+        return await self.pub_entity_state(
             node, mqtt_dev_state, sub_id, from_pkt=from_pkt
         )
 
@@ -948,8 +963,7 @@ class MQTTClient:
                             f"see: https://github.com/baudneo/cync-lan/issues/12 to have this device added"
                         )
                         continue
-                    supported = node_repr.metadata.supported
-                    if not supported:
+                    if not node_repr.metadata.supported:
                         logger.warning(
                             f"{lp} Device '{node_repr.name}' (ID: {node_repr.id} / Type: {node_repr.type}) is not supported, skipping HASS discovery..."
                         )
@@ -1002,10 +1016,10 @@ class MQTTClient:
                         "optimistic": False,
                     }
 
-                    if node_repr.has_multi_endpoints:
+                    if node_repr.has_multi_entities:
                         logger.debug(
-                            f"{lp} Device '{node_repr.name}' (ID: {node_repr.id}) has {len(node_repr.entities)} endpoints, creating "
-                            f"separate HASS entities for each endpoint..."
+                            f"{lp} Device '{node_repr.name}' (ID: {node_repr.id}) has {len(node_repr.entities)} entities, creating "
+                            f"separate HASS entities for each entity..."
                         )
                         for ep_id, ep_state in node_repr.entities.items():
                             cobj_id = f"cync_lan_{unique_id}_{ep_id}"
