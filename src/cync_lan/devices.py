@@ -1661,9 +1661,10 @@ class CyncTCPSession:
                             # Find the TCP device instance and trigger start/stop
                             tcp_pool = g.ncync_server.get_dev_tcp_pool_sync()
                             for tcp_dev in tcp_pool:
-                                if tcp_dev.node.id == self.node.id:
-                                    if payload.upper() == "ON":
-                                        await tcp_dev.start_mitm()
+                                if tcp_dev.node:
+                                    if tcp_dev.node.id == self.node.id:
+                                        if payload.upper() == "ON":
+                                            await tcp_dev.start_mitm()
 
                     elif self.node:
                         if self.mitm_button_added is False:
