@@ -285,6 +285,19 @@ class FanSpeed(StrEnum):
     HIGH = "high"
     MAX = "max"
 
+    def to_perc(self) -> int:
+        """Convert a preset string into a percent expressed as an integer"""
+        if self.value == "off":
+            return 0
+        elif self.value == "low":
+            return 25
+        elif self.value == "medium":
+            return 50
+        elif self.value == "high":
+            return 75
+        else:
+            return 100
+
 
 class   EntityState(BaseModel):
     """

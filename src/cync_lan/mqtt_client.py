@@ -630,15 +630,23 @@ class MQTTClient:
     async def update_fan_speed(
             self,
             node: CyncDevice,
-            speed: str,
+            speed: FanSpeed,
     ) -> bool:
+        """Update the MQTT fan controller state for preset and percent"""
         node.online = True
         if node.is_fan_controller:
-            entity = node.entities.get(0)
-            tpc = f"{self.topic}/status/{node.hass_id}/preset"
-            return await self.pub_entity_state(
-                node, speed.encode(), 0, tpc=tpc
+            tasks = []
+            tasks.append(
+                self.pub_entity_state(
+                    node, speed.encode(), 0, tpc=f"{self.topic}/status/{node.hass_id}/preset"
+                )
             )
+            tasks.append(
+                self.pub_entity_state(
+                    node, str(speed.to_perc()).encode(), 0, tpc=f"{self.topic}/status/{node.hass_id}/percentage"
+                )
+            )
+            await asyncio.gather(*tasks)
         else:
             logger.warning(f"{self.lp} Tried to set fan speed on a device which isnt a fan controller, skipping...")
 

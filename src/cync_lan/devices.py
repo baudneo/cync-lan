@@ -561,6 +561,8 @@ class CyncDevice:
         if tasks:
             await asyncio.gather(*tasks)
 
+
+
     async def set_fan_speed(self, speed: FanSpeed) -> bool:
         """
             Translate a preset fan speed into a Cync brightness value and send it to the device.
@@ -574,23 +576,10 @@ class CyncDevice:
             )
             return False
         try:
-            bri = 0
-            if speed == FanSpeed.OFF:
-                pass
-            elif speed == FanSpeed.LOW:
-                bri = 25
-            elif speed == FanSpeed.MEDIUM:
-                bri = 50
-            elif speed == FanSpeed.HIGH:
-                bri = 75
-            elif speed == FanSpeed.MAX:
-                bri = 100
-            else:
-                logger.error(
-                    f"{self.lp} Invalid fan speed: {speed}, must be one of {list(FanSpeed)}"
-                )
-                return False
-            await self.set_brightness(bri, callback=partial(g.mqtt_client.update_fan_speed, self, speed))
+            await self.set_brightness(
+                speed.to_perc(),
+                callback=partial(g.mqtt_client.update_fan_speed, self, speed)
+            )
         except asyncio.CancelledError as ce:
             raise ce
         except Exception as e:
