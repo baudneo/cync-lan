@@ -1,5 +1,18 @@
-### 0.0.6b10
+### 0.0.6b12
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Add fan controller percentage slider state updates, will snap to quarter points
+  - Percentage is converted to preset:
+    - 0% = OFF
+    - 1-25% = LOW
+    - 26-50% = MEDIUM
+    - 51-75% = HIGH
+    - 76-100% = MAX
+    - 2%, 13% or 23% will snap to 25% and be set to LOW
+
+### 0.0.6b11
+- Fixes for fan controller PRESET state updates; sub_id parameter missing
+
+### 0.0.6b10
 - Fix unbound `tgt_id`
 
 ### 0.0.6b9
