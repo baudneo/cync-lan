@@ -337,7 +337,7 @@ class MQTTClient:
                 return False
             return True
 
-        if extra_data[0] == "preset":
+        elif extra_data[0] == "preset":
             if norm_pl == "off":
                 tasks.append(node.set_fan_speed(FanSpeed.OFF))
             elif norm_pl == "low":
@@ -352,6 +352,17 @@ class MQTTClient:
                 logger.warning(f"{lp} Unknown preset mode: {norm_pl}, skipping...")
                 return False
             return True
+        elif extra_data[0] == "raw_perc":
+            if norm_pl and norm_pl.isnumeric():
+                norm_pl = int(norm_pl)
+                if 0 <= norm_pl <= 100:
+                    tasks.append(node.set_fan_percentage(norm_pl))
+                else:
+                    logger.warning(
+                        f"{lp} |TESTING| payload is incorrect (0-100): {norm_pl}"
+                    )
+            else:
+                logger.warning(f"{lp} |TSTING| payload is incorrect (0-100): {norm_pl}")
 
         return False
 
@@ -646,9 +657,30 @@ class MQTTClient:
                     node, str(speed.to_perc()).encode(), 0, tpc=f"{self.topic}/status/{node.hass_id}/percentage"
                 )
             )
-            await asyncio.gather(*tasks)
+            try:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception as e:
+                logger.debug(f"{lp} Exception during task gathering: {e}")
+            else:
+                return all(results)
         else:
             logger.warning(f"{self.lp} Tried to set fan speed on a device which isnt a fan controller, skipping...")
+        return False
+
+    async def update_fan_percent(
+            self,
+            node: CyncDevice,
+            perc: int,
+    ) -> bool:
+        """Update the MQTT fan controller state for percent"""
+        node.online = True
+        if node.is_fan_controller:
+            return await self.pub_entity_state(
+                    node, perc.encode(), 0, tpc=f"{self.topic}/status/{node.hass_id}/percentage"
+                )
+        else:
+            logger.warning(f"{self.lp} Tried to set fan percent on a device which isnt a fan controller, skipping...")
+        return False
 
     async def update_temperature(
         self, node: CyncDevice, temp: int, sub_id: Optional[int] = None

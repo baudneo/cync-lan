@@ -561,7 +561,30 @@ class CyncDevice:
         if tasks:
             await asyncio.gather(*tasks)
 
-
+    async def set_fan_speed(self, perc: int) -> bool:
+        """
+            Translate a preset fan speed into a Cync brightness value and send it to the device.
+        :param perc:
+        :return:
+        """
+        lp = f"{self.lp}set_fan_perc:"
+        if not self.is_fan_controller:
+            logger.warning(
+                f"{lp} Device '{self.name}' ({self.id}) is not a fan controller, cannot set fan percent"
+            )
+            return False
+        try:
+            await self.set_brightness(
+                perc,
+                callback=partial(g.mqtt_client.update_fan_percent, self, perc)
+            )
+        except asyncio.CancelledError as ce:
+            raise ce
+        except Exception as e:
+            logger.debug(f"{self.lp} Exception occurred while setting fan percent: {e}")
+            return False
+        else:
+            return True
 
     async def set_fan_speed(self, speed: FanSpeed) -> bool:
         """
