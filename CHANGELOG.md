@@ -1,5 +1,9 @@
-### 0.0.6b12
+### 0.0.6b13
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Undocumented fan controller MQTT topic to test step size for speed; `set/raw_perc` topic accepts 0-100
+  - Requires using MQTT publishing software (MQTT explorer, etc.) to send the payload, no entities in HASS UI 
+
+### 0.0.6b12
 - Add fan controller percentage slider state updates, will snap to quarter points
   - Percentage is converted to preset:
     - 0% = OFF
