@@ -1,5 +1,8 @@
-### 0.0.6b13
+### 0.0.6b14
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Rename dupe method: `set_fan_speed` -> `set_fan_percentage`
+
+### 0.0.6b13
 - Undocumented fan controller MQTT topic to test step size for speed; `set/raw_perc` topic accepts 0-100
   - Requires using MQTT publishing software (MQTT explorer, etc.) to send the payload, no entities in HASS UI 
 
