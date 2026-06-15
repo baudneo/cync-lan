@@ -561,7 +561,7 @@ class CyncDevice:
         if tasks:
             await asyncio.gather(*tasks)
 
-    async def set_fan_speed(self, perc: int) -> bool:
+    async def set_fan_percentage(self, perc: int) -> bool:
         """
             Translate a preset fan speed into a Cync brightness value and send it to the device.
         :param perc:
