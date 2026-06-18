@@ -1,5 +1,8 @@
-### 0.0.6b14
+### 0.0.6b15
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Cast int to str in order to encode UTF-8 in `set_fan_percentage`
+
+### 0.0.6b14
 - Rename dupe method: `set_fan_speed` -> `set_fan_percentage`
 
 ### 0.0.6b13
