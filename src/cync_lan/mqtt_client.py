@@ -676,7 +676,7 @@ class MQTTClient:
         node.online = True
         if node.is_fan_controller:
             return await self.pub_entity_state(
-                    node, perc.encode(), 0, tpc=f"{self.topic}/status/{node.hass_id}/percentage"
+                    node, str(perc).encode(), 0, tpc=f"{self.topic}/status/{node.hass_id}/percentage"
                 )
         else:
             logger.warning(f"{self.lp} Tried to set fan percent on a device which isnt a fan controller, skipping...")
