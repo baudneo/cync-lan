@@ -1,5 +1,8 @@
-### 0.0.6b15
+### 0.0.6b16
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Properly catch and parse fan controller state changes, was missing physical button presses. Thanks [@SamHartleyFixes](https://github.com/baudneo/cync-lan/commits?author=SamHartleyFixes)
+
+### 0.0.6b15
 - Cast int to str in order to encode UTF-8 in `set_fan_percentage`
 
 ### 0.0.6b14
