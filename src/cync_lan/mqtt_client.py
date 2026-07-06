@@ -796,7 +796,42 @@ class MQTTClient:
             "state": power_status
         }
 
-        if node.is_plug or node.is_switch:
+        if node.is_fan_controller:
+            # A fan controller is also an is_switch, so it MUST be handled before the
+            # generic switch branch below. The generic branch only publishes ON/OFF and
+            # drops the device-reported speed, so physical/external speed changes never
+            # reach HA. Mirror the percentage/preset publishing done by
+            # update_fan_speed/update_fan_percent, but sourced from the device status.
+            perc = entity.brightness if entity.brightness is not None else 0
+            perc = max(0, min(100, perc))
+            # Bucket to a FanSpeed preset using the SAME thresholds as _queue_fan_extra.
+            if perc == 0:
+                speed = FanSpeed.OFF
+            elif perc <= 25:
+                speed = FanSpeed.LOW
+            elif perc <= 50:
+                speed = FanSpeed.MEDIUM
+            elif perc <= 75:
+                speed = FanSpeed.HIGH
+            else:
+                speed = FanSpeed.MAX
+            await self.pub_entity_state(
+                node,
+                str(perc).encode(),
+                0,
+                from_pkt=from_pkt,
+                tpc=f"{self.topic}/status/{node.hass_id}/percentage",
+            )
+            await self.pub_entity_state(
+                node,
+                speed.encode(),
+                0,
+                from_pkt=from_pkt,
+                tpc=f"{self.topic}/status/{node.hass_id}/preset",
+            )
+            mqtt_dev_state = power_status.encode()
+
+        elif node.is_plug or node.is_switch:
             mqtt_dev_state = power_status.encode()
 
         else:
