@@ -1,5 +1,10 @@
-### 0.0.6b16
+### 0.0.6b17
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Update Cync cloud API OTP submission JSON formatting
+  - Passwords > 16 chars are truncated to 16 chars
+  - OTP code is formatted as a string; casting string to int class will strip leading zeros
+
+### 0.0.6b16
 - Properly catch and parse fan controller state changes, was missing physical button presses. Thanks [@SamHartleyFixes](https://github.com/baudneo/cync-lan/commits?author=SamHartleyFixes)
 
 ### 0.0.6b15
