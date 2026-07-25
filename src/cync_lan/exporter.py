@@ -30,7 +30,7 @@ logger = logging.getLogger(CYNC_LOG_NAME)
 
 
 class OTPRequest(BaseModel):
-    otp: int
+    otp: str
 
 
 app = FastAPI()
