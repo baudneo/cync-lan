@@ -154,29 +154,30 @@ class CyncCloudAPI:
             {"refresh_token": self.token_cache.refresh_token},
         )
 
-    async def send_otp(self, otp_code: int) -> bool:
+    async def send_otp(self, otp_code: str) -> bool:
+        """Make sure otp is string"""
         lp = f"{self.lp}:send_otp:"
         await self._check_session()
         if not otp_code:
             logger.error("OTP code must be provided")
             return False
-        elif not isinstance(otp_code, int):
-            try:
-                otp_code = int(otp_code)
-            except ValueError:
-                logger.error(f"{lp} OTP code must be an integer, got {type(otp_code)}")
-                return False
+        elif not isinstance(otp_code, str):
+            otp_code = str(otp_code)
 
+        if not otp_code.isnumeric():
+            logger.error(f"OTP code must be numeric")
         api_auth_url = f"{CYNC_API_BASE}user_auth/two_factor"
+        resource = "".join(random.choices(string.ascii_letters + string.digits, k=16))
         auth_data = {
             "corp_id": CYNC_CORP_ID,
             "email": CYNC_ACCOUNT_USERNAME,
             "password": CYNC_ACCOUNT_PASSWORD,
             "two_factor": otp_code,
-            "resource": "".join(random.choices(string.ascii_lowercase, k=16)),
+            "resource": resource,
         }
         logger.debug(
-            f"{lp} Sending OTP code: {otp_code} to Cync Cloud API for authentication"
+            f"{lp} Sending OTP code: {otp_code} (class: {type(otp_code)}) to Cync Cloud API for "
+            f"authentication with resource: {resource}"
         )
         return await self._send_tkn_post(api_auth_url, auth_data)
 
