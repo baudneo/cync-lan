@@ -121,7 +121,7 @@
         const response = await fetch(`./api/export/otp/submit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ otp: parseInt(otp, 10) })
+          body: JSON.stringify({ otp: otp })
         });
         const result = await response.json();
         if (response.ok && result.success) {
