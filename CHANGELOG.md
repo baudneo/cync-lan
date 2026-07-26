@@ -1,5 +1,10 @@
-### 0.0.6b17
+### 0.0.6b18
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Add domain to `default_entity_id` in MQTT discovery payload
+- Bypass cloud api refresh token logic for now
+- await `cync_lan.stop()`
+
+### 0.0.6b17
 - Update Cync cloud API OTP submission JSON formatting
   - Passwords > 16 chars are truncated to 16 chars
   - OTP code is formatted as a string; casting string to int class will strip leading zeros
