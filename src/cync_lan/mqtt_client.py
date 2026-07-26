@@ -923,6 +923,7 @@ class MQTTClient:
             dev_type = "switch"
             if device.metadata.capabilities.fan:
                 dev_type = "fan"
+        registry_struct["default_entity_id"] = f"{dev_type}.{registry_struct["default_entity_id"]}"
         if dev_type == "light":
             registry_struct["supported_color_modes"] = []
             registry_struct.update({"brightness_scale": 100})
