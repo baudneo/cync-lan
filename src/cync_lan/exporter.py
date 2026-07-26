@@ -144,7 +144,7 @@ async def restart():
                 return False, f"An unexpected error occurred: {e}"
     else:
         logger.info(f"{lp} Trying: cync_lan.stop()...")
-        g.cync_lan.stop()
+        await g.cync_lan.stop()
 
 
 @app.post("/api/export/otp/submit")
