@@ -106,11 +106,14 @@ class CyncCloudAPI:
             logger.debug(f"{lp} No cached token found, requesting OTP...")
             return False
         if self.token_cache.expires_at < datetime.datetime.now(datetime.UTC):
+            # await self._check_session()
             # try refreshing first
-            succ = await self.refresh_access_token()
-            if not succ:
-                logger.debug(f"{lp} Token expired, requesting OTP...")
-            return succ
+            # succ = await self.refresh_access_token()
+            # if not succ:
+            #     logger.debug(f"{lp} Token expired, requesting OTP...")
+            # return succ
+            logger.debug(f"{lp} Token expired, requesting OTP...")
+            return False
 
         else:
             logger.debug(f"{lp} Token is valid, using cached token")
@@ -190,8 +193,8 @@ class CyncCloudAPI:
             resp.raise_for_status()
             iat = datetime.datetime.now(datetime.UTC)
             token_data = await resp.json()
-        except aiohttp.ClientResponseError as e:
-            logger.error(f"Failed to authenticate: {e}")
+        except aiohttp.ClientResponseError as cre:
+            logger.error(f"Failed to authenticate: {cre}")
             return False
         except json.JSONDecodeError as je:
             logger.error(f"Failed to decode JSON: {je}")
@@ -199,8 +202,8 @@ class CyncCloudAPI:
         except KeyError as ke:
             logger.error(f"Failed to get key from JSON: {ke}")
             return False
-        except Exception:
-            logger.warning(f"{lp} Failed to refresh credentials")
+        except Exception as e:
+            logger.exception(f"Failed to refresh credentials")
             return False
         else:
             # add issued_at to the token data for computing the expiration datetime
