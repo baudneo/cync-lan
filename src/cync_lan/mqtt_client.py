@@ -1100,30 +1100,32 @@ class MQTTClient:
                             f"separate HASS entities for each entity..."
                         )
                         for ep_id, ep_state in node_repr.entities.items():
+                            cers = dict(entity_registry_struct)
                             cobj_id = f"cync_lan_{unique_id}_{ep_id}"
                             cdevice_uuid = (
                                 f"{node_repr.hass_id}-{ep_id}"  # home_id-device_id-ep_id
                             )
-                            entity_registry_struct["command_topic"] = (
+                            cers["command_topic"] = (
                                 "{0}/set/{1}".format(self.topic, cdevice_uuid)
                             )
-                            entity_registry_struct["state_topic"] = (
+                            cers["state_topic"] = (
                                 "{0}/status/{1}".format(self.topic, cdevice_uuid)
                             )
-                            entity_registry_struct["avty_t"] = (
+                            cers["avty_t"] = (
                                 "{0}/availability/{1}".format(self.topic, cdevice_uuid)
                             )
-                            entity_registry_struct["object_id"] = cobj_id
-                            entity_registry_struct["default_entity_id"] = cobj_id
-                            entity_registry_struct["name"] = ep_state.name
-                            entity_registry_struct["unique_id"] = (
+                            cers["object_id"] = cobj_id
+                            cers["default_entity_id"] = cobj_id
+                            cers["name"] = ep_state.name
+                            cers["unique_id"] = (
                                 f"{node_repr.home_id}_{node_repr.id}_{ep_id}"
                             )
                             pub_tasks.append(
                                 self._publish_entity(
-                                    node_repr, entity_registry_struct, cdevice_uuid
+                                    node_repr, cers, cdevice_uuid
                                 )
                             )
+                            del cers
                     else:
                         # single entity for a single device with no children
                         pub_tasks.append(
