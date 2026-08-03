@@ -1,5 +1,10 @@
-### 0.0.6b18
+### 0.0.6b19
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Better logic for device discovery
+  - Newer versions of HASS use `default_entity_id` and will append a `_X` (`cync_lan_1234567890_1_2`) to the entity_id if we dont delete the existing device before sending a new discovery payload
+  - `asyncio.gather()` the device discovery payloads
+
+### 0.0.6b18
 - Add domain to `default_entity_id` in MQTT discovery payload
 - Bypass cloud api refresh token logic for now
 - await `cync_lan.stop()`
