@@ -913,7 +913,7 @@ class MQTTClient:
         return False
 
     async def _publish_entity(
-        self, device: CyncDevice, registry_struct: dict, entity_uuid: str
+            self, device: CyncDevice, registry_struct: dict, entity_uuid: str
     ):
         tpc_str_template = "{0}/{1}/{2}/config"
         dev_type = "light"
@@ -923,7 +923,7 @@ class MQTTClient:
             dev_type = "switch"
             if device.metadata.capabilities.fan:
                 dev_type = "fan"
-        registry_struct["default_entity_id"] = f"{dev_type}.{registry_struct["default_entity_id"]}"
+        registry_struct["default_entity_id"] = f"{dev_type}.{registry_struct['default_entity_id']}"
         if dev_type == "light":
             registry_struct["supported_color_modes"] = []
             registry_struct.update({"brightness_scale": 100})
@@ -973,21 +973,22 @@ class MQTTClient:
             )
 
         tpc = tpc_str_template.format(self.ha_topic, dev_type, entity_uuid)
+
         try:
-            _ = (
+            if not MQTT_DEAD:
+                # delete existing device in preperation for new device, seems to fix the entity_id '_x' issue
+                await self.client.publish(tpc, b"", qos=0, retain=False)
+                await asyncio.sleep(0.1)
                 await self.client.publish(
                     tpc,
                     json.dumps(registry_struct).encode(),
                     qos=0,
                     retain=False,
                 )
-                if not MQTT_DEAD
-                else None
-            )
 
         except Exception as e:
             logger.error(
-                "%s - Unable to publish mqtt message... skipped -> %s" % (lp, e)
+                "%s - Unable to publish mqtt message... skipped -> %s" % (self.lp, e)
             )
 
     def _get_device_registry(self, node: CyncDevice):
@@ -1030,6 +1031,7 @@ class MQTTClient:
             logger.info(f"{lp} Starting device discovery...")
             await self.create_bridge_device()
             try:
+                pub_tasks = []
                 for node_repr in g.ncync_server.node_devices.values():
                     device_uuid = node_repr.hass_id
                     if node_repr.metadata is None:
@@ -1117,20 +1119,25 @@ class MQTTClient:
                             entity_registry_struct["unique_id"] = (
                                 f"{node_repr.home_id}_{node_repr.id}_{ep_id}"
                             )
-                            await self._publish_entity(
-                                node_repr, entity_registry_struct, cdevice_uuid
+                            pub_tasks.append(
+                                self._publish_entity(
+                                    node_repr, entity_registry_struct, cdevice_uuid
+                                )
                             )
                     else:
                         # single entity for a single device with no children
-                        await self._publish_entity(
-                            node_repr, entity_registry_struct, device_uuid
+                        pub_tasks.append(
+                            self._publish_entity(
+                                node_repr, entity_registry_struct, device_uuid
+                            )
                         )
                     if node_repr.metadata and node_repr.metadata.type == DeviceClassification.LIGHT and node_repr.metadata.capabilities.dynamic:
                         # todo: segmented lights; can be controlled as a whole and/or per segment?
                         #  are segment lights only branded as 'dynamic', what about a music effects button?
                         logger.debug(f"{lp} This device has been identified as a 'dynamic' light...")
                         pass
-
+                if pub_tasks:
+                    await asyncio.gather(*pub_tasks, return_exceptions=True)
 
             except aiomqtt.MqttCodeError as mqtt_code_exc:
                 logger.warning(
