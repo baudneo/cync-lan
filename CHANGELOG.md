@@ -1,5 +1,8 @@
-### 0.0.6b20
+### 0.0.6b21
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- [Fix storage directory creation logic]([https://github.com/baybrewer](https://github.com/baudneo/hass-addons/issues/16)). Thanks to [@baybrewer](https://github.com/baybrewer)
+
+### 0.0.6b20
 - Fix multi-entity device discovery; concurrency issue
 
 ### 0.0.6b19
