@@ -289,7 +289,6 @@ def check_for_uuid():
     lp = "check_uuid:"
     # create dir for cync_mesh.yaml and variable data if it does not exist
     persistent_dir = Path(CYNC_CONFIG_DIR).expanduser().resolve()
-    os.chmod(persistent_dir, 0o777)
     if not persistent_dir.exists():
         try:
             persistent_dir.mkdir(parents=True, exist_ok=True)
@@ -301,6 +300,7 @@ def check_for_uuid():
                 f"{lp} Failed to create persistent directory: {e} - Exiting..."
             )
             sys.exit(1)
+    os.chmod(persistent_dir, 0o777)
     uuid_file = Path(CYNC_UUID_PATH).expanduser().resolve()
     uuid_from_disk = ""
     create_uuid = False
