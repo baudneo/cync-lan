@@ -58,6 +58,8 @@ class LightCharacteristics:
     max_kelvin: Optional[Annotated[int, Field(ge=2000, le=7000)]] = None
     lumens: Optional[Annotated[int, Field(ge=10)]] = None
     cri: Optional[Annotated[int, Field(ge=5, le=100)]] = None
+    wattage: Optional[Annotated[float, Field(ge=0.01, le=5000.0)]] = None
+
 
 
 @dataclass
@@ -119,7 +121,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Tunable White A19 Bulb",
         model_id=None,
-        characteristics=LightCharacteristics(lumens=800),
+        characteristics=LightCharacteristics(lumens=800, wattage=9.5),
         capabilities=LightCapabilities(tunable_white=True),
     ),
     6: DeviceTypeInfo(
@@ -145,7 +147,7 @@ device_type_map = {
         model_name="Soft White A19 Bulb",
         model_id=None,
         capabilities=LightCapabilities(),
-        characteristics=LightCharacteristics(lumens=800, min_kelvin=2700),
+        characteristics=LightCharacteristics(lumens=800, min_kelvin=2700, wattage=9.5),
     ),
     10: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -176,20 +178,21 @@ device_type_map = {
         model_name="White Dimmable A19 Bulb (BTLE only)",
         model_id="CLED199L2",
         capabilities=LightCapabilities(),
-        characteristics=LightCharacteristics(min_kelvin=2700, lumens=760),
+        characteristics=LightCharacteristics(min_kelvin=2700, lumens=760, wattage=9.5),
     ),
     18: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="White Dimmable A19 Bulb (BTLE only)",
         model_id="CLED199L2",
         capabilities=LightCapabilities(),
-        characteristics=LightCharacteristics(min_kelvin=2700, lumens=760),
+        characteristics=LightCharacteristics(min_kelvin=2700, lumens=760, wattage=9.5),
     ),
     19: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         protocol=DeviceProtocol(TCP=True),
         model_name="Tunable White A19 Bulb",
         capabilities=LightCapabilities(tunable_white=True),
+        characteristics=LightCharacteristics(wattage=9.5)
     ),
     20: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -202,14 +205,14 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="C by GE Full Color A19 Bulb (BTLE only)",
         model_id="CLEDA1911C2",
-        characteristics=LightCharacteristics(lumens=760),
+        characteristics=LightCharacteristics(lumens=760, wattage=9.5),
         capabilities=LightCapabilities(color=True, tunable_white=True),
     ),
     22: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="C by GE Full Color BR30 Bulb (BTLE only)",
         model_id="CLEDR3010C2",
-        characteristics=LightCharacteristics(lumens=700),
+        characteristics=LightCharacteristics(lumens=700, wattage=9.5),
         capabilities=LightCapabilities(color=True, tunable_white=True),
     ),
     23: DeviceTypeInfo(
@@ -228,7 +231,7 @@ device_type_map = {
         model_name="C by GE Tunable White BR30 Bulb (BTLE only)",
         model_id="CLEDR309S2",
         characteristics=LightCharacteristics(
-            lumens=800, min_kelvin=2000, max_kelvin=7000
+            lumens=800, min_kelvin=2000, max_kelvin=7000, wattage=9.5
         ),
         capabilities=LightCapabilities(tunable_white=True),
     ),
@@ -248,7 +251,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="C by GE Full Color A19 Bulb (BTLE only)",
         model_id="CLEDA1911C2",
-        characteristics=LightCharacteristics(lumens=760),
+        characteristics=LightCharacteristics(lumens=760, wattage=9.5),
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(color=True, tunable_white=True),
     ),
@@ -256,7 +259,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="C by GE Full Color A19 Bulb (BTLE only)",
         model_id="CLEDA1911C2",
-        characteristics=LightCharacteristics(lumens=800),
+        characteristics=LightCharacteristics(lumens=800, wattage=9.5),
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(color=True, tunable_white=True),
     ),
@@ -305,22 +308,30 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ Full Color Under Cabinet Light - 12 Inch",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(color=True, tunable_white=True),
+        capabilities=LightCapabilities(color=True, tunable_white=True, wattage=13.0),
         characteristics=LightCharacteristics(lumens=750),
     ),
     42: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ Full Color Under Cabinet Light - 18 Inch",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(color=True, tunable_white=True),
+        capabilities=LightCapabilities(color=True, tunable_white=True, wattage=19.0),
         characteristics=LightCharacteristics(lumens=1150),
     ),
     43: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ Full Color Under Cabinet Light - 24 Inch",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(color=True, tunable_white=True),
+        capabilities=LightCapabilities(color=True, tunable_white=True, wattage=24.0),
         characteristics=LightCharacteristics(lumens=1500),
+    ),
+    46: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name='Reveal Full Color 4" Recessed Downlight',
+        model_info="CFIXRSCR4CRVD",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=LightCapabilities(color=True, tunable_white=True),
+        characteristics=LightCharacteristics(wattage=13.0)
     ),
     47: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -328,6 +339,7 @@ device_type_map = {
         model_info="CFIXRSCR6CRVD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(color=True, tunable_white=True),
+        characteristics=LightCharacteristics(wattage=16.0)
     ),
     48: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -436,6 +448,7 @@ device_type_map = {
         model_info="CSTR16CDID",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
+        characteristics=LightCharacteristics(wattage=24.0)
     ),
     72: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -443,17 +456,27 @@ device_type_map = {
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
         characteristics=LightCharacteristics(
-            lumens=1600, min_kelvin=2000, max_kelvin=7000, cri=80
+            lumens=1600, min_kelvin=2000, max_kelvin=7000, cri=80, wattage=24.0
+        ),
+    ),
+    75: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Full Color Dynamic Effects 24' Cafe` Lights",
+        model_info="CCF24CDOD",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=LightCapabilities(tunable_white=True, color=True, dynamic=True),
+        characteristics=LightCharacteristics(
+            lumens=130, min_kelvin=2000, max_kelvin=7000, wattage=6.5
         ),
     ),
     76: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
-        model_name="Full Color Dynamic Effects Cafe` Lights",
+        model_name="Full Color Dynamic Effects 48' Cafe` Lights",
         model_info="CCF48CDOD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True, dynamic=True),
         characteristics=LightCharacteristics(
-            lumens=130, min_kelvin=2000, max_kelvin=7000
+            lumens=130, min_kelvin=2000, max_kelvin=7000, wattage=10.0
         ),
     ),
     80: DeviceTypeInfo(
@@ -462,6 +485,7 @@ device_type_map = {
         protocol=DeviceProtocol(TCP=True),
         opcodes=OpcodeFamily(sol_lamp=True),
         capabilities=LightCapabilities(tunable_white=True),
+        characteristics=LightCharacteristics(lumens=550, wattage=25.0, cri=80, min_kelvin=2000, max_kelvin=6500)
     ),
     81: DeviceTypeInfo(
         type=DeviceClassification.SWITCH,
@@ -491,6 +515,7 @@ device_type_map = {
         model_info="CLEDA199CDRV",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
+        characteristics=LightCharacteristics(wattage=9.5)
     ),
     113: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -518,7 +543,7 @@ device_type_map = {
         model_id="CLEDA199LD1",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(),
-        characteristics=LightCharacteristics(lumens=800, cri=90, min_kelvin=2700),
+        characteristics=LightCharacteristics(lumens=800, cri=90, min_kelvin=2700, wattage=9.5),
     ),
     129: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -536,7 +561,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Full Color A19 Bulb",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(tunable_white=True, color=True),
+        capabilities=LightCapabilities(tunable_white=True, color=True, wattage=9.5),
     ),
     132: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -548,7 +573,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Full Color LED Light Strip Controller",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(tunable_white=True, color=True),
+        capabilities=LightCapabilities(tunable_white=True, color=True, wattage=12.0),
     ),
     135: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -567,12 +592,13 @@ device_type_map = {
         model_name="Full Color A19 Bulb",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
+        characteristics=LightCharacteristics(wattage=9.5)
     ),
     138: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color BR30 Floodlight",
         characteristics=LightCharacteristics(
-            lumens=750, min_kelvin=2000, max_kelvin=7000, cri=90
+            lumens=750, min_kelvin=2000, max_kelvin=7000, cri=90, wattage=9.5
         ),
         model_id="CLEDR309CD1",
         protocol=DeviceProtocol(TCP=True),
@@ -587,10 +613,11 @@ device_type_map = {
     140: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Outdoor PAR38 Floodlight",
-        characteristics=LightCharacteristics(lumens=1300),
+        characteristics=LightCharacteristics(lumens=1300, cri=90, wattage=15.0, min_kelvin=2200, max_kelvin=6500),
         model_id="CLEDP3815CD1",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
+
     ),
     141: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -625,7 +652,7 @@ device_type_map = {
     146: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Edison ST19 Bulb",
-        characteristics=LightCharacteristics(lumens=500),
+        characteristics=LightCharacteristics(lumens=500, wattage=6.5),
         model_id="CLEDST196CDGS",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
@@ -633,7 +660,7 @@ device_type_map = {
     147: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Edison G25 Bulb",
-        characteristics=LightCharacteristics(lumens=500),
+        characteristics=LightCharacteristics(lumens=500, wattage=6.5),
         model_id="CLEDG256CDGS",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
@@ -642,23 +669,20 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="White Edison ST19 Bulb",
         protocol=DeviceProtocol(TCP=True),
-        characteristics=LightCharacteristics(min_kelvin=2700),
-        capabilities=LightCapabilities(),
+        characteristics=LightCharacteristics(min_kelvin=2700, wattage=6.5),
     ),
     151: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Soft White Decorative Candle Light",
         model_id="CLEDBM6LDGF",
         protocol=DeviceProtocol(TCP=True),
-        characteristics=LightCharacteristics(lumens=500, min_kelvin=2700, cri=90),
-        capabilities=LightCapabilities(),
+        characteristics=LightCharacteristics(lumens=500, min_kelvin=2700, cri=90, wattage=6.0),
     ),
     152: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ White A19 Bulb",
         protocol=DeviceProtocol(TCP=True),
-        characteristics=LightCharacteristics(min_kelvin=2700),
-        capabilities=LightCapabilities(),
+        characteristics=LightCharacteristics(min_kelvin=2700, wattage=9.5),
     ),
     153: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -735,7 +759,7 @@ device_type_map = {
     ),
     169: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
-        characteristics=LightCharacteristics(lumens=760),
+        characteristics=LightCharacteristics(lumens=760, cri=90, min_kelvin=2000, max_kelvin=7000, wattage=14.0),
         model_id="CFIXCNLR4CRVD",
         model_name="Reveal HD+ Full Color 4 Inch Wafer Downlight",
         protocol=DeviceProtocol(TCP=True),
