@@ -315,6 +315,7 @@ class   EntityState(BaseModel):
         green (int, optional): the green state of the entity. Defaults to 0.
         blue (int, optional): the blue state of the entity. Defaults to 0.
         recently_seen (int, optional): has reported its state to BTLE mesh lately. Defaults to 1.
+        motion (int, optional): motion from its internal sensor
     """
 
     name: str = None

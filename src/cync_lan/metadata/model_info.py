@@ -13,6 +13,7 @@ class DeviceClassification(StrEnum):
     THERMOSTAT = "thermostat"
     BRIDGE = "bridge"
     UNKNOWN = "unknown"
+    SENSOR = "sensor"
 
 
 @dataclass
@@ -30,6 +31,7 @@ class SwitchCapabilities(LightCapabilities):
     dimmable = False
     fan: bool = False
     plug: bool = False
+    motion: bool = False
 
 
 @dataclass
@@ -288,7 +290,7 @@ device_type_map = {
         model_name="Dimmer Switch with Motion and Ambient Light",
         model_id="CSWDMOCBWF1",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
+        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True, motion=True),
     ),
     39: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -353,7 +355,7 @@ device_type_map = {
         model_name="C by GE (C Start Smart) Dimmer Switch with Motion and Ambient Light",
         model_id="CSWDMOCBWF1",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
+        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True, motion=True),
     ),
     51: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -384,7 +386,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Dimmable Motion Light Switch",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
+        capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True, motion=True),
     ),
     57: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -508,6 +510,12 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Tunable White Light (Unknown)",
         capabilities=LightCapabilities(tunable_white=True),
+    ),
+    96: DeviceTypeInfo(
+        type=DeviceClassification.SENSOR,
+        model_name="Wire-Free Motion Sensor",
+        protocol=DeviceProtocol(TCP=False), # BTLE only
+        capabilities=SwitchCapabilities(motion=True),
     ),
     107: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
