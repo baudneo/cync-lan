@@ -329,6 +329,7 @@ class   EntityState(BaseModel):
     green: int = 0
     blue: int = 0
     recently_seen: int = 1
+    motion: int = 0
 
     def __str__(self):
         return (

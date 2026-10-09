@@ -1399,9 +1399,25 @@ class CyncTCPSession:
                 for i in range(0, packet_length, struct_len):
                     extracted = packet_data[i : i + struct_len]
                     if len(extracted) == struct_len:
-                        status_struct = extracted[3:10]
-                        status_struct += b"\x01"
-                        extractions.append((extracted.hex(" "), list(status_struct)))
+                        # 02 00 02 = motion broadcast
+                        if extracted[:3] == b"\x02\x00\x02":
+                            motion_state = extracted[4]
+                            if self.node:
+                                e_state = self.node.entities.get(0) or next(iter(self.node.entities.values()))
+
+                                # Update state and trigger MQTT broadcast
+                                if getattr(e_state, "motion", None) != motion_state:
+                                    e_state.motion = motion_state
+                                    e_state.recently_seen = 1
+                                    await self.node.handle_entity_update(e_state, from_pkt="0x43_motion")
+
+                                logger.debug(f"{lp} Extracted MOTION state: {motion_state} for '{self.node.name}'")
+
+                        else:
+                            # Standard power/brightness broadcast logging
+                            status_struct = extracted[3:10]
+                            status_struct += b"\x01"
+                            extractions.append((extracted.hex(" "), list(status_struct)))
 
                 if CYNC_RAW:
                     logger.debug(
@@ -1448,6 +1464,8 @@ class CyncTCPSession:
                     await self._parse_83_device_state(
                         packet_data, checksum, calc_chksum, lp
                     )
+                elif ctrl_bytes == b"\xfa\x54":
+                    await self._parse_83_motion_state(packet_data, lp)
                 elif ctrl_bytes == b"\xfa\xd9":
                     # seems to be some sort of bulk status msg. seen when updating devices firmware,
                     # it seemed to broadcast each devices percentage complete status
@@ -1510,6 +1528,12 @@ class CyncTCPSession:
                 f"{lp} Received internal STATUS for unknown device [group/room?, safe to ignore]: {parsed_state}"
             )
             return
+        motion_val = 0
+        # type 96 recently_seen is actually the motion state
+        if cync_device and cync_device.type == 96:
+            parsed_state.motion = recently_seen
+            recently_seen = 1
+
 
         if cync_device.type in MULTI_ENDPOINT_TYPES:
             if cync_device.type == 67:
@@ -1545,6 +1569,24 @@ class CyncTCPSession:
         #
         # if calc_chksum != checksum:
         #     pass
+
+    async def _parse_83_motion_state(self, packet_data: bytes, lp: str):
+        if len(packet_data) < 16:
+            return
+
+        dev_id = packet_data[9]
+        motion_flag = packet_data[15]
+
+        cync_device = g.ncync_server.node_devices.get(dev_id)
+        if not cync_device:
+            return
+
+        e_state = cync_device.entities.get(0, next(iter(cync_device.entities.values())))
+        e_state.motion = motion_flag
+        e_state.recently_seen = 1
+
+        await cync_device.handle_entity_update(e_state, from_pkt="0x83_fa54")
+
 
     async def _handle_73_mesh_control(
         self, packet_data: Optional[bytes], queue_id: bytes, msg_id: bytes, lp: str

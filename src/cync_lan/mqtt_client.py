@@ -863,6 +863,15 @@ class MQTTClient:
                     )
             mqtt_dev_state = json.dumps(mqtt_dev_state).encode()
 
+        if hasattr(node.metadata.capabilities, "motion") and node.metadata.capabilities.motion:
+            motion_payload = b"ON" if entity.motion else b"OFF"
+            await self.pub_entity_state(
+                node,
+                motion_payload,
+                sub_id,
+                from_pkt=from_pkt,
+                tpc=f"{self.topic}/status/{node.hass_id}/motion",
+            )
         return await self.pub_entity_state(
             node, mqtt_dev_state, sub_id, from_pkt=from_pkt
         )
@@ -1138,6 +1147,23 @@ class MQTTClient:
                         #  are segment lights only branded as 'dynamic', what about a music effects button?
                         logger.debug(f"{lp} This device has been identified as a 'dynamic' light...")
                         pass
+                    # motion capable?
+                    if hasattr(node_repr.metadata.capabilities, "motion") and node_repr.metadata.capabilities.motion:
+                        motion_unique_id = f"{unique_id}_motion"
+                        motion_registry_struct = {
+                            "platform": "binary_sensor",
+                            "device_class": "occupancy",
+                            "name": f"{node_repr.name} Occupancy",
+                            "state_topic": f"{self.topic}/status/{device_uuid}/motion",
+                            "unique_id": motion_unique_id,
+                            "device": device_registry_struct,
+                        }
+                        pub_tasks.append(
+                            self.publish_json_msg(
+                                f"{self.ha_topic}/binary_sensor/{motion_unique_id}/config",
+                                motion_registry_struct
+                            )
+                        )
                 if pub_tasks:
                     await asyncio.gather(*pub_tasks, return_exceptions=True)
 
