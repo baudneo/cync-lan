@@ -477,7 +477,7 @@ class CyncDevice:
                     )
                 return True
             else:
-                logger.debug(f"{self.lp} recently seeen: {is_recent} but its marked as shouldnt be offline: "
+                logger.debug(f"{self.lp} recently seen: {is_recent} but its marked as shouldnt be offline: "
                              f"stale state count {self.num_late_states} / num tcp nodes {tcp_count}\nTCP pool: {tcp_pool}")
 
         if not self.online:
