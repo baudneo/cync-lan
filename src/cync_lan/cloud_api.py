@@ -439,7 +439,6 @@ class CyncCloudAPI:
                         "displayName",
                         "mac",
                         "deviceType",
-                        "wifiMac",
                         "firmwareVersion",
                     )
                 ):
@@ -448,7 +447,7 @@ class CyncCloudAPI:
                     )
                     continue
                 new_device: dict = {}
-                wifi_mac = str(raw_device["wifiMac"])
+                wifi_mac = str(raw_device.get("wifiMac", "00:01:02:03:04:05"))
                 bt_mac = str(raw_device["mac"])
                 dev_name = str(raw_device["displayName"])
                 dev_type = int(raw_device["deviceType"])
