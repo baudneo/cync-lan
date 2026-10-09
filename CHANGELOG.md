@@ -1,5 +1,11 @@
-### 0.0.6b21
+### 0.0.7b1
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- [Implement motion sensor state tracking](https://github.com/baudneo/cync-lan/issues/38); thanks [Proxy-alt](https://github.com/Proxy-alt)
+  - Wireless motion sensors are tested by Proxy-alt (I think?); 0x83 packets
+  - My own testing for wired motion switch type 37: Switch must be direct connected to CyncLAN (via TCP) for it to send its motion data (0x43); it is not broadcast over the BTLE mesh
+- Add `wattage` info in preparation for PowerCalc profiles; input needed, I inferred wattage for devices I dont own 
+
+### 0.0.6b21
 - [Fix storage directory creation logic]([https://github.com/baybrewer](https://github.com/baudneo/hass-addons/issues/16)). Thanks to [@baybrewer](https://github.com/baybrewer)
 
 ### 0.0.6b20
