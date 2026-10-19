@@ -273,7 +273,7 @@ class nCyncServer:
         try:
             if existing_device is not None:
                 if existing_device.allowed_to_connect is False:
-                    can_connect = existing_device.can_connect()
+                    can_connect = await existing_device.can_connect()
                     if can_connect is False:
                         del existing_device
                         existing_device = None
