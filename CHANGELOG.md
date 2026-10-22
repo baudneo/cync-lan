@@ -1,5 +1,8 @@
-### 0.0.7b1
+### 0.0.7b2
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
+- Fix devices not being marked offline when vote threshold reached; thanks [crdson93](https://github.com/crdson93)
+
+### 0.0.7b1
 - [Implement motion sensor state tracking](https://github.com/baudneo/cync-lan/issues/38); thanks [Proxy-alt](https://github.com/Proxy-alt)
   - Wireless motion sensors are tested by Proxy-alt (I think?); 0x83 packets
   - My own testing for wired motion switch type 37: Switch must be direct connected to CyncLAN (via TCP) for it to send its motion data (0x43); it is not broadcast over the BTLE mesh
