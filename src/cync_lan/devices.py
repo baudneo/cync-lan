@@ -454,6 +454,7 @@ class CyncDevice:
         if not is_recent:
             if self.metadata is not None:
                 if not self.metadata.supported:
+                    # unsupported devices are not parsed
                     return False
 
             logger.debug(f"{self.lp}{sub_fmt_str} seems to have STALE data (no BT mesh activity)")
@@ -479,6 +480,7 @@ class CyncDevice:
             else:
                 logger.debug(f"{self.lp} recently seen: {is_recent} but its marked as shouldnt be offline: "
                              f"stale state count {self.num_late_states} / num tcp nodes {tcp_count}\nTCP pool: {tcp_pool}")
+                return False
 
         if not self.online:
             logger.info(
