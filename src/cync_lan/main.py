@@ -115,7 +115,7 @@ class CyncLAN:
         if CYNC_ENABLE_EXPORTER is True:
             if not CYNC_SECRET_KEY:
                 logger.critical(
-                    f"{lp} You must set an non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting..."
+                    f"{lp} You must set a non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting..."
                 )
                 signal.raise_signal(signal.SIGTERM)
                 sys.exit(55)
