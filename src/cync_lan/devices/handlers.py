@@ -429,6 +429,7 @@ class PacketHandlersMixin:
                             f"{self.lp}0x73: Setting TCP"
                             f" Node ID to: {self.node.id}"
                         )
+                        self.capture_info()
                         # dynamically add the MITM mode button for nodes that are connected via TCP
                         self.mitm_button_added = True
                         await g.mqtt_client.add_mitm_button(node_repr)

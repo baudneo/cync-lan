@@ -59,6 +59,10 @@ __all__ = [
     "STREAM_CHUNK_SIZE",
     "YES_ANSWER",
     "CYNC_RAW",
+    "CYNC_CAPTURE_DIR",
+    "CYNC_CAPTURE_SANITIZE",
+    "CYNC_CAPTURE_MAX_MB",
+    "CYNC_CAPTURE_FILE_MAX_MB",
     "CYNC_DEBUG",
     "CYNC_CORP_ID",
     "DATA_BOUNDARY",
@@ -139,6 +143,21 @@ CYNC_HASS_WILL_MSG = os.environ.get("CYNC_HASS_WILL_MSG", "offline")
 CYNC_MQTT_CONN_DELAY: int = int(os.environ.get("CYNC_MQTT_CONN_DELAY", 10))
 CYNC_SECRET_KEY: str = os.environ.get("CYNC_SECRET_KEY", None)
 CYNC_RAW = os.environ.get("CYNC_RAW_DEBUG", "0").casefold() in YES_ANSWER
+# Record raw device traffic to this directory (off when unset), see docs/capture.md
+CYNC_CAPTURE_DIR: Optional[str] = os.environ.get("CYNC_CAPTURE_DIR") or None
+# Replace identifiers (queue ids, auth code, MACs, home ids, account, IP) before anything is written. Leave ON.
+CYNC_CAPTURE_SANITIZE: bool = os.environ.get("CYNC_CAPTURE_SANITIZE", "yes").casefold() in YES_ANSWER
+
+
+def _env_mb(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+CYNC_CAPTURE_MAX_MB: int = _env_mb("CYNC_CAPTURE_MAX_MB", 200)
+CYNC_CAPTURE_FILE_MAX_MB: int = _env_mb("CYNC_CAPTURE_FILE_MAX_MB", 20)
 CYNC_DEBUG = os.environ.get("CYNC_DEBUG", "0").casefold() in YES_ANSWER
 
 CYNC_BASE_DIR: str = os.environ.get("CYNC_BASE_DIR", "/root/cync-lan")

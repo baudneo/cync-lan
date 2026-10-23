@@ -132,3 +132,43 @@ async def test_shutdown_during_traffic_closes_everything(env):
     assert sess.tasks.receive is None
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_live_capture_records_rx_tx_and_end(env, monkeypatch, tmp_path):
+    from cync_lan.capture import load_capture
+    from cync_lan.devices import session as session_mod
+
+    monkeypatch.setattr(session_mod, "CYNC_CAPTURE_DIR", str(tmp_path))
+    srv, connect, seen = env
+    _, w = await connect()
+    sess = await session_up(srv)
+    w.write(PING[:2])
+    await w.drain()
+    await asyncio.sleep(0.05)
+    w.write(PING[2:])
+    await w.drain()
+    assert await until(lambda: len(seen) == 1)
+    assert await sess.write(b"\xd8\x00\x00\x00\x00") is True
+    w.close()
+    assert await until(lambda: sess._closed)
+    files = list(tmp_path.glob("*.jsonl"))
+    assert len(files) == 1
+    cap = load_capture(files[0])
+    assert [(k, d) for _, k, d in cap.records if k == "rx"] == [("rx", PING[:2]), ("rx", PING[2:])]
+    assert [d for _, k, d in cap.records if k == "tx"] == [b"\xd8\x00\x00\x00\x00"]
+    assert cap.ended and cap.sanitized
+    assert cap.meta["ip"] == "10.0.0.1"  # sanitizing is on by default
+    assert IP.replace(".", "-") not in files[0].name
+
+
+async def test_app_session_capture_is_discarded(env, monkeypatch, tmp_path):
+    from cync_lan.devices import session as session_mod
+
+    monkeypatch.setattr(session_mod, "CYNC_CAPTURE_DIR", str(tmp_path))
+    srv, connect, _ = env
+    await connect()
+    sess = await session_up(srv)
+    assert list(tmp_path.glob("*.jsonl"))
+    sess.is_app = True
+    await sess.close()
+    assert not list(tmp_path.glob("*.jsonl"))
