@@ -5,12 +5,10 @@ import random
 import re
 import time
 from dataclasses import dataclass
-from json import JSONDecodeError
 from typing import Coroutine, Dict, List, Optional, Union
 
 import aiomqtt
 import paho.mqtt.client as mqtt
-from paho.mqtt.enums import CallbackAPIVersion
 from paho.mqtt.enums import CallbackAPIVersion
 
 from cync_lan.const import (
@@ -38,7 +36,8 @@ from cync_lan.const import (
     ORIGIN_STRUCT,
 )
 from cync_lan.devices import CyncDevice
-from cync_lan.metadata.model_info import device_type_map, DeviceClassification
+from cync_lan.metadata.model_info import DeviceClassification, device_type_map
+from cync_lan.stats import stats
 from cync_lan.structs import EntityState, FanSpeed, GlobalObject
 from cync_lan.utils import send_sigterm
 
@@ -56,6 +55,44 @@ class ParseResult:
     reason: str = ""
 
 
+def parse_int(value) -> Optional[int]:
+    """
+    Lenient, safe int conversion for values that arrive from MQTT/JSON.
+    Accepts ints, floats and numeric strings ("50", "50.0"); returns None for
+    anything else (None, bool, dict, "abc", NaN, inf) instead of raising.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if num != num or num in (float("inf"), float("-inf")):
+        return None
+    return int(round(num))
+
+
+def clamp(value: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, value))
+
+
+def format_fw_version(version) -> str:
+    """Firmware number -> display string: 5 digits 'a.b.cde', 2 digits 'a.b', anything else (or all zeros) 'Unknown'."""
+    text = str(version)
+    if len(text) == 5 and text != "00000":
+        return f"{text[0]}.{text[1]}.{text[2:]}"
+    if len(text) == 2:
+        return f"{text[0]}.{text[1]}"
+    return "Unknown"
+
+
+def reconnect_delay(failures: int, base: Optional[float]) -> float:
+    """Exponential backoff for MQTT reconnects: base, 2*base, 4*base ... capped at max(60, base)."""
+    if base is None or base <= 0:
+        base = 5
+    return min(base * 2 ** max(failures - 1, 0), max(60, base))
+
+
 class MQTTClient:
     lp: str = "mqtt:"
     cync_topic: str
@@ -70,6 +107,11 @@ class MQTTClient:
 
     def __init__(self):
         self._connected = False
+        self._receiver_task: Optional[asyncio.Task] = None
+        self._force_reconnect = False
+        self._birth_task: Optional[asyncio.Task] = None
+        # nodes that currently show a MITM switch in HA, re-announced after every discovery
+        self._mitm_nodes: dict = {}
         self.tasks: Optional[List[Union[asyncio.Task, Coroutine]]] = []
         lp = f"{self.lp}init:"
         if not CYNC_TOPIC:
@@ -87,7 +129,7 @@ class MQTTClient:
             ha_topic = CYNC_HASS_TOPIC
 
         self.broker_client_id = f"cync_lan_{g.uuid}"
-        lwt = aiomqtt.Will(topic=f"{topic}/connected", payload=DEVICE_LWT_MSG)
+        lwt = self._build_will(topic)
         self.broker_host = CYNC_MQTT_HOST
         self.broker_port = CYNC_MQTT_PORT
         self.broker_username = CYNC_MQTT_USER
@@ -105,93 +147,170 @@ class MQTTClient:
         self.topic = topic
         self.ha_topic = ha_topic
 
+    @staticmethod
+    def _build_will(topic: str) -> aiomqtt.Will:
+        """
+        Last Will: if we die without a clean disconnect the broker publishes (retained)
+        'offline' on the bridge availability topic, which every entity watches, so Home
+        Assistant stops showing stale devices as available.
+        """
+        return aiomqtt.Will(
+            topic=f"{topic}/availability/bridge",
+            payload=DEVICE_LWT_MSG,
+            qos=0,
+            retain=True,
+        )
+
+    def _availability(self, device_uuid: str) -> list:
+        """Entity is available only if both its own device and the bridge are online."""
+        return [
+            {
+                "t": f"{self.topic}/availability/{device_uuid}",
+                "pl_avail": "online",
+                "pl_not_avail": "offline",
+            },
+            {
+                "t": f"{self.topic}/availability/bridge",
+                "pl_avail": "online",
+                "pl_not_avail": "offline",
+            },
+        ]
+
+    def _on_publish_failed(self) -> None:
+        """
+        A publish on a connection we believed was alive failed. Mark it dead and wake the
+        session loop so it reconnects, otherwise nothing would ever reset ``_connected``
+        and every later state publish would be silently skipped.
+        """
+        if not self._connected:
+            return
+        self._connected = False
+        stats.inc("mqtt_publish_failures")
+        task = self._receiver_task
+        if task is not None and not task.done():
+            self._force_reconnect = True
+            task.cancel()
+
     async def start(self):
-        itr = 0
+        """Connect, run a session, and reconnect forever (with backoff) until cancelled."""
         lp = f"{self.lp}start:"
+        itr = 0
+        failures = 0
         try:
             while True:
                 itr += 1
-                self._connected = await self.connect()
-                if self._connected:
-                    # ["state_topic"] = f"{self.topic}/status/bridge/mqtt_client/connected"
-                    await self.publish(
-                        f"{self.topic}/status/bridge/mqtt_client/connected",
-                        "ON".encode(),
-                    )
-
-                    if itr == 1:
-                        logger.debug(f"{lp} Seeding all devices: offline")
-                        for device_id, node in g.ncync_server.node_devices.items():
-                            # if device.is_fan_controller:
-                            #     logger.debug(f"{lp} TESTING>>> Setting up fan controller for device: {device.name} (ID: {device.id})")
-                            #     # set device online for testing
-                            #     await self.pub_online(device.id, True)
-                            #     await device.set_brightness(50)  # set brightness to 50% for testing
-                            # else:
-                            await self.pub_online(device_id, False)
-                    elif itr > 1:
-                        tasks = []
-                        # set the device online/offline and set its status
-                        for node in g.ncync_server.node_devices.values():
-                            # key is entity id (sub_id), value is state class which has node and entity id
-                            # map is for easy lookup based on entity id, rather than iterating a list of entitys
-                            for epoint_state in node.entities.values():
-                                tasks.append(self.pub_online(node.id, node.online))
-                                tasks.append(
-                                    self.parse_entity_state(
-                                        epoint_state,
-                                        from_pkt="'re-connect'",
-                                    )
-                                )
-                        if tasks:
-                            await asyncio.gather(*tasks)
-                    logger.debug(f"{lp} Starting MQTT receiver...")
-                    lp: str = f"{self.lp}rcv:"
-                    topics = [
-                        (f"{self.topic}/set/#", 0),
-                        (f"{self.ha_topic}/status", 0),
-                    ]
-                    await self.client.subscribe(topics) if not MQTT_DEAD else None
-                    logger.debug(
-                        f"{lp} Subscribed to MQTT topics: {[x[0] for x in topics]}. "
-                        f"Waiting for MQTT messages..."
-                    )
-                    try:
-                        await self.start_receiver_task()
-                    except asyncio.CancelledError as ce:
-                        logger.debug(
-                            f"{lp} MQTT receiver task cancelled, propagating..."
+                started = time.monotonic()
+                try:
+                    self._connected = await self.connect()
+                    if self._connected:
+                        await self._run_session(itr)
+                        logger.warning(f"{lp} MQTT session ended, will reconnect")
+                    else:
+                        await self.publish(
+                            f"{self.topic}/status/bridge/mqtt_client/connected",
+                            "OFF".encode(),
                         )
-                        raise ce
-                    except (aiomqtt.MqttError, aiomqtt.MqttCodeError) as msg_err:
-                        logger.warning(f"{lp} MQTT error: {msg_err}")
-                        continue
-                else:
-                    await self.publish(
-                        f"{self.topic}/status/bridge/mqtt_client/connected",
-                        "OFF".encode(),
-                    )
-                    delay = CYNC_MQTT_CONN_DELAY
-                    if delay is None or delay <= 0:
-                        logger.debug(
-                            f"{lp} MQTT connection delay is less than or equal to 0, which is probably a typo, setting to 5..."
-                        )
-                        delay = 5
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Anything (broker flap, bad state, bug) must not end the MQTT service for good.
+                    logger.warning(f"{lp} MQTT session failed: {exc!r}", exc_info=not isinstance(exc, aiomqtt.MqttError))
+                self._connected = False
+                stats.inc("mqtt_session_ends")
+                if time.monotonic() - started > 30:
+                    failures = 0  # it was healthy for a while, restart the backoff
+                failures += 1
+                delay = reconnect_delay(failures, CYNC_MQTT_CONN_DELAY)
+                delay += random.uniform(0, delay * 0.1)
+                logger.info(f"{lp} reconnecting to the MQTT broker in {delay:.1f} seconds...")
+                await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            raise
 
-                    logger.info(
-                        f"{lp} connecting to MQTT broker failed, sleeping for {delay} seconds before re-trying..."
+    async def _run_session(self, itr: int):
+        """Everything that happens after a successful connect, until the receiver ends."""
+        lp = f"{self.lp}start:"
+        # ["state_topic"] = f"{self.topic}/status/bridge/mqtt_client/connected"
+        await self.publish(
+            f"{self.topic}/status/bridge/mqtt_client/connected",
+            "ON".encode(),
+        )
+
+        if itr == 1:
+            logger.debug(f"{lp} Seeding all devices: offline")
+            for device_id in g.ncync_server.node_devices:
+                await self.pub_online(device_id, False)
+        else:
+            tasks = []
+            # set the device online/offline and set its status
+            for node in g.ncync_server.node_devices.values():
+                # key is entity id (sub_id), value is state class which has node and entity id
+                for epoint_state in node.entities.values():
+                    tasks.append(self.pub_online(node.id, node.online))
+                    tasks.append(
+                        self.parse_entity_state(
+                            epoint_state,
+                            from_pkt="'re-connect'",
+                        )
                     )
-                    await asyncio.sleep(delay)
-        except asyncio.CancelledError as ce:
-            raise ce
-        except Exception as exc:
-            logger.exception(f"{lp} MQTT start() EXCEPTION: {exc}")
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for res in results:
+                    if isinstance(res, Exception):
+                        logger.warning(f"{lp} re-sync publish failed: {res!r}")
+        logger.debug(f"{lp} Starting MQTT receiver...")
+        lp = f"{self.lp}rcv:"
+        topics = [
+            (f"{self.topic}/set/#", 0),
+            (f"{self.ha_topic}/status", 0),
+        ]
+        if not MQTT_DEAD:
+            await self.client.subscribe(topics)
+        logger.debug(
+            f"{lp} Subscribed to MQTT topics: {[x[0] for x in topics]}. "
+            f"Waiting for MQTT messages..."
+        )
+        self._force_reconnect = False
+        self._receiver_task = asyncio.create_task(
+            self.start_receiver_task(), name="mqtt_receiver"
+        )
+        stats_task = asyncio.create_task(self._publish_stats_loop(), name="mqtt_stats")
+        try:
+            await self._receiver_task
+        except asyncio.CancelledError:
+            if self._force_reconnect:
+                logger.warning(f"{lp} a publish failed on the live connection, reconnecting...")
+                self._force_reconnect = False
+                return
+            raise
+        finally:
+            self._receiver_task = None
+            stats_task.cancel()
+            await asyncio.gather(stats_task, return_exceptions=True)
+
+    async def _publish_stats_loop(self, interval: float = 60.0) -> None:
+        """Publish the counters as JSON on `<topic>/status/bridge/stats` (not retained), once at start then every `interval`."""
+        while True:
+            await self.publish(
+                f"{self.topic}/status/bridge/stats",
+                json.dumps(stats.snapshot()).encode(),
+            )
+            await asyncio.sleep(interval)
 
     async def connect(self) -> bool:
         lp = f"{self.lp}connect:"
         self._connected = False
         logger.debug(f"{lp} Connecting to MQTT broker...")
-        lwt = aiomqtt.Will(topic=f"{self.topic}/connected", payload=DEVICE_LWT_MSG)
+        lwt = self._build_will(self.topic)
+        old_client = getattr(self, "client", None)
+        if old_client is not None:
+            # best effort: don't leak the previous client's socket/tasks on every reconnect
+            try:
+                await asyncio.wait_for(old_client.__aexit__(None, None, None), 5)
+            except asyncio.CancelledError:
+                raise
+            except (aiomqtt.MqttError, OSError, RuntimeError, TimeoutError) as exc:
+                logger.debug(f"{lp} closing previous client: {exc!r}")
         g.reload_env()
         self.broker_host = g.env.mqtt_host
         self.broker_port = g.env.mqtt_port
@@ -294,18 +413,9 @@ class MQTTClient:
         for tcp_dev in tcp_pool:
             if tcp_dev.node and tcp_dev.node.id == node.id:
                 if is_on:
-                    self.tasks.append(
-                        asyncio.create_task(
-                            tcp_dev.start_mitm(),
-                            name=f"MQTT_START_MITM-{tcp_dev.ip_address}",
-                        )
-                    )
+                    self._spawn(tcp_dev.start_mitm(), f"MQTT_START_MITM-{tcp_dev.ip_address}")
                 else:
-                    logger.debug("DBG>>> MITM mqtt command is calling mitm_stop()")
-                    asyncio.create_task(
-                        tcp_dev.stop_mitm(),
-                        name=f"MQTT_STOP_MITM-{tcp_dev.ip_address}",
-                    )
+                    self._spawn(tcp_dev.stop_mitm(), f"MQTT_STOP_MITM-{tcp_dev.ip_address}")
         await self.publish(f"{self.topic}/status/{device_uuid}/mitm", payload, retain=True)
         return True
 
@@ -315,7 +425,12 @@ class MQTTClient:
 
         norm_pl = payload.decode(errors="ignore").casefold()
         if extra_data[0] == "percentage":
-            percentage = int(norm_pl)
+            percentage = parse_int(norm_pl)
+            if percentage is None or not 0 <= percentage <= 100:
+                logger.warning(
+                    f"{lp} Fan percentage payload {norm_pl!r} is not a number in range 0-100, skipping..."
+                )
+                return False
             if percentage == 0:
                 tasks.append(node.set_fan_speed(FanSpeed.OFF))
             elif percentage <= 25:
@@ -369,13 +484,15 @@ class MQTTClient:
     def _queue_json_payload(self, node: CyncDevice, payload: bytes, sub_id: Optional[int], tasks: list, lp: str) -> bool:
         try:
             json_data = json.loads(payload)
-        except JSONDecodeError as e:
+        except ValueError as e:  # JSONDecodeError and UnicodeDecodeError
             logger.error("%s bad json message: {%s} EXCEPTION => %s" % (lp, payload, e))
             return False
-        except Exception as e:
-            logger.error("%s error will decoding a string into JSON: '%s' EXCEPTION => %s" % (lp, payload, e))
+
+        if not isinstance(json_data, dict):
+            logger.warning(f"{lp} JSON payload is not an object: {payload!r}")
             return False
 
+        queued = False
         if "state" in json_data and "brightness" not in json_data:
             if "effect" in json_data:
                 tasks.append(node.set_lightshow(json_data["effect"], sub_id))
@@ -383,27 +500,41 @@ class MQTTClient:
                 tasks.append(node.set_power(1, sub_id))
             else:
                 tasks.append(node.set_power(0, sub_id))
+            queued = True
         if "brightness" in json_data:
-            tasks.append(node.set_brightness(int(json_data["brightness"]), sub_id))
+            bri = parse_int(json_data["brightness"])
+            if bri is None:
+                logger.warning(f"{lp} invalid brightness {json_data['brightness']!r}, skipping")
+            else:
+                tasks.append(node.set_brightness(clamp(bri, 0, 100), sub_id))
+                queued = True
 
         if "color_temp" in json_data:
-            tasks.append(
-                node.set_temperature(
-                    self.kelvin2cync(int(json_data["color_temp"]), node),
-                    sub_id,
+            kelvin = parse_int(json_data["color_temp"])
+            if kelvin is None:
+                logger.warning(f"{lp} invalid color_temp {json_data['color_temp']!r}, skipping")
+            else:
+                tasks.append(
+                    node.set_temperature(self.kelvin2cync(kelvin, node), sub_id)
                 )
-            )
+                queued = True
         elif "color" in json_data:
-            color = []
-            for rgb in ("r", "g", "b"):
-                color.append(int(json_data["color"].get(rgb, 0)))
-            if sub_id is not None:
-                color.append(sub_id)
-            tasks.append(node.set_rgb(*color))
-        return True
+            raw_color = json_data["color"]
+            if not isinstance(raw_color, dict):
+                logger.warning(f"{lp} invalid color {raw_color!r}, skipping")
+            else:
+                color = [
+                    clamp(parse_int(raw_color.get(rgb, 0)) or 0, 0, 255)
+                    for rgb in ("r", "g", "b")
+                ]
+                if sub_id is not None:
+                    color.append(sub_id)
+                tasks.append(node.set_rgb(*color))
+                queued = True
+        return queued
 
     def _queue_non_json_payload(self, node: CyncDevice, payload: bytes, sub_id: Optional[int], tasks: list, lp: str) -> bool:
-        str_payload = payload.decode("utf-8").strip()
+        str_payload = payload.decode("utf-8", errors="replace").strip()
         if not re.compile(r"^\w+$").match(str_payload):
             logger.warning(f"{lp} Unknown payload: {payload}, skipping...")
             return False
@@ -453,7 +584,15 @@ class MQTTClient:
                 result.handled = self._queue_non_json_payload(node, payload, sub_id, tasks, lp)
 
         if tasks:
-            await asyncio.gather(*tasks)
+            # sequential on purpose: e.g. power-on must reach the device before a colour change
+            for coro in tasks:
+                try:
+                    await coro
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    stats.inc("mqtt_command_failures")
+                    logger.error(f"{lp} command failed: {exc!r}", exc_info=True)
             result.handled = True
 
         if not result.reason and not result.handled:
@@ -472,13 +611,12 @@ class MQTTClient:
             logger.info(
                 f"{lp} HASS has sent MQTT BIRTH message, re-announcing device discovery, availability and status after a random delay of {birth_delay} seconds..."
             )
-            await asyncio.sleep(birth_delay)
-            await self.homeassistant_discovery()
-            await asyncio.sleep(2)
-            for node in g.ncync_server.node_devices.values():
-                await self.pub_online(node.id, node.online)
-                for epoint_state in node.entities.values():
-                    await self.parse_entity_state(epoint_state, from_pkt="'hass_birth'")
+            # never sleep inside the receive loop: commands would queue up behind the delay
+            if self._birth_task is not None and not self._birth_task.done():
+                self._birth_task.cancel()
+            self._birth_task = asyncio.create_task(
+                self._reannounce_after_birth(birth_delay), name="mqtt_hass_birth"
+            )
             result.handled = True
             return result
 
@@ -490,6 +628,37 @@ class MQTTClient:
         logger.warning(f"{lp} Unknown HASS status message: {payload}")
         result.reason = "unknown_hass_status"
         return result
+
+    def _spawn(self, coro, name: str) -> asyncio.Task:
+        """Run a coroutine in the background, keeping a reference until it finishes (stop() cancels leftovers)."""
+        task = asyncio.create_task(coro, name=name)
+        self.tasks.append(task)
+
+        def _done(t: asyncio.Task) -> None:
+            if t in self.tasks:
+                self.tasks.remove(t)
+            if not t.cancelled() and t.exception() is not None:
+                logger.error(f"{self.lp} background task {name} failed: {t.exception()!r}")
+
+        task.add_done_callback(_done)
+        return task
+
+    async def _reannounce_after_birth(self, delay: float) -> None:
+        lp = f"{self.lp}hass_birth:"
+        try:
+            await asyncio.sleep(delay)
+            await self.homeassistant_discovery()
+            await asyncio.sleep(2)
+            for node in list(g.ncync_server.node_devices.values()):
+                await self.pub_online(node.id, node.online)
+                for epoint_state in node.entities.values():
+                    await self.parse_entity_state(epoint_state, from_pkt="'hass_birth'")
+        except asyncio.CancelledError:
+            raise
+        except aiomqtt.MqttError as exc:
+            logger.warning(f"{lp} re-announce aborted, MQTT publish failed: {exc!r}")
+        except Exception as exc:
+            logger.error(f"{lp} re-announce failed: {exc!r}", exc_info=True)
 
     async def async_parse_mqtt_msg(self, message: aiomqtt.message.Message) -> bool:
         lp = f"{self.lp}parse msg:"
@@ -505,7 +674,7 @@ class MQTTClient:
         logger.debug(f"{lp} RECEIVED MQTT TOPIC: {topic} // MESSAGE: {payload}") if MQTT_DEBUG else None
 
         result = ParseResult(matched=False, handled=False, reason="")
-        if topic_parts[0] == CYNC_TOPIC:
+        if topic_parts[0] == self.topic:
             result.matched = True
             if len(topic_parts) > 1 and topic_parts[1] == "set":
                 result = await self._handle_cync_set(topic_parts, payload, lp)
@@ -526,10 +695,21 @@ class MQTTClient:
         """Start listening for MQTT messages on subscribed topics"""
         lp = f"{self.lp}rcv:"
         async for message in self.client.messages:
-            succ = await self.async_parse_mqtt_msg(message)
+            try:
+                await self.async_parse_mqtt_msg(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # one malformed publish must never take the MQTT service down
+                stats.inc("mqtt_message_errors")
+                logger.error(
+                    f"{lp} error handling message on {message.topic}: {exc!r}", exc_info=True
+                )
 
     async def stop(self):
         lp = f"{self.lp}stop:"
+        if self._birth_task is not None and not self._birth_task.done():
+            self._birth_task.cancel()
         # set all devices offline
         if self._connected:
             logger.debug(f"{lp} Setting all Cync devices offline...")
@@ -540,14 +720,23 @@ class MQTTClient:
                 f"{self.topic}/status/bridge/mqtt_client/connected",
                 "OFF".encode(),
             )
-            await self.publish(f"{self.topic}/availability/bridge", "offline".encode())
+            await self.publish(
+                f"{self.topic}/availability/bridge", "offline".encode(), retain=True
+            )
+            results = await asyncio.gather(
+                *(self.pub_online(n.id, False) for n in g.ncync_server.node_devices.values()),
+                return_exceptions=True,
+            )
+            for res in results:
+                if isinstance(res, Exception):
+                    logger.debug(f"{lp} could not publish a device offline: {res!r}")
             await self.send_will_msg()
         try:
             logger.debug(f"{lp} Disconnecting from broker...")
             await self.client.__aexit__(None, None, None)
         except aiomqtt.MqttError as ce:
             logger.warning("%s MQTT disconnect failed: %s" % (lp, ce))
-        except Exception as e:
+        except (OSError, RuntimeError, TimeoutError) as e:
             logger.warning("%s MQTT disconnect failed: %s" % (lp, e), exc_info=True)
         else:
             logger.info(f"{lp} Disconnected from MQTT broker")
@@ -556,7 +745,7 @@ class MQTTClient:
             if self.start_task and not self.start_task.done():
                 logger.debug(f"{lp} FINISHING: Cancelling start task")
                 self.start_task.cancel()
-            for task in self.tasks:
+            for task in list(self.tasks):
                 if not task.done():
                     task.cancel()
                     try:
@@ -583,7 +772,7 @@ class MQTTClient:
             device_uuid = f"{device.home_id}-{device_id}"
             data = []
             if device.has_multi_entities:
-                for child_id, child_name in device.entities.items():
+                for child_id in device.entities:
                     data.append(
                         (
                             f"{self.topic}/availability/{device_uuid}-{child_id}",
@@ -602,9 +791,19 @@ class MQTTClient:
                     )
                 except aiomqtt.MqttError as mqtt_code_exc:
                     logger.warning(f"{lp} [MqttError] -> {mqtt_code_exc}")
-                    self._connected = False
+                    self._on_publish_failed()
             return True
         return False
+
+    def _entity_for(self, node: CyncDevice, sub_id: int):
+        """The entity state for a (node, sub_id), or None (logged) when the device never declared it."""
+        entity = node.entities.get(sub_id)
+        if entity is None:
+            logger.warning(
+                f"{self.lp} device '{node.name}' (ID: {node.id}) has no entity with sub ID {sub_id}, "
+                f"ignoring update (known: {sorted(node.entities)})"
+            )
+        return entity
 
     async def update_entity_power(
         self, node: CyncDevice, state: int, sub_id: Optional[int] = None
@@ -612,7 +811,9 @@ class MQTTClient:
         """Update the device state and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        entity = node.entities.get(_id)
+        entity = self._entity_for(node, _id)
+        if entity is None:
+            return False
         entity.power = state
         power_status = "OFF" if state == 0 else "ON"
         mqtt_tgt_state = {"state": power_status}
@@ -628,7 +829,9 @@ class MQTTClient:
         """Update the device brightness and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        entity = node.entities.get(_id)
+        entity = self._entity_for(node, _id)
+        if entity is None:
+            return False
         entity.brightness = bri
         state = "ON"
         if bri == 0:
@@ -657,12 +860,9 @@ class MQTTClient:
                     node, str(speed.to_perc()).encode(), 0, tpc=f"{self.topic}/status/{node.hass_id}/percentage"
                 )
             )
-            try:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-            except Exception as e:
-                logger.debug(f"{lp} Exception during task gathering: {e}")
-            else:
-                return all(results)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # an exception object is truthy, so test for an explicit True
+            return all(r is True for r in results)
         else:
             logger.warning(f"{self.lp} Tried to set fan speed on a device which isnt a fan controller, skipping...")
         return False
@@ -688,7 +888,9 @@ class MQTTClient:
         """Update the device temperature and publish to MQTT for HASS devices to update."""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        entity = node.entities.get(_id)
+        entity = self._entity_for(node, _id)
+        if entity is None:
+            return False
 
         if node.supports_temperature:
             mqtt_dev_state = {
@@ -711,7 +913,9 @@ class MQTTClient:
         """Update the device RGB and publish to MQTT for HASS devices to update. Intended for callbacks"""
         node.online = True
         _id = sub_id if sub_id is not None else 0
-        entity = node.entities.get(_id)
+        entity = self._entity_for(node, _id)
+        if entity is None:
+            return False
 
         if node.supports_rgb and (
             any(
@@ -751,7 +955,7 @@ class MQTTClient:
         if self._connected:
             tgt_id = f"{node.hass_id}" if not sub_id else f"{node.hass_id}-{sub_id}"
             logger.debug(
-                f"{lp} Sending {msg} for device: '{node.name}' (ID: {node.id}){" '{}' [sub ID: {}]".format(node.entities[sub_id].name, sub_id) if sub_id else ''}"
+                f"{lp} Sending {msg} for device: '{node.name}' (ID: {node.id}){" '{}' [sub ID: {}]".format(getattr(node.entities.get(sub_id), "name", "?"), sub_id) if sub_id else ''}"
             ) if MQTT_DEBUG else None
             if tpc is None:
                 tpc = f"{self.topic}/status/{tgt_id}"
@@ -764,7 +968,7 @@ class MQTTClient:
                 ) if not MQTT_DEAD else None
             except aiomqtt.MqttError as mqtt_code_exc:
                 logger.warning(f"{lp} {mqtt_code_exc}")
-                self._connected = False
+                self._on_publish_failed()
             except asyncio.CancelledError as can_exc:
                 logger.debug(f"{lp} {can_exc}")
                 raise
@@ -790,7 +994,9 @@ class MQTTClient:
             )
             return False
         node: CyncDevice = g.ncync_server.node_devices[node_id]
-        entity = node.entities[sub_id]
+        entity = self._entity_for(node, sub_id)
+        if entity is None:
+            return False
         power_status = "OFF" if entity.power == 0 else "ON"
         mqtt_dev_state: Union[Dict[str, Union[int, str, bytes, dict, list]], bytes] = {
             "state": power_status
@@ -895,6 +1101,7 @@ class MQTTClient:
                 )
             except asyncio.CancelledError as can_exc:
                 logger.warning(f"{lp} [Task Cancelled] -> {can_exc}")
+                raise
             else:
                 return True
         return False
@@ -914,8 +1121,8 @@ class MQTTClient:
                 ) if not MQTT_DEAD else None
             except aiomqtt.MqttError as mqtt_code_exc:
                 logger.warning(f"{lp} [MqttError] -> {mqtt_code_exc}")
-                self._connected = False
-            except Exception as e:
+                self._on_publish_failed()
+            except OSError as e:
                 logger.warning(f"{lp} [Exception] -> {e}")
             else:
                 return True
@@ -995,25 +1202,17 @@ class MQTTClient:
                     retain=False,
                 )
 
-        except Exception as e:
+        except aiomqtt.MqttError as e:
             logger.error(
                 "%s - Unable to publish mqtt message... skipped -> %s" % (self.lp, e)
             )
+            self._on_publish_failed()
+        except (TypeError, ValueError) as e:
+            logger.error(f"{self.lp} discovery config for {tpc} is not serialisable, skipped -> {e!r}")
 
     def _get_device_registry(self, node: CyncDevice):
-        device_uuid = node.hass_id
         unique_id = f"{node.home_id}_{node.id}"
-        obj_id = f"cync_lan_{unique_id}"
-        dev_fw_version = str(node.version)
-        ver_str = "Unknown"
-        fw_len = len(dev_fw_version)
-        if fw_len == 5:
-            if dev_fw_version != 00000:
-                ver_str = (
-                    f"{dev_fw_version[0]}.{dev_fw_version[1]}.{dev_fw_version[2:]}"
-                )
-        elif fw_len == 2:
-            ver_str = f"{dev_fw_version[0]}.{dev_fw_version[1]}"
+        ver_str = format_fw_version(node.version)
         model_str = "Unknown"
         if node.type in device_type_map:
             model_str = device_type_map[node.type].model_string
@@ -1058,14 +1257,7 @@ class MQTTClient:
 
                     unique_id = f"{node_repr.home_id}_{node_repr.id}"
                     obj_id = f"cync_lan_{unique_id}"
-                    dev_fw_version = str(node_repr.version)
-                    ver_str = "Unknown"
-                    fw_len = len(dev_fw_version)
-                    if fw_len == 5:
-                        if dev_fw_version != 00000:
-                            ver_str = f"{dev_fw_version[0]}.{dev_fw_version[1]}.{dev_fw_version[2:]}"
-                    elif fw_len == 2:
-                        ver_str = f"{dev_fw_version[0]}.{dev_fw_version[1]}"
+                    ver_str = format_fw_version(node_repr.version)
                     model_str = "Unknown"
                     if node_repr.type in device_type_map:
                         model_str = device_type_map[node_repr.type].model_string
@@ -1089,11 +1281,8 @@ class MQTTClient:
                         "name": None,
                         "command_topic": "{0}/set/{1}".format(self.topic, device_uuid),
                         "state_topic": "{0}/status/{1}".format(self.topic, device_uuid),
-                        "avty_t": "{0}/availability/{1}".format(
-                            self.topic, device_uuid
-                        ),
-                        "pl_avail": "online",
-                        "pl_not_avail": "offline",
+                        "avty": self._availability(device_uuid),
+                        "avty_mode": "all",
                         "state_on": "ON",
                         "state_off": "OFF",
                         "unique_id": unique_id,
@@ -1120,9 +1309,7 @@ class MQTTClient:
                             cers["state_topic"] = (
                                 "{0}/status/{1}".format(self.topic, cdevice_uuid)
                             )
-                            cers["avty_t"] = (
-                                "{0}/availability/{1}".format(self.topic, cdevice_uuid)
-                            )
+                            cers["avty"] = self._availability(cdevice_uuid)
                             cers["object_id"] = cobj_id
                             cers["default_entity_id"] = cobj_id
                             cers["name"] = ep_state.name
@@ -1171,7 +1358,7 @@ class MQTTClient:
                 logger.warning(
                     f"{lp} [MqttError] (rc: {mqtt_code_exc.rc}) -> {mqtt_code_exc}"
                 )
-                self._connected = False
+                self._on_publish_failed()
             except asyncio.CancelledError as can_exc:
                 logger.warning(f"{lp} [Task Cancelled] -> {can_exc}")
                 raise can_exc
@@ -1179,6 +1366,8 @@ class MQTTClient:
                 logger.exception(f"{lp} [Exception] -> {e}")
             else:
                 ret = True
+        if ret:
+            await self.republish_mitm_buttons()
         logger.debug(f"{lp} Discovery complete (success: {ret})")
         return ret
 
@@ -1188,6 +1377,7 @@ class MQTTClient:
             f"{node.lp} Adding a 'MITM mode' button to node: '{node.name}' (ID: {node.id}) as it is "
             f"connected via IP: {node.tcp_session.ip_address}"
         )
+        self._mitm_nodes[node.id] = node
         device_uuid = node.hass_id
         mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"
         mitm_switch_conf = {
@@ -1205,9 +1395,19 @@ class MQTTClient:
         # dont seed, we retain the state msg to persist
         # seeded = await self.publish(f"{self.topic}/status/{device_uuid}/mitm", b"OFF", retain=True)
 
+    async def republish_mitm_buttons(self) -> None:
+        """Discovery replay (reconnect / HA birth) must not drop MITM switches for connected nodes."""
+        for node in list(self._mitm_nodes.values()):
+            session = getattr(node, "tcp_session", None)
+            if session is None or session.is_closed():
+                self._mitm_nodes.pop(node.id, None)
+                continue
+            await self.add_mitm_button(node)
+
     async def remove_mitm_button(self, node: CyncDevice):
         """Delete a MITM mode button"""
         logger.debug(f"{node.lp} Removing 'MITM mode' button from node: '{node.name}'")
+        self._mitm_nodes.pop(node.id, None)
         mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"
         # await self.publish(f"{self.topic}/status/{node.hass_id}/mitm", b"OFF", retain=True)
         # send empty payload to the config topic to delete the entity
@@ -1224,6 +1424,25 @@ class MQTTClient:
         # input_number to submit OTP for export
         lp = f"{self.lp}create_bridge_device:"
         ret = False
+        results: List[bool] = []
+        entity_type = "button"
+        entity_unique_id = ""
+        template_tpc = "{0}/{1}/{2}/config"
+
+        async def publish_entity(conf: dict) -> bool:
+            """Publish the discovery config for (entity_type, entity_unique_id) with consistent ids.
+
+            Entities were built by copying a sibling's dict, which left several of them with the
+            sibling's object_id and a default_entity_id without a domain."""
+            conf["unique_id"] = entity_unique_id
+            conf["object_id"] = entity_unique_id
+            conf["default_entity_id"] = f"{entity_type}.{entity_unique_id}"
+            conf["platform"] = entity_type
+            ok = await self.publish_json_msg(
+                template_tpc.format(self.ha_topic, entity_type, entity_unique_id), conf
+            )
+            results.append(bool(ok))
+            return ok
 
         logger.debug(f"{lp} Creating CyncLAN bridge device...")
         bridge_base_unique_id = "cync_lan_bridge"
@@ -1239,10 +1458,8 @@ class MQTTClient:
             "model": "Local Push Controller",
         }
         # Entities for the bridge device
-        entity_type = "button"
-        template_tpc = "{0}/{1}/{2}/config"
         pub_tasks.append(
-            self.publish(f"{self.topic}/availability/bridge", "online".encode())
+            self.publish(f"{self.topic}/availability/bridge", "online".encode(), retain=True)
         )
 
         entity_unique_id = f"{bridge_base_unique_id}_restart"
@@ -1260,10 +1477,7 @@ class MQTTClient:
             "origin": ORIGIN_STRUCT,
             "device": bridge_device_reg_struct,
         }
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            restart_btn_entity_struct,
-        )
+        ret = await publish_entity(restart_btn_entity_struct)
         if ret is False:
             logger.error(f"{lp} Failed to publish restart button entity config")
 
@@ -1276,10 +1490,7 @@ class MQTTClient:
         )
         xport_btn_entity_conf["name"] = "Start Export"
         xport_btn_entity_conf["unique_id"] = entity_unique_id
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            xport_btn_entity_conf,
-        )
+        ret = await publish_entity(xport_btn_entity_conf)
         if ret is False:
             logger.error(f"{lp} Failed to publish start export button entity config")
 
@@ -1296,10 +1507,7 @@ class MQTTClient:
         )
         submit_otp_btn_entity_conf["name"] = "Submit OTP"
         submit_otp_btn_entity_conf["unique_id"] = entity_unique_id
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            submit_otp_btn_entity_conf,
-        )
+        ret = await publish_entity(submit_otp_btn_entity_conf)
         if ret is False:
             logger.error(f"{lp} Failed to publish submit OTP button entity config")
 
@@ -1321,10 +1529,7 @@ class MQTTClient:
             "origin": ORIGIN_STRUCT,
             "device": bridge_device_reg_struct,
         }
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            tcp_server_entity_conf,
-        )
+        ret = await publish_entity(tcp_server_entity_conf)
         if ret is False:
             logger.error(f"{lp} Failed to publish TCP server running entity config")
         status = "ON" if g.ncync_server.running is True else "OFF"
@@ -1343,10 +1548,7 @@ class MQTTClient:
         )
         export_server_entity_conf["unique_id"] = entity_unique_id
         export_server_entity_conf["icon"] = "mdi:export-variant"
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            export_server_entity_conf,
-        )
+        ret = await publish_entity(export_server_entity_conf)
         if ret is False:
             logger.error(f"{lp} Failed to publish export server running entity config")
         status = (
@@ -1368,10 +1570,7 @@ class MQTTClient:
         mqtt_client_entity_conf["unique_id"] = entity_unique_id
         mqtt_client_entity_conf["icon"] = "mdi:connection"
         mqtt_client_entity_conf["device_class"] = "connectivity"
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            mqtt_client_entity_conf,
-        )
+        ret = await publish_entity(mqtt_client_entity_conf)
         if ret is False:
             logger.error(f"{lp} Failed to publish MQTT client connected entity config")
 
@@ -1395,10 +1594,7 @@ class MQTTClient:
             "name": "Cync emailed OTP",
             "unique_id": entity_unique_id,
         }
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            otp_num_entity_cfg,
-        )
+        ret = await publish_entity(otp_num_entity_cfg)
         if ret is False:
             logger.error(f"{lp} Failed to publish OTP input number entity config")
 
@@ -1419,10 +1615,7 @@ class MQTTClient:
             "origin": ORIGIN_STRUCT,
             "device": bridge_device_reg_struct,
         }
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            num_tcp_devices_entity_conf,
-        )
+        ret = await publish_entity(num_tcp_devices_entity_conf)
         if ret is False:
             logger.warning(
                 f"{lp} Failed to publish number of TCP devices connected entity config"
@@ -1444,10 +1637,7 @@ class MQTTClient:
         )
         total_cync_devs_entity_conf["unique_id"] = entity_unique_id
         # total_cync_devs_entity_conf["unit_of_measurement"] = "Cync device(s)"
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            total_cync_devs_entity_conf,
-        )
+        ret = await publish_entity(total_cync_devs_entity_conf)
         if ret is False:
             logger.warning(
                 f"{lp} Failed to publish total Cync devices managed entity config"
@@ -1476,10 +1666,7 @@ class MQTTClient:
             "origin": ORIGIN_STRUCT,
             "device": bridge_device_reg_struct,
         }
-        ret = await self.publish_json_msg(
-            template_tpc.format(self.ha_topic, entity_type, entity_unique_id),
-            restart_sensor_entity_conf,
-        )
+        ret = await publish_entity(restart_sensor_entity_conf)
         if ret is False:
             logger.warning(f"{lp} Failed to publish should restart entity config")
         pub_tasks.append(
@@ -1499,27 +1686,14 @@ class MQTTClient:
             "device": bridge_device_reg_struct,
             "platform": "sensor",
         }
-        await self.publish_json_msg(
+        results.append(bool(await self.publish_json_msg(
             f"{self.ha_topic}/sensor/{app_count_unique_id}/config", app_count_conf
-        )
+        )))
 
-        # app_logging_unique_id = "cync_lan_bridge_app_logging"
-        # app_logging_conf = {
-        #     "name": "Global App MITM Logging",
-        #     "unique_id": app_logging_unique_id,
-        #     "command_topic": f"{self.topic}/set/bridge/app_logging",
-        #     "state_topic": f"{self.topic}/status/bridge/app_logging",
-        #     "icon": "mdi:file-find",
-        #     "device": bridge_device_reg_struct,
-        #     "platform": "switch",
-        # }
-        # await self.publish_json_msg(
-        #     f"{self.ha_topic}/switch/{app_logging_unique_id}/config", app_logging_conf
-        # )
 
         await asyncio.gather(*pub_tasks, return_exceptions=True)
         logger.debug(f"{lp} Bridge device config published and seeded")
-        return ret
+        return bool(results) and all(results)
 
     async def publish(self, topic: str, msg_data: bytes, retain: bool = None, qos: int = None):
         """Publish a message to the MQTT broker."""
@@ -1541,10 +1715,11 @@ class MQTTClient:
             logger.warning(
                 f"{lp} [MqttError] (rc: {mqtt_code_exc.rc}) -> {mqtt_code_exc}"
             )
-            self._connected = False
+            self._on_publish_failed()
         except asyncio.CancelledError as can_exc:
             logger.warning(f"{lp} [Task Cancelled] -> {can_exc}")
-        except Exception as e:
+            raise
+        except (OSError, ValueError, TypeError) as e:
             logger.warning(f"{lp} [Exception] -> {e}")
         else:
             return True
@@ -1570,6 +1745,7 @@ class MQTTClient:
             )
         except asyncio.CancelledError as can_exc:
             logger.warning(f"{lp} [Task Cancelled] -> {can_exc}")
+            raise
         except Exception as e:
             logger.warning(f"{lp} [Exception] -> {e}")
         else:
@@ -1612,9 +1788,29 @@ class MQTTClient:
         # logger.debug(f"{self.lp} Converting Cync temp: {ct} using scale: {scale} (max_k={max_k}, min_k={min_k}) -> return value: {ret}")
         return ret
 
-    def get_startup_topic_state_sync(self, topic_str: str, timeout_seconds: float = 3.0) -> getattr:
+    async def get_startup_topic_state(self, topic_str: str, timeout_seconds: float = 3.0) -> Optional[str]:
         """
-        Synchronously connects to the MQTT broker using Paho v2.1.0 guidelines,
+        Non-blocking wrapper around :meth:`get_startup_topic_state_sync`. The sync version does a
+        blocking connect and polls for several seconds, so it must never run on the event loop
+        (it used to freeze every TCP session and MQTT handler on each device's first connect).
+        """
+        if not self._connected:
+            return None
+        loop = asyncio.get_running_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, self.get_startup_topic_state_sync, topic_str, timeout_seconds
+                ),
+                timeout=timeout_seconds + 10,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"{self.lp}startup check: gave up waiting for {topic_str}")
+            return None
+
+    def get_startup_topic_state_sync(self, topic_str: str, timeout_seconds: float = 3.0) -> Optional[str]:
+        """
+        Synchronously (blocking, run it in an executor: see get_startup_topic_state) connects to the MQTT broker using Paho v2.1.0 guidelines,
         waits up to timeout_seconds for a retained message, and returns the string payload. Use case:
         Check for retained states, topic_str should be a /status/ topic so we can send it a b'OFF'
         payload to seed it as off if there are no retained states
@@ -1635,7 +1831,7 @@ class MQTTClient:
             try:
                 received_payload = msg.payload.decode("utf-8")
                 logger.debug(f"{lp} Retrieved retained payload: {received_payload}")
-            except Exception as err:
+            except UnicodeDecodeError as err:
                 logger.error(f"{lp} Error decoding payload: {err}")
                 received_payload = None
             operation_completed = True
@@ -1644,24 +1840,36 @@ class MQTTClient:
         client.on_connect = v2_on_connect
         client.on_message = v2_on_message
 
-        if CYNC_MQTT_USER and CYNC_MQTT_PASS:
-            client.username_pw_set(CYNC_MQTT_USER, CYNC_MQTT_PASS)
+        # same (reloaded) settings the main client connected with, not the import-time constants
+        host = self.broker_host or CYNC_MQTT_HOST
+        port = self.broker_port or CYNC_MQTT_PORT
+        user = self.broker_username or CYNC_MQTT_USER
+        password = self.broker_password or CYNC_MQTT_PASS
+        if user and password:
+            client.username_pw_set(user, password)
 
         try:
-            client.connect(CYNC_MQTT_HOST, int(CYNC_MQTT_PORT), keepalive=10)
-        except Exception as connection_err:
-            logger.exception(f"{lp} Unable to connect to broker at startup: {connection_err}")
+            client.connect(host, int(port), keepalive=10)
+        except (OSError, ValueError) as connection_err:
+            logger.warning(f"{lp} Unable to connect to broker at startup: {connection_err!r}")
             return None
 
-        start_time = time.time()
-        while not operation_completed:
-            client.loop(timeout=0.1)
+        try:
+            start_time = time.time()
+            while not operation_completed:
+                client.loop(timeout=0.1)
 
-            if (time.time() - start_time) > timeout_seconds:
-                logger.info(f"{lp} Timeout reached ({timeout_seconds}s). No retained message found, seeding off...")
-                publish_info = client.publish(topic_str, b"OFF", qos=0, retain=True)
-                publish_info.wait_for_publish(timeout=1.0)
-                break
-
-        client.disconnect()
+                if (time.time() - start_time) > timeout_seconds:
+                    logger.info(f"{lp} Timeout reached ({timeout_seconds}s). No retained message found, seeding off...")
+                    publish_info = client.publish(topic_str, b"OFF", qos=0, retain=True)
+                    publish_info.wait_for_publish(timeout=1.0)
+                    break
+        except (RuntimeError, OSError, ValueError) as err:
+            # e.g. RuntimeError from wait_for_publish when the connection dropped mid-way
+            logger.warning(f"{lp} startup check failed: {err!r}")
+        finally:
+            try:
+                client.disconnect()
+            except OSError:
+                pass
         return received_payload
