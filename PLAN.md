@@ -153,6 +153,12 @@ Things most likely to need a tweak: framer behavior with real traffic, availabil
 - Each phase: tests green, ruff clean on touched files, CHANGELOG line.
 
 
+## Capture and replay (docs/capture.md)
+- [x] `capture.py` + hooks in `devices/session.py`: `CYNC_CAPTURE_DIR` records rx/tx bytes with read boundaries and device info (type, firmware, node ids/types/endpoints); size caps; app sessions discarded; sanitizer + organizer CLI; `tests/replay_harness.py` and `tests/test_replay.py` replay every `tests/captures/type_*/fw_*/*.jsonl`.
+- Found while writing the tests: a session created outside `_register_new_connection` raises KeyError in `can_connect` (`tcp_conn_attempts` has no entry); only reachable from tests today. Capture creation originally ran before `ip_address` was set (would have crashed every session when enabled): caught by the live-capture test.
+- [x] Sanitizing on by default (`CYNC_CAPTURE_SANITIZE`): redacted in memory before writing (structure + values from your config/account/IP), marker bytes `DE AD BE EF` / `SANITIZED`, checksums recomputed, `sanitize_report` in each file, hashed filename, `--mesh-config` for offline cleanup. Limit: identifiers we cannot enumerate are not recognised, review before publishing.
+- [ ] Next: record real traffic on hardware, organize into tests/captures, then pin device-specific behaviour (state parsing per type/firmware) with replay tests.
+
 ## structs / model_info review
 structs.py (FIXED, tests/test_structs.py):
 - [x] `Tasks.cancel_all()` skipped `proxy_task` / `proxy_conn_watcher`; it now cancels them too and skips the calling task (the proxy task calls `close()` from inside itself).
