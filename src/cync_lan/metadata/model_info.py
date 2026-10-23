@@ -28,7 +28,8 @@ class LightCapabilities:
 
 @dataclass
 class SwitchCapabilities(LightCapabilities):
-    dimmable = False
+    # NOTE: `dimmable` deliberately keeps the inherited default (True). Switches are exposed to Home
+    # Assistant as lights (so a wired switch controls its whole group in sync), so brightness applies.
     fan: bool = False
     plug: bool = False
     motion: bool = False
@@ -82,41 +83,26 @@ class DeviceTypeInfo:
 
     @property
     def model_string(self) -> str:
-        """Return a string representation of the model name, ID and characteristics."""
-        base_str = self.model_name
-        add_str = ""
+        """Model name plus whatever identifying details we know: 'Name [ID 760 lum 2000-7000K 90 CRI 14W]'."""
+        parts: List[str] = []
         if self.model_id:
-            add_str = self.model_id
-        if self.type == DeviceClassification.LIGHT:
-            if self.characteristics:
-                if self.characteristics.lumens:
-                    if add_str:
-                        add_str += " "
-                    add_str += f"{self.characteristics.lumens} lum"
-                if self.characteristics.min_kelvin:
-                    if (
-                        self.characteristics.min_kelvin
-                        and self.characteristics.max_kelvin
-                    ):
-                        if (
-                            self.characteristics.min_kelvin
-                            != self.characteristics.max_kelvin
-                        ):
-                            kelvin_data = f"{self.characteristics.min_kelvin}-{self.characteristics.max_kelvin}K"
-                        else:
-                            kelvin_data = f"{self.characteristics.min_kelvin}K"
-                    else:
-                        kelvin_data = f"{self.characteristics.min_kelvin}K"
-                    if add_str:
-                        add_str += " "
-                    add_str += f"{kelvin_data}"
-                if self.characteristics.cri:
-                    if add_str:
-                        add_str += " "
-                        add_str += f"{self.characteristics.cri} CRI"
-        if add_str:
-            add_str = f" [{add_str}]"
-        return base_str + add_str
+            parts.append(self.model_id)
+        ch = self.characteristics
+        if self.type == DeviceClassification.LIGHT and ch:
+            if ch.lumens:
+                parts.append(f"{ch.lumens} lum")
+            if ch.min_kelvin:
+                if ch.max_kelvin and ch.max_kelvin != ch.min_kelvin:
+                    parts.append(f"{ch.min_kelvin}-{ch.max_kelvin}K")
+                else:
+                    parts.append(f"{ch.min_kelvin}K")
+            if ch.cri:
+                parts.append(f"{ch.cri} CRI")
+            if ch.wattage:
+                parts.append(f"{ch.wattage:g}W")
+        if not parts:
+            return self.model_name
+        return f"{self.model_name} [{' '.join(parts)}]"
 
 
 """Maps a device type ID to its corresponding DeviceTypeInfo."""
@@ -312,27 +298,27 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ Full Color Under Cabinet Light - 12 Inch",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(color=True, tunable_white=True, wattage=13.0),
-        characteristics=LightCharacteristics(lumens=750),
+        capabilities=LightCapabilities(color=True, tunable_white=True),
+        characteristics=LightCharacteristics(wattage=13.0, lumens=750),
     ),
     42: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ Full Color Under Cabinet Light - 18 Inch",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(color=True, tunable_white=True, wattage=19.0),
-        characteristics=LightCharacteristics(lumens=1150),
+        capabilities=LightCapabilities(color=True, tunable_white=True),
+        characteristics=LightCharacteristics(wattage=19.0, lumens=1150),
     ),
     43: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Reveal HD+ Full Color Under Cabinet Light - 24 Inch",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(color=True, tunable_white=True, wattage=24.0),
-        characteristics=LightCharacteristics(lumens=1500),
+        capabilities=LightCapabilities(color=True, tunable_white=True),
+        characteristics=LightCharacteristics(wattage=24.0, lumens=1500),
     ),
     46: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name='Reveal Full Color 4" Recessed Downlight',
-        model_info="CFIXRSCR4CRVD",
+        model_id="CFIXRSCR4CRVD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(color=True, tunable_white=True),
         characteristics=LightCharacteristics(wattage=13.0)
@@ -340,7 +326,7 @@ device_type_map = {
     47: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name='Reveal Full Color 6" Recessed Downlight',
-        model_info="CFIXRSCR6CRVD",
+        model_id="CFIXRSCR6CRVD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(color=True, tunable_white=True),
         characteristics=LightCharacteristics(wattage=16.0)
@@ -449,7 +435,7 @@ device_type_map = {
     71: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Dynamic Effects Premium Thin Light Strip",
-        model_info="CSTR16CDID",
+        model_id="CSTR16CDID",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
         characteristics=LightCharacteristics(wattage=24.0)
@@ -466,7 +452,7 @@ device_type_map = {
     75: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Dynamic Effects 24' Cafe` Lights",
-        model_info="CCF24CDOD",
+        model_id="CCF24CDOD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True, dynamic=True),
         characteristics=LightCharacteristics(
@@ -476,7 +462,7 @@ device_type_map = {
     76: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Dynamic Effects 48' Cafe` Lights",
-        model_info="CCF48CDOD",
+        model_id="CCF48CDOD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True, dynamic=True),
         characteristics=LightCharacteristics(
@@ -522,7 +508,7 @@ device_type_map = {
     107: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Full Color Reveal HD+ Bulb",
-        model_info="CLEDA199CDRV",
+        model_id="CLEDA199CDRV",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(tunable_white=True, color=True),
         characteristics=LightCharacteristics(wattage=9.5)
@@ -571,7 +557,8 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Full Color A19 Bulb",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(tunable_white=True, color=True, wattage=9.5),
+        capabilities=LightCapabilities(tunable_white=True, color=True),
+        characteristics=LightCharacteristics(wattage=9.5),
     ),
     132: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -583,7 +570,8 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Full Color LED Light Strip Controller",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(tunable_white=True, color=True, wattage=12.0),
+        capabilities=LightCapabilities(tunable_white=True, color=True),
+        characteristics=LightCharacteristics(wattage=12.0),
     ),
     135: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
@@ -710,8 +698,7 @@ device_type_map = {
         type=DeviceClassification.LIGHT,
         model_name="Dynamic Effects E26 Bulb",
         protocol=DeviceProtocol(TCP=True),
-        capabilities=LightCapabilities(dimmable=True, color=True, tunable_white=True),
-        characteristics=LightCharacteristics(dynamic=True),
+        capabilities=LightCapabilities(dimmable=True, color=True, tunable_white=True, dynamic=True),
     ),
     156: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
