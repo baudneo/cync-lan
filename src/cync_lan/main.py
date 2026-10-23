@@ -28,7 +28,9 @@ from cync_lan.exporter import ExportServer
 from cync_lan.mqtt_client import MQTTClient
 from cync_lan.server import nCyncServer
 from cync_lan.structs import GlobalObject
+from cync_lan.supervisor import supervise
 from cync_lan.utils import (
+    ConfigError,
     check_for_uuid,
     check_python_version,
     parse_config,
@@ -73,6 +75,7 @@ g = GlobalObject()
 
 class CyncLAN:
     lp: str = "CyncLAN:"
+    failed: bool = False
     config_file: Optional[Path] = None
     _instance: Optional["CyncLAN"] = None
 
@@ -97,17 +100,26 @@ class CyncLAN:
         self.config_file = cfg_file = Path(CYNC_CONFIG_FILE_PATH).expanduser().resolve()
         tasks = []
 
+        nodes = None
         if cfg_file.exists():
-            g.ncync_server = nCyncServer(await parse_config(cfg_file))
+            try:
+                nodes = await parse_config(cfg_file)
+            except ConfigError as cfg_err:
+                logger.error(
+                    f"{lp} Cync config file {cfg_file.as_posix()} is unusable: {cfg_err}. The LAN bridge "
+                    f"will not start; visit the export page to create a new config file."
+                )
+        if nodes is not None:
+            g.ncync_server = nCyncServer(nodes)
             g.mqtt_client = MQTTClient()
-            g.ncync_server.start_task = n_start = asyncio.Task(
+            g.mqtt_client.start_task = m_start = asyncio.Task(
                 g.mqtt_client.start(), name=MQTT_CLIENT_START_TASK_NAME
             )
-            g.mqtt_client.start_task = m_start = asyncio.Task(
+            g.ncync_server.start_task = n_start = asyncio.Task(
                 g.ncync_server.start(), name=nCYNC_START_TASK_NAME
             )
-            tasks.extend([n_start, m_start])
-        else:
+            tasks.extend([m_start, n_start])
+        elif not cfg_file.exists():
             logger.error(
                 f"{lp} Cync config file not found at {cfg_file.as_posix()}. Please migrate "
                 f"an existing config file or visit the ingress page and perform a device export."
@@ -115,7 +127,7 @@ class CyncLAN:
         if CYNC_ENABLE_EXPORTER is True:
             if not CYNC_SECRET_KEY:
                 logger.critical(
-                    f"{lp} You must set an non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting..."
+                    f"{lp} You must set a non-empty, alphanumeric CYNC_SECRET_KEY env var to use the export server. Exiting..."
                 )
                 signal.raise_signal(signal.SIGTERM)
                 sys.exit(55)
@@ -126,14 +138,14 @@ class CyncLAN:
             )
             tasks.append(x_start)
 
-        try:
-            # the components start() methods have long running tasks of their own
-            await asyncio.gather(*tasks, return_exceptions=True)
-        except Exception as e:
-            logger.exception(f"{lp} Exception occurred while starting services: {e}")
-            # Stop all services if any service fails to start
-            await self.stop()
-            raise e
+        if not tasks:
+            logger.critical(f"{lp} Nothing to run (no usable config file and the exporter is disabled)")
+            self.failed = True
+            return
+        # the components start() methods have long running tasks of their own
+        self.failed = await supervise(tasks, self.stop)
+        if self.failed:
+            logger.critical(f"{lp} A core service stopped unexpectedly, see errors above")
 
     async def stop(self):
         """Stop the nCync server, MQTT client, and Export server."""
@@ -174,7 +186,7 @@ def parse_cli():
             logger.error(
                 "dotenv module is not installed. Please install it with 'pip install python-dotenv'"
             )
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Failed to read environment file {env_path}: {e}")
         else:
             if not env_path.exists():
@@ -208,8 +220,14 @@ def main():
     except Exception as e:
         logger.exception(f"{lp} Caught exception: {e}")
     else:
-        logger.info(f"{lp} CyncLAN stack stopped gracefully, bye!")
+        if g.cync_lan.failed:
+            logger.error(f"{lp} CyncLAN stack stopped after a service failure")
+        else:
+            logger.info(f"{lp} CyncLAN stack stopped gracefully, bye!")
     finally:
         if g.loop is not None:
             if not g.loop.is_closed():
                 g.loop.close()
+    if g.cync_lan.failed:
+        # non-zero exit so docker/systemd restart policies kick in
+        sys.exit(1)

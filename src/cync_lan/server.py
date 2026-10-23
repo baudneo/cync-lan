@@ -1,14 +1,14 @@
 import asyncio
 import logging
 import ssl
-import time
 from typing import Dict, Optional, Union
 
 import uvloop
 
 from cync_lan.const import CYNC_LOG_NAME, CYNC_SRV_HOST, CYNC_SRV_PORT
 from cync_lan.devices import CyncDevice, CyncTCPSession
-from cync_lan.structs import EntityState, GlobalObject
+from cync_lan.stats import stats
+from cync_lan.structs import GlobalObject
 
 __all__ = [
     "nCyncServer",
@@ -23,9 +23,9 @@ class nCyncServer:
     The Wi-Fi devices translate messages, status updates and commands to/from the Cync BTLE mesh.
     """
 
-    node_devices: Dict[int, CyncDevice] = {}
-    tcp_connections: Dict[str, Optional[CyncTCPSession]] = {}
-    app_tcp_connections: Dict[str, Optional[CyncTCPSession]] = {}
+    node_devices: Dict[int, CyncDevice]
+    tcp_connections: Dict[str, Optional[CyncTCPSession]]
+    app_tcp_connections: Dict[str, Optional[CyncTCPSession]]
     shutting_down: bool = False
     running: bool = False
     host: str
@@ -51,6 +51,8 @@ class nCyncServer:
 
     def __init__(self, node_map: Dict[int, "CyncDevice"]):
         self.node_devices: Dict[int, "CyncDevice"] = node_map
+        self.tcp_connections = {}
+        self.app_tcp_connections = {}
         self.tcp_conn_attempts: dict = {}
         self.ssl_context: Optional[ssl.SSLContext] = None
         self.host: str = CYNC_SRV_HOST
@@ -174,6 +176,7 @@ class nCyncServer:
             raise ce
         except Exception as e:
             logger.exception("%s Failed to start server: %s" % (lp, e))
+            raise
         else:
             logger.info(
                 f"{lp} bound to {self.host}:{self.port} - Waiting for connections from Cync devices, if you dont"
@@ -192,6 +195,7 @@ class nCyncServer:
                 raise ce
             except Exception as e:
                 logger.exception("%s Server Exception: %s" % (self.lp, e))
+                raise
             else:
                 logger.debug(
                     f"{lp} DEBUG>>> AFTER self._server.serve_forever() <<<DEBUG"
@@ -260,6 +264,7 @@ class nCyncServer:
             self.tcp_conn_attempts[client_addr] += 1
         else:
             self.tcp_conn_attempts[client_addr] = 1
+        stats.inc("connections_accepted")
         lp = f"{self.lp}new_conn:{client_addr}:"
         existing_device = await self.remove_tcp_device(client_addr)
         if existing_device is not None:
@@ -293,4 +298,7 @@ class nCyncServer:
             # propagate the cancellation
             raise ce
         except Exception as e:
+            # boundary of a client_connected callback: log it, and don't leak the socket
+            stats.inc("connection_setup_failures")
             logger.exception(f"{lp} Error creating new Cync Wi-Fi device: {e}")
+            writer.close()
