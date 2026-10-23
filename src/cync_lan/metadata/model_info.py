@@ -777,9 +777,12 @@ device_type_map = {
     ),
     170: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
-        model_name='4" Wafer Light',
+        model_name='Reveal HD+ Full Color 6 Inch Wafer Downlight',
+        model_id="CFIXCNLR6CRVD",
         protocol=DeviceProtocol(TCP=True),
         capabilities=LightCapabilities(dimmable=True, color=True, tunable_white=True),
+        characteristics=LightCharacteristics(reveal=True, lumens=1000, cri=95, wattage=16, min_kelvin=2000, max_kelvin=7000),
+        confirmed_by="baudneo",
     ),
     224: DeviceTypeInfo(
         type=DeviceClassification.THERMOSTAT,
