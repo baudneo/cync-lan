@@ -10,16 +10,13 @@ readme = "README.md"
 authors = [{name = "baudneo", email = "86508179+baudneo@users.noreply.github.com"}]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "License :: OSI Approved :: MIT License",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "pyyaml==6.0.2",
     "uvloop>=0.21.0",
@@ -33,6 +30,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "python-dotenv>=1.1.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -48,7 +49,7 @@ Issues = "https://github.com/baudneo/cync-lan/issues"
 line-length = 88
 
 # Target Python 3.14 based on your project's requires-python
-target-version = "py314"
+target-version = "py312"
 
 [tool.ruff.lint]
 # Enable specific rule sets:
@@ -60,7 +61,8 @@ target-version = "py314"
 select = ["E", "F", "I", "B"]
 
 # Ignore specific rules if they get too noisy (leave empty to start)
-ignore = []
+# E501: line length is mostly long log f-strings; not worth churn
+ignore = ["E501"]
 
 # Allow Ruff to automatically fix issues when you pass the --fix flag
 #fixable = ["ALL"]
@@ -72,3 +74,8 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
