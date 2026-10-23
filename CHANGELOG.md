@@ -1,7 +1,7 @@
 ### 0.0.7b3
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
 - All fixes thanks to [crdson93](https://github.com/crdson93)
-- See https://github.com/baudneo/cync-lan/issues/39#issuecomment-6352246444
+- See https://github.com/baudneo/cync-lan/issues/39
 - Reap stale TCP connections
 - Properly close TCP connection by ref rather than pop() and replace
 - Don't exclude Cync devices from tcp pool logic
