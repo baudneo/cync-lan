@@ -566,6 +566,9 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                 logger.debug(f"{lp} Python object mismatch between the global device and this one, replacing...")
                 g.ncync_server.tcp_connections[self.ip_address] = self
             # no need
+        if not self.is_app:
+            # the pool just shrank: bulbs the other bridges already reported stale may now meet the vote
+            await g.ncync_server.revote_offline()
 
     @property
     def reader(self):

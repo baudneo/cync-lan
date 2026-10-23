@@ -19,6 +19,7 @@ from cync_lan.metadata.model_info import (
     device_type_map,
 )
 from cync_lan.packet import PacketBuilder
+from cync_lan.stats import stats
 from cync_lan.structs import (
     ControlMessageCallback,
     EntityState,
@@ -425,6 +426,26 @@ class CyncDevice:
     def __str__(self):
         return f"CyncDevice:{self.id}:"
 
+    def stale_vote_passes(self, tcp_count: int) -> bool:
+        """With one TCP node, stale data immediately marks offline. With several, wait until the number of stale
+        reports reaches the node count."""
+        tcp_count = tcp_count or 1
+        return tcp_count == 1 or self.num_late_states >= tcp_count
+
+    def revote_stale(self, tcp_count: int) -> bool:
+        """Re-run the stale vote after the TCP pool shrank. Stale reports are only evaluated when they arrive, so if a
+        dead bridge session is reaped *after* the other bridges reported this device stale, nothing would ever
+        re-check the vote against the smaller pool. Returns True if the device was just marked offline."""
+        if self.num_late_states < 1 or not self.online or not self.stale_vote_passes(tcp_count):
+            return False
+        self.online = False
+        stats.inc("offline_revotes")
+        logger.warning(
+            f"{self.lp} marked OFFLINE on re-vote after the TCP pool shrank "
+            f"(stale state count {self.num_late_states} / num tcp nodes {tcp_count or 1})"
+        )
+        return True
+
     async def handle_entity_update(
         self,
         e_state: EntityState,
@@ -446,10 +467,7 @@ class CyncDevice:
             self.num_late_states += 1
             tcp_pool = await g.ncync_server.get_dev_tcp_pool()
             tcp_count = len(tcp_pool) or 1
-            # With one TCP node, stale data immediately marks offline.
-            # With multiple TCP nodes, wait until stale reports match node count.
-            should_mark_offline = tcp_count == 1 or self.num_late_states >= tcp_count
-            if should_mark_offline:
+            if self.stale_vote_passes(tcp_count):
                 if self.online:
                     self.online = False
                     logger.warning(
