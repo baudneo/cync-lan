@@ -41,6 +41,7 @@ __all__ = [
     "CYNC_MQTT_CONN_DELAY",
     "CYNC_CMD_BROADCASTS",
     "CYNC_MAX_TCP_CONN",
+    "CYNC_MESH_REFRESH_SECS",
     "CYNC_TCP_WHITELIST",
     "CYNC_API_BASE",
     "CYNC_MQTT_HOST",
@@ -124,6 +125,13 @@ else:
         CYNC_MAX_TCP_CONN = int(CYNC_MAX_TCP_CONN)
     except ValueError:
         CYNC_MAX_TCP_CONN = 8
+# re-ask every TCP bridge for mesh info this often, in seconds (0 = only on connect). Bridges seem to push 0x83 status
+# changes, including the stale flag that marks a powered-off bulb offline, only for a few minutes after a request.
+CYNC_MESH_REFRESH_SECS: float = os.environ.get("CYNC_MESH_REFRESH_SECS", 0)
+try:
+    CYNC_MESH_REFRESH_SECS = max(0.0, float(CYNC_MESH_REFRESH_SECS or 0))
+except ValueError:
+    CYNC_MESH_REFRESH_SECS = 0.0
 CYNC_TCP_WHITELIST: Optional[Union[str, List[Optional[str]]]] = os.environ.get(
     "CYNC_TCP_WHITELIST"
 )
