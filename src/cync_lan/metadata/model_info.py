@@ -61,6 +61,7 @@ class LightCharacteristics:
     lumens: Optional[Annotated[int, Field(ge=10)]] = None
     cri: Optional[Annotated[int, Field(ge=5, le=100)]] = None
     wattage: Optional[Annotated[float, Field(ge=0.01, le=5000.0)]] = None
+    reveal: bool = False
 
 
 
