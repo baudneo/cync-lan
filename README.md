@@ -146,6 +146,8 @@ See the example [config file](./cync_mesh_example.yaml)
 ### Export config from Cync cloud API
 By default, the export webserver is started when cync-lan is. Navigate to http://localhost:23778 to access the export web app.
 
+The export web app can download your account's device config (including access keys) and restart the bridge, so it asks for an access token. Set `CYNC_EXPORT_TOKEN`, or leave it unset and cync-lan derives one from `CYNC_SECRET_KEY` and prints it in the log at startup (`The export web app asks for an access token, enter: ...`). Outside Docker it only listens on `127.0.0.1` unless you set `CYNC_EXPORT_HOST`; the Docker image sets it to `0.0.0.0` so the published port works, so only publish the port to networks you trust.
+
 ---
 
 ## Env Vars
@@ -175,7 +177,8 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_DEVICE_KEY`            | Path to key file                                                                                               | `certs/server.key`                    | str  |
 | `CYNC_SRV_HOST`              | Interface to listen on                                                                                         | `0.0.0.0`                             | str  |
 | `CYNC_PORT`                  | Port to listen for Cync devices (Do NOT change, unless you know what you are doing)                            | `23779`                               | int  |
-| `CYNC_EXPORT_HOST`           | Host for export web app                                                                                        | `{CYNC_SRV_HOST}`                     | str  |
+| `CYNC_EXPORT_HOST`           | Host for export web app. Loopback by default; the official image sets `0.0.0.0` (HA app: `{CYNC_SRV_HOST}`)     | `127.0.0.1`                           | str  |
+| `CYNC_EXPORT_TOKEN`          | Access token the export web app asks for. If unset it is derived from `CYNC_SECRET_KEY` and printed in the log at startup | derived                               | str  |
 | `CYNC_EXPORT_PORT`           | Port for export web app                                                                                        | `23778`                               | int  |
 | `CYNC_TOPIC`                 | MQTT topic                                                                                                     | `cync_lan`                            | str  |
 | `CYNC_HASS_TOPIC`            | Home Assistant topic                                                                                           | `homeassistant`                       | str  |

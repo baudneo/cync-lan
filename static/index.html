@@ -65,6 +65,26 @@
     const BASE_PATH = window.location.pathname.replace(/\/[^\/]*$/, '');
     const toast = document.getElementById('toast');
 
+    // Access token for the API (see the cync-lan log on startup, or CYNC_EXPORT_TOKEN).
+    // Kept in sessionStorage only, so it is forgotten when the tab closes.
+    async function apiFetch(url, opts = {}, retry = true) {
+      const token = sessionStorage.getItem('cync_token');
+      const headers = Object.assign({}, opts.headers || {});
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const response = await fetch(url, Object.assign({}, opts, { headers }));
+      if (response.status === 401) {
+        sessionStorage.removeItem('cync_token');
+        if (retry) {
+          const entered = window.prompt('Access token (shown in the cync-lan log at startup, or CYNC_EXPORT_TOKEN):');
+          if (entered) {
+            sessionStorage.setItem('cync_token', entered.trim());
+            return apiFetch(url, opts, false);
+          }
+        }
+      }
+      return response;
+    }
+
     function showToast(msg) {
       toast.textContent = msg;
       toast.classList.remove('hidden');
@@ -95,7 +115,7 @@
       spinner.classList.remove('hidden');
 
       try {
-        const response = await fetch(`./api/export/start`);
+        const response = await apiFetch(`./api/export/start`, { method: 'POST' });
         const result = await response.json();
         if (response.ok && result.success) {
           await fetchAndShowConfig();
@@ -118,7 +138,7 @@
       if (!/^[0-9]{4,10}$/.test(otp)) return showError("OTP must be 4–10 digits");
 
       try {
-        const response = await fetch(`./api/export/otp/submit`, {
+        const response = await apiFetch(`./api/export/otp/submit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ otp: otp })
@@ -138,8 +158,9 @@
 
     async function restartServer() {
       try {
-        const response = await fetch(`./api/restart`, { method: 'POST' });
+        const response = await apiFetch(`./api/restart`, { method: 'POST' });
         if (response.ok) showToast('Server restart requested.');
+        else showError('Restart failed (HTTP ' + response.status + ').');
       } catch (e) {
         showError('Restart error: ' + e.message);
       }
@@ -147,12 +168,14 @@
 
     async function fetchAndShowConfig() {
       try {
-        const response = await fetch(`./api/export/download`);
+        const response = await apiFetch(`./api/export/download`);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const text = await response.text();
         const code = document.querySelector('#yamlPreview code');
         code.textContent = text;
         Prism.highlightElement(code);
-        document.getElementById('downloadLink').href = `./api/export/download`;
+        // a plain link can't send the Authorization header, so build the download from the fetched text
+        document.getElementById('downloadLink').href = URL.createObjectURL(new Blob([text], { type: 'text/yaml' }));
         document.getElementById('successSection').classList.remove('hidden');
       } catch (e) {
         showError("Failed to load config: " + e.message);

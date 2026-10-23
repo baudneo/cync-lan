@@ -91,10 +91,16 @@ MQTT_DEBUG = os.environ.get("CYNC_MQTT_DEBUG", "1").casefold() in YES_ANSWER
 MQTT_DEAD = os.environ.get("CYNC_MQTT_DEAD", "0").casefold() in YES_ANSWER
 
 CYNC_SRV_HOST = os.environ.get("CYNC_SRV_HOST", "0.0.0.0")
-CYNC_EXPORT_HOST = os.environ.get("CYNC_EXPORT_HOST", CYNC_SRV_HOST)
-CYNC_EXPORT_SOURCE = os.environ.get("CYNC_EXPORT_SOURCE")
-
 CYNC_HASS_APP = os.environ.get("CYNC_HASS_APP", "no") in YES_ANSWER
+# The export web app can download the cloud config (access keys) and restart the bridge, so it
+# only listens on loopback unless told otherwise. The HA app is reached through ingress from
+# another container and must listen on all interfaces; ingress authenticates the user.
+CYNC_EXPORT_HOST = os.environ.get(
+    "CYNC_EXPORT_HOST", CYNC_SRV_HOST if CYNC_HASS_APP else "127.0.0.1"
+)
+CYNC_EXPORT_SOURCE = os.environ.get("CYNC_EXPORT_SOURCE")
+# Optional fixed access token for the export web app (otherwise derived from CYNC_SECRET_KEY)
+CYNC_EXPORT_TOKEN = os.environ.get("CYNC_EXPORT_TOKEN")
 
 CYNC_ACCOUNT_LANGUAGE: str = os.environ.get("CYNC_ACCOUNT_LANGUAGE", "en-us").casefold()
 CYNC_ACCOUNT_USERNAME: str = os.environ.get("CYNC_ACCOUNT_USERNAME", None)
