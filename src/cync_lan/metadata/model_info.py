@@ -78,6 +78,7 @@ class DeviceTypeInfo:
         default=True, description="Whether this device type is supported"
     )
     notes: Optional[List[str]] = None
+    confirmed_by: Optional[str] = None
 
     @property
     def model_string(self) -> str:
