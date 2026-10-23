@@ -1836,13 +1836,18 @@ class CyncTCPSession:
 
 
     async def connection_watcher_task(self, conn_type: ConnectionType):
-        """Go through the callback queue and remove any callbacks that are older than 5 minutes"""
+        """
+        Check timestamps on last received data and close the connection if it has been too
+        long since the last packet was received.
+        """
         lp = f"{self.lp}conn_watch:"
         logger.debug(f"{lp} Starting background {conn_type.value} task")
         # most devices send a d3 ping every 20 seconds if no other data has come through
         threshold = 22.5
         delay_seconds = 5
-        if not self.is_app:
+        if conn_type == ConnectionType.device and self.is_app:
+            # fixme: remember wth I was doing here, think it was from the proxy add and then trying to also
+            #  handle app connections. From the looks of it, we dont even need this. check self.is_app usage
             return
         try:
             while True:
@@ -1855,6 +1860,7 @@ class CyncTCPSession:
                 elif conn_type == ConnectionType.proxy:
                     name = self.tasks.proxy_conn_watcher.get_name()
                     last_packet_ts = self.proxy_last_packet_ts
+                    # hypothesis
                     threshold = 40
                 if last_packet_ts:
                     elapsed = now - last_packet_ts
@@ -2066,20 +2072,18 @@ class CyncTCPSession:
         self.closing = False
         self._closed = True
         if self.ip_address in g.ncync_server.tcp_connections:
-            # check if states match
-            g_dev = g.ncync_server.tcp_connections.pop(self.ip_address)
+            # ref
+            g_dev = g.ncync_server.tcp_connections[self.ip_address]
             state_closing = self.closing == g_dev.closing
-            state_closed = self._closed == g_dev.closed
+            state_closed = self._closed == g_dev._closed
             if state_closed is False or state_closing is False:
-                logger.debug(f"{lp} There is a mismatch between states in the global device and this device: closed: {state_closed | closing: {state_closing}}, replacing...")
-                del g_dev
+                logger.debug(
+                    f"{lp} Mismatch between states in the global device and this device (closed: {state_closed} | closing: {state_closing}), replacing...")
                 g.ncync_server.tcp_connections[self.ip_address] = self
             elif g_dev != self:
-                logger.debug(f"{lp} There is a python object mismatch between the global device and this one...")
-                del g_dev
+                logger.debug(f"{lp} Python object mismatch between the global device and this one, replacing...")
                 g.ncync_server.tcp_connections[self.ip_address] = self
-            else:
-                g.ncync_server.tcp_connections[self.ip_address] = g_dev
+            # no need
 
     @property
     def reader(self):

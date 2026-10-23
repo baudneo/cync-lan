@@ -44,10 +44,10 @@ class nCyncServer:
         return cls._instance
 
     async def get_dev_tcp_pool(self):
-        return [d for d in self.tcp_connections.values() if not d.is_closed() or not d.is_app]
+        return [d for d in self.tcp_connections.values() if not d.is_closed() and not d.is_app]
 
     def get_dev_tcp_pool_sync(self):
-        return [d for d in self.tcp_connections.values() if not d.is_closed() or not d.is_app]
+        return [d for d in self.tcp_connections.values() if not d.is_closed() and not d.is_app]
 
     def __init__(self, node_map: Dict[int, "CyncDevice"]):
         self.node_devices: Dict[int, "CyncDevice"] = node_map
