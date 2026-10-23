@@ -50,8 +50,8 @@ class nCyncServer:
         """Re-run every device's stale vote against the current TCP pool (called when a device session closes)."""
         if g.mqtt_client is None:
             return 0
-        pool_size = len(await self.get_dev_tcp_pool())
-        return sum(dev.revote_stale(pool_size) for dev in self.node_devices.values())
+        live_ips = [d.ip_address for d in await self.get_dev_tcp_pool()]
+        return sum(dev.revote_stale(live_ips) for dev in self.node_devices.values())
 
     def get_dev_tcp_pool_sync(self):
         return [d for d in self.tcp_connections.values() if not d.is_closed() and not d.is_app]
