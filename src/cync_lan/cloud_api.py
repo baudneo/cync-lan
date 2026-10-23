@@ -2,16 +2,14 @@ import base64
 import datetime
 import json
 import logging
-import os
 import random
-import signal
 import string
 from pathlib import Path
 from typing import Optional
 
 import aiohttp
 import yaml
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
@@ -30,6 +28,7 @@ from cync_lan.const import (
     CYNC_SECRET_KEY,
 )
 from cync_lan.structs import ComputedTokenStruct, EntityState, GlobalObject
+from cync_lan.utils import write_private_file
 
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
@@ -92,7 +91,7 @@ class CyncCloudAPI:
         except FileNotFoundError:
             logger.debug(f"{lp} Token cache file not found: {self.auth_cache_file}")
             return None
-        except Exception as e:
+        except (InvalidToken, ValueError, TypeError, RuntimeError, OSError) as e:
             logger.error(
                 f"{lp} Failed to decrypt or parse token cache. It may be corrupt or the secret key changed: {e}"
             )
@@ -150,7 +149,6 @@ class CyncCloudAPI:
                 return False
         return True
 
-    async def refresh_access_token(self) -> bool:
         lp = f"{self.lp}:refresh token:"
         return await self._send_tkn_post(
             f"{CYNC_API_BASE}user/token/refresh",
@@ -167,20 +165,24 @@ class CyncCloudAPI:
         elif not isinstance(otp_code, str):
             otp_code = str(otp_code)
 
+        otp_code = otp_code.strip()
         if not otp_code.isnumeric():
-            logger.error(f"OTP code must be numeric")
+            logger.error("OTP code must be numeric")
+            return False
+        if not CYNC_ACCOUNT_USERNAME or not CYNC_ACCOUNT_PASSWORD:
+            logger.error(f"{lp} Cync account username or password not set, cannot authenticate!")
+            return False
         api_auth_url = f"{CYNC_API_BASE}user_auth/two_factor"
         resource = "".join(random.choices(string.ascii_letters + string.digits, k=16))
         auth_data = {
             "corp_id": CYNC_CORP_ID,
             "email": CYNC_ACCOUNT_USERNAME,
             "password": CYNC_ACCOUNT_PASSWORD[:16],
-            "two_factor": otp_code.strip(),
+            "two_factor": otp_code,
             "resource": resource,
         }
         logger.debug(
-            f"{lp} Sending OTP code: {otp_code} (class: {type(otp_code)}) to Cync Cloud API for "
-            f"authentication with resource: {resource}"
+            f"{lp} Sending OTP code to Cync Cloud API for authentication with resource: {resource}"
         )
         return await self._send_tkn_post(api_auth_url, auth_data)
 
@@ -202,8 +204,8 @@ class CyncCloudAPI:
         except KeyError as ke:
             logger.error(f"Failed to get key from JSON: {ke}")
             return False
-        except Exception as e:
-            logger.exception(f"Failed to refresh credentials")
+        except (aiohttp.ClientError, TimeoutError, OSError):
+            logger.exception("Failed to refresh credentials")
             return False
         else:
             # add issued_at to the token data for computing the expiration datetime
@@ -223,15 +225,13 @@ class CyncCloudAPI:
             json_data = tkn.model_dump_json().encode("utf-8")
             cipher = self._get_fernet_cipher()
             encrypted_data = cipher.encrypt(json_data)
-            with open(self.auth_cache_file, "wb") as f:
-                f.write(encrypted_data)
-            os.chmod(self.auth_cache_file, 0o777)
+            write_private_file(self.auth_cache_file, encrypted_data, 0o600)
             logger.debug(
                 f"{lp} Token cache encrypted and written successfully to: {self.auth_cache_file}"
             )
             self.token_cache = tkn
             return True
-        except Exception as e:
+        except (OSError, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"{lp} Failed to write encrypted token cache: {e}")
             return False
 
@@ -294,9 +294,11 @@ class CyncCloudAPI:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.api_timeout),
             )
+            r.raise_for_status()
             ret = await r.json()
-        except aiohttp.ClientResponseError as e:
+        except aiohttp.ClientError as e:
             logger.error(f"{lp} Failed to get device properties: {e}")
+            raise RuntimeError(f"{lp} cloud request failed: {e}") from e
         except json.JSONDecodeError as je:
             logger.error(f"{lp} Failed to decode JSON: {je}")
             raise je
@@ -306,8 +308,10 @@ class CyncCloudAPI:
 
         # {'error': {'msg': 'Access-Token Expired', 'code': 4031021}}
         logit = False
-        if "error" in ret:
+        if isinstance(ret, dict) and "error" in ret:
             error_data = ret["error"]
+            if not isinstance(error_data, dict):
+                error_data = {"msg": str(error_data)}
             if "msg" in error_data and error_data["msg"]:
                 if error_data["msg"].lower() == "access-token expired":
                     raise Exception(
@@ -361,7 +365,7 @@ class CyncCloudAPI:
                 try:
                     with src_file.open("r") as f:
                         exported_data = yaml.safe_load(f)
-                except Exception as file_exc:
+                except (OSError, yaml.YAMLError, UnicodeDecodeError) as file_exc:
                     logger.error(
                         f"{self.lp} Failed to read export source file: {CYNC_EXPORT_SOURCE} -> {file_exc}"
                     )
@@ -385,10 +389,9 @@ class CyncCloudAPI:
                 )
                 counter += 1
         try:
-            with raw_cfg_file_out.open("w") as f:
-                f.write(yaml.dump(cync_lan_cfg))
-            os.chmod(raw_cfg_file_out, 0o777)
-        except Exception as file_exc:
+            # contains each home's access_key, keep it private
+            write_private_file(raw_cfg_file_out, yaml.dump(cync_lan_cfg), 0o600)
+        except OSError as file_exc:
             logger.error(
                 f"{self.lp} Failed to write cync-lan config to file: {CYNC_CONFIG_FILE_PATH} -> {file_exc}"
             )
@@ -396,16 +399,114 @@ class CyncCloudAPI:
         else:
             return True
 
+    def _parse_raw_device(
+        self, raw_device: dict, raw_home: dict, new_home: dict, entity_reg: dict
+    ) -> None:
+        """Convert one cloud 'bulbsArray' entry into cync-lan config; raises on malformed data."""
+        lp = f"{self.lp}:parse export:"
+        if any(
+            checkattr not in raw_device
+            for checkattr in (
+                "deviceID",
+                "displayName",
+                "mac",
+                "deviceType",
+                "firmwareVersion",
+            )
+        ):
+            logger.warning(
+                f"{lp} Missing required attribute (deviceID, displayName, deviceType, MACs, firmwareVersion) in Cync device, skipping: {raw_device}"
+            )
+            return
+        new_device: dict = {}
+        wifi_mac = str(raw_device.get("wifiMac", "00:01:02:03:04:05"))
+        bt_mac = str(raw_device["mac"])
+        dev_name = str(raw_device["displayName"])
+        dev_type = int(raw_device["deviceType"])
+        fw_ver = str(raw_device["firmwareVersion"])
+        # switchID ? maybe links them in their logic?
+        raw_id = str(raw_device["deviceID"])
+        home_id = raw_id[:9]
+        raw_dev = raw_id.split(home_id)[1]
+        dev_id = int(raw_dev[-3:])
+        sub_id = 0
+        # Seems the thermostat has a multi-endpoint deviceID but is a single entry
+        # 169573386
+        # 7 (multi endpoint is 3 digit, this is only 1)
+        # 009
+        # { "hvacSystem": { "changeoverMode": 0, "auxHeatStages": 1, "auxFurnaceType": 1, "stages": 1, "furnaceType": 1, "type": 2, "powerLines": 1 },
+        # "thermostatSensors": [ { "pin": "025572", "name": "Living Room", "type": "savant" }, { "pin": "044604", "name": "Bedroom Sensor", "type": "savant" }, { "pin": "022724", "name": "Thermostat sensor 3", "type": "savant" } ] } ]
+        hvac_cfg = None
+        if "hvacSystem" in raw_device:
+            hvac_cfg = raw_device["hvacSystem"]
+            if "thermostatSensors" in raw_device:
+                hvac_cfg["thermostatSensors"] = raw_device["thermostatSensors"]
+            logger.debug(
+                f"{lp} Found HVAC device '{dev_name}' (ID: {dev_id}): {hvac_cfg}"
+            )
+            logger.info(
+                f"{lp} HVAC devices are currently unsupported, work is in progress to "
+                f"get the thermostat and temp sensors added"
+            )
+            return
+            new_device["hvac"] = hvac_cfg
+        if len(raw_dev) > 4:
+            # firmwareVersion = Unknown is also an identifier for sub-devices
+            # sub-device wifiMac will always be 01:02:03:04:05:06 even if parent has WiFi, BT MACs match
+            sub_id = int(raw_dev[:3])
+            if dev_id in entity_reg:
+                if sub_id in entity_reg[dev_id]:
+                    logger.error(
+                        f"{lp} Duplicate sub-device ID {sub_id} found for parent device ID {dev_id} in home "
+                        f"'{raw_home['name']}' (device name: '{dev_name}'), Please open an issue with debug "
+                        f"logs enabled..."
+                    )
+                    return
+            logger.info(
+                f"{lp} Staging sub-device ({sub_id}) named: '{dev_name}' with parent device ID {dev_id} in "
+                f"home '{raw_home['name']}' devices registry"
+            )
+            state = EntityState(dev_id=dev_id, sub_id=sub_id, name=dev_name)
+            if dev_id in entity_reg:
+                entity_reg[dev_id][sub_id] = state.name
+            else:
+                entity_reg[dev_id] = {sub_id: state.name}
+            return
+        elif len(raw_dev) == 4:
+            logger.debug(
+                f"{lp} FOUND: '{dev_name}' has a thermostat related quirk with a value of: {raw_dev[3]}"
+            )
+        # END OF SUB DEVICE PARSING
+
+        new_device["name"] = dev_name
+        new_device["type"] = dev_type
+        # new_device["is_plug"] = cync_device.is_plug
+        # new_device["supports_temperature"] = cync_device.supports_temperature
+        # new_device["supports_rgb"] = cync_device.supports_rgb
+        new_device["fw"] = fw_ver
+        new_device["mac"] = bt_mac
+        new_device["wifi_mac"] = wifi_mac
+        # give it the default 0, if it has children, we will overwrite the 0
+        new_device["endpoints"] = {0: dev_name}
+        # del cync_device
+        new_home["devices"][dev_id] = new_device
+
     async def _parse_raw_export(self, exported_home_data: dict):
         """Take exported cloud data and format it into a working config dict to be dumped in YAML format."""
         lp = f"{self.lp}:parse export:"
         new_cfg = {}
+        skipped_devices = 0
+        if not isinstance(exported_home_data, list):
+            # e.g. {"error": {"msg": "Access-Token expired", ...}} instead of the list of homes
+            raise RuntimeError(
+                f"Unexpected response from the Cync cloud (expected a list of homes): {str(exported_home_data)[:300]}"
+            )
         # What we get from the Cync cloud API
         base_file_path = Path(CYNC_CONFIG_DIR) / "raw_mesh.cync"
         raw_file_out = base_file_path
         # strip out empty configs (IDK why, I have a bunch with access_code 77777 that are empty)
         for raw_home in exported_home_data:
-            if "name" not in raw_home or len(raw_home["name"]) < 1:
+            if not isinstance(raw_home, dict) or not raw_home.get("name"):
                 logger.debug(
                     f"{lp} No name found for Cync home (safely ignore), skipping..."
                 )
@@ -414,10 +515,16 @@ class CyncCloudAPI:
                 continue
             if "properties" not in raw_home:
                 # only pull device list for valid Cync homes
-                raw_home["properties"] = await self.get_cync_home_properties(
-                    raw_home["product_id"], raw_home["id"]
-                )
-            if "bulbsArray" not in raw_home["properties"]:
+                try:
+                    raw_home["properties"] = await self.get_cync_home_properties(
+                        raw_home["product_id"], raw_home["id"]
+                    )
+                except (RuntimeError, aiohttp.ClientError, OSError, TimeoutError, KeyError, ValueError, TypeError) as home_exc:
+                    logger.error(
+                        f"{lp} Could not get the device list for home '{raw_home['name']}' ({home_exc!r}), skipping it"
+                    )
+                    continue
+            if not isinstance(raw_home["properties"], dict) or "bulbsArray" not in raw_home["properties"]:
                 logger.debug(
                     f"{lp} No 'bulbsArray' in Cync home: '{raw_home['name']}' properties (safely ignore), skipping..."
                 )
@@ -432,102 +539,14 @@ class CyncCloudAPI:
             new_home["devices"] = {}
             entity_reg = {}
             for raw_device in raw_home["properties"]["bulbsArray"]:
-                if any(
-                    checkattr not in raw_device
-                    for checkattr in (
-                        "deviceID",
-                        "displayName",
-                        "mac",
-                        "deviceType",
-                        "firmwareVersion",
+                try:
+                    self._parse_raw_device(raw_device, raw_home, new_home, entity_reg)
+                except (KeyError, ValueError, TypeError, IndexError, AttributeError) as dev_exc:
+                    # one odd device must not abort the whole export
+                    skipped_devices += 1
+                    logger.error(
+                        f"{lp} Skipping a device that could not be parsed ({dev_exc!r}): {raw_device}"
                     )
-                ):
-                    logger.warning(
-                        f"{lp} Missing required attribute (deviceID, displayName, deviceType, MACs, firmwareVersion) in Cync device, skipping: {raw_device}"
-                    )
-                    continue
-                new_device: dict = {}
-                wifi_mac = str(raw_device.get("wifiMac", "00:01:02:03:04:05"))
-                bt_mac = str(raw_device["mac"])
-                dev_name = str(raw_device["displayName"])
-                dev_type = int(raw_device["deviceType"])
-                fw_ver = str(raw_device["firmwareVersion"])
-                # switchID ? maybe links them in their logic?
-                raw_id = str(raw_device["deviceID"])
-                home_id = raw_id[:9]
-                raw_dev = raw_id.split(home_id)[1]
-                dev_id = int(raw_dev[-3:])
-                sub_id = 0
-                parent = None
-                # Seems the thermostat has a multi-endpoint deviceID but is a single entry
-                # 169573386
-                # 7 (multi endpoint is 3 digit, this is only 1)
-                # 009
-                # { "hvacSystem": { "changeoverMode": 0, "auxHeatStages": 1, "auxFurnaceType": 1, "stages": 1, "furnaceType": 1, "type": 2, "powerLines": 1 },
-                # "thermostatSensors": [ { "pin": "025572", "name": "Living Room", "type": "savant" }, { "pin": "044604", "name": "Bedroom Sensor", "type": "savant" }, { "pin": "022724", "name": "Thermostat sensor 3", "type": "savant" } ] } ]
-                hvac_cfg = None
-                if "hvacSystem" in raw_device:
-                    hvac_cfg = raw_device["hvacSystem"]
-                    if "thermostatSensors" in raw_device:
-                        hvac_cfg["thermostatSensors"] = raw_device["thermostatSensors"]
-                    logger.debug(
-                        f"{lp} Found HVAC device '{dev_name}' (ID: {dev_id}): {hvac_cfg}"
-                    )
-                    logger.info(
-                        f"{lp} HVAC devices are currently unsupported, work is in progress to "
-                        f"get the thermostat and temp sensors added"
-                    )
-                    continue
-                    new_device["hvac"] = hvac_cfg
-                if len(raw_dev) > 4:
-                    # firmwareVersion = Unknown is also an identifier for sub-devices
-                    # sub-device wifiMac will always be 01:02:03:04:05:06 even if parent has WiFi, BT MACs match
-                    sub_id = int(raw_dev[:3])
-                    if dev_id in entity_reg:
-                        if sub_id in entity_reg[dev_id]:
-                            logger.error(
-                                f"{lp} Duplicate sub-device ID {sub_id} found for parent device ID {dev_id} in home "
-                                f"'{raw_home['name']}' (device name: '{dev_name}'), Please open an issue with debug "
-                                f"logs enabled..."
-                            )
-                            continue
-                    logger.info(
-                        f"{lp} Staging sub-device ({sub_id}) named: '{dev_name}' with parent device ID {dev_id} in "
-                        f"home '{raw_home['name']}' devices registry"
-                    )
-                    state = EntityState(dev_id=dev_id, sub_id=sub_id, name=dev_name)
-                    if dev_id in entity_reg:
-                        entity_reg[dev_id][sub_id] = state.name
-                    else:
-                        entity_reg[dev_id] = {sub_id: state.name}
-                    continue
-                elif len(raw_dev) == 4:
-                    logger.debug(
-                        f"{lp} FOUND: '{dev_name}' has a thermostat related quirk with a value of: {raw_dev[3]}"
-                    )
-                # END OF SUB DEVICE PARSING
-
-                # cync_device = CyncNode(
-                #     name=dev_name,
-                #     node_id=dev_id,
-                #     dev_type=dev_type,
-                #     mac=bt_mac,
-                #     wifi_mac=wifi_mac,
-                #     fw_version=fw_ver,
-                #     hvac=hvac_cfg,
-                # )
-                new_device["name"] = dev_name
-                new_device["type"] = dev_type
-                # new_device["is_plug"] = cync_device.is_plug
-                # new_device["supports_temperature"] = cync_device.supports_temperature
-                # new_device["supports_rgb"] = cync_device.supports_rgb
-                new_device["fw"] = fw_ver
-                new_device["mac"] = bt_mac
-                new_device["wifi_mac"] = wifi_mac
-                # give it the default 0, if it has children, we will overwrite the 0
-                new_device["endpoints"] = {0: dev_name}
-                # del cync_device
-                new_home["devices"][dev_id] = new_device
 
             # END OF DEVICE PARSING LOOP
             # check sub dev reg
@@ -538,6 +557,10 @@ class CyncCloudAPI:
                         new_home["devices"][node_id]["endpoints"] = endpoint_data
 
         # END OF HOME PARSING LOOP
+        if skipped_devices:
+            logger.warning(
+                f"{lp} {skipped_devices} device(s) could not be parsed and were left out of the export, see errors above"
+            )
         # write raw exported config to file for debugging, only if export source is None
         if CYNC_EXPORT_SOURCE is None:
             if CYNC_OVERWRITE_CONFIG_FILE is False:
@@ -549,10 +572,8 @@ class CyncCloudAPI:
                     )
                     counter += 1
             try:
-                with open(raw_file_out, "w") as _f:
-                    _f.write(yaml.dump(exported_home_data))
-                os.chmod(raw_file_out, 0o777)
-            except Exception as file_exc:
+                write_private_file(raw_file_out, yaml.dump(exported_home_data), 0o600)
+            except OSError as file_exc:
                 logger.error(
                     f"{lp} Failed to write RAW config to '{raw_file_out}': {file_exc}"
                 )
@@ -569,9 +590,8 @@ class CyncCloudAPI:
         """
         if not CYNC_SECRET_KEY:
             logger.critical("CYNC_SECRET_KEY is not set! You must configure this!")
-            signal.raise_signal(signal.SIGINT)
-        else:
-            passphrase = CYNC_SECRET_KEY.encode()
+            raise RuntimeError("CYNC_SECRET_KEY is not set")
+        passphrase = CYNC_SECRET_KEY.encode()
         # A static salt is used because the target file is local and we need to derive
         # the exact same key across restarts without storing it on disk.
         salt = b"cync_lan_static_salt_for_local_storage"

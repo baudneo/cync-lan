@@ -7,7 +7,7 @@ import struct
 import sys
 import uuid
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -20,8 +20,26 @@ from cync_lan.const import (
 )
 from cync_lan.structs import EntityState, GlobalObject
 
+if TYPE_CHECKING:
+    from cync_lan.devices import CyncDevice
+
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
+
+
+def write_private_file(path, data, mode: int = 0o600) -> None:
+    """
+    Write ``data`` (str or bytes) to ``path`` creating it with ``mode`` from the start, so
+    secrets are never briefly world-readable. Also fixes the mode of a pre-existing file.
+    """
+    raw = data.encode("utf-8") if isinstance(data, str) else data
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "wb") as f:
+        f.write(raw)
+    try:
+        os.chmod(path, mode)
+    except PermissionError:
+        logger.debug(f"Could not chmod {path} to {oct(mode)} (not the owner?)")
 
 
 def send_signal(signal_num: int):
@@ -170,8 +188,6 @@ def parse_unbound_firmware_version(
 
 async def parse_config(cfg_file: Path):
     """Parse the exported Cync device config file and create devices from it."""
-    from cync_lan.devices import CyncDevice
-
     lp = "parse_config:"
     logger.debug(f"{lp} reading devices from Cync config file: {cfg_file.as_posix()}")
     try:
@@ -181,98 +197,123 @@ async def parse_config(cfg_file: Path):
         raw_config = await asyncio.get_event_loop().run_in_executor(
             None, yaml.safe_load, cfg_file.read_text(encoding="utf-8")
         )
-    except Exception as e:
+    except yaml.YAMLError as e:
+        raise ConfigError(f"config file is not valid YAML: {e}") from e
+    except (OSError, UnicodeDecodeError) as e:
         logger.error(f"{lp} Error reading config file: {e}", exc_info=True)
-        raise e
+        raise
+
+    return build_nodes(raw_config)
+
+
+class ConfigError(Exception):
+    """The Cync device config file is unusable (as opposed to one bad device in it)."""
+
+
+def _as_bool_enabled(enabled) -> bool:
+    if isinstance(enabled, str):
+        return enabled.casefold() in YES_ANSWER
+    return bool(enabled)
+
+
+def build_nodes(raw_config) -> Dict[int, "CyncDevice"]:
+    """
+    Turn the parsed config file into CyncDevice objects.
+
+    The file is user editable, so a problem with one home or device is logged and that entry
+    skipped instead of aborting startup. Only a file that is unusable as a whole raises
+    ConfigError.
+    """
+    from cync_lan.devices import CyncDevice
+
+    lp = "parse_config:"
+    if not isinstance(raw_config, dict) or not raw_config:
+        raise ConfigError("config file is empty or not a YAML mapping")
+    main_key = next((k for k in ("account data", "exported_homes") if k in raw_config), None)
+    if main_key is None or not isinstance(raw_config[main_key], dict):
+        raise ConfigError(
+            "config file has no 'exported_homes' (or legacy 'account data') section, "
+            "export a new one from the cloud"
+        )
 
     nodes: Dict[int, CyncDevice] = {}
-    # parse homes and devices
-    main_key = "account data"
-    if main_key not in raw_config:
-        if "exported_homes" in raw_config:
-            main_key = "exported_homes"
+    skipped = 0
     for cync_home_name, home_cfg in raw_config[main_key].items():
+        if not isinstance(home_cfg, dict) or "id" not in home_cfg:
+            logger.error(f"{lp} Home '{cync_home_name}' has no 'id', skipping the whole home")
+            skipped += 1
+            continue
         home_id = home_cfg["id"]
-        if "devices" not in home_cfg:
+        devices = home_cfg.get("devices")
+        if not devices or not isinstance(devices, dict):
             logger.warning(
                 f"{lp} No devices found in config for: {cync_home_name} (ID: {home_id}), skipping..."
             )
             continue
-        # Create devices
-        for cync_id, cync_device in home_cfg["devices"].items():
-            cync_device: dict
-            device_name = (
-                cync_device["name"] if "name" in cync_device else f"device_{cync_id}"
-            )
-            if "enabled" in cync_device:
-                enabled = cync_device["enabled"]
-                if isinstance(enabled, str):
-                    enabled = enabled.casefold()
-                    if enabled not in YES_ANSWER:
-                        logger.debug(
-                            f"{lp} Device '{device_name}' (ID: {cync_id}) is disabled in config, skipping..."
-                        )
-                        continue
-                if isinstance(enabled, bool) and enabled is False:
-                    logger.debug(
-                        f"{lp} Device '{device_name}' (ID: {cync_id}) is disabled in config, skipping..."
-                    )
-                    continue
-            raw_endpoints = None
-            fw_version = (
-                cync_device["fw"] if "fw" in cync_device and cync_device["fw"] else None
-            )
-            wmac = None
-            btmac = None
-            dev_type = (
-                cync_device["type"]
-                if "type" in cync_device and cync_device["type"]
-                else None
-            )
-            if "mac" in cync_device:
-                btmac = cync_device["mac"]
-                if btmac:
-                    if isinstance(btmac, int):
-                        logger.warning(
-                            f"IMPORTANT>>> cync device '{device_name}' (ID: {cync_id}) 'mac' is somehow an int -> "
-                            f"{btmac}, please quote the mac address to force it to a string in the config file"
-                        )
-
-            if "wifi_mac" in cync_device:
-                wmac = cync_device["wifi_mac"]
-                if wmac:
-                    if isinstance(wmac, int):
-                        logger.debug(
-                            f"IMPORTANT>>> cync device '{device_name}' (ID: {cync_id}) 'wifi_mac' is somehow an int -> "
-                            f"{wmac}, please quote the mac address to force it to a string in the config file"
-                        )
-            endpoints = {}
-            if (
-                "endpoints" in cync_device
-                and (raw_endpoints := cync_device["endpoints"])
-                and (num_ends := len(raw_endpoints)) > 1
-            ):
-                logger.debug(
-                    f"{lp} Device '{device_name}' (ID: {cync_id}) has {num_ends} endpoints: {raw_endpoints}"
+        for cync_id, cync_device in devices.items():
+            try:
+                node = _build_node(cync_id, cync_device, home_id, lp)
+            except Exception as exc:
+                skipped += 1
+                logger.error(
+                    f"{lp} Skipping device '{cync_id}' in home '{cync_home_name}': {exc!r}. "
+                    f"Check this entry in your config file."
                 )
-            if raw_endpoints:
-                for ep_id, ep_name in raw_endpoints.items():
-                    endpoints[ep_id] = EntityState(
-                        dev_id=cync_id, sub_id=ep_id, name=ep_name
-                    )
-
-            nodes[cync_id] = CyncDevice(
-                name=device_name,
-                dev_id=cync_id,
-                fw_version=fw_version,
-                home_id=home_id,
-                mac=btmac,
-                wifi_mac=wmac,
-                dev_type=dev_type,
-                entities=endpoints,
-            )
-
+                continue
+            if node is not None:
+                nodes[node.id] = node
+    if skipped:
+        logger.warning(f"{lp} {skipped} home(s)/device(s) in the config file were skipped, see errors above")
     return nodes
+
+
+def _build_node(cync_id, cync_device, home_id, lp: str):
+    """Build one CyncDevice, None if it is disabled in the config. Raises on bad data."""
+    from cync_lan.devices import CyncDevice
+
+    if not isinstance(cync_device, dict):
+        raise ValueError(f"expected a mapping, got {type(cync_device).__name__}")
+    dev_id = int(cync_id)  # YAML keys may be quoted strings
+    device_name = cync_device.get("name") or f"device_{dev_id}"
+    if "enabled" in cync_device and not _as_bool_enabled(cync_device["enabled"]):
+        logger.debug(f"{lp} Device '{device_name}' (ID: {dev_id}) is disabled in config, skipping...")
+        return None
+    fw_version = cync_device.get("fw") or None
+    dev_type = cync_device.get("type") or None
+    btmac = cync_device.get("mac")
+    if btmac and isinstance(btmac, int):
+        logger.warning(
+            f"IMPORTANT>>> cync device '{device_name}' (ID: {dev_id}) 'mac' is somehow an int -> "
+            f"{btmac}, please quote the mac address to force it to a string in the config file"
+        )
+    wmac = cync_device.get("wifi_mac")
+    if wmac and isinstance(wmac, int):
+        logger.debug(
+            f"IMPORTANT>>> cync device '{device_name}' (ID: {dev_id}) 'wifi_mac' is somehow an int -> "
+            f"{wmac}, please quote the mac address to force it to a string in the config file"
+        )
+    raw_endpoints = cync_device.get("endpoints")
+    endpoints = {}
+    if raw_endpoints:
+        if not isinstance(raw_endpoints, dict):
+            raise ValueError(f"'endpoints' must be a mapping of id: name, got {type(raw_endpoints).__name__}")
+        if len(raw_endpoints) > 1:
+            logger.debug(
+                f"{lp} Device '{device_name}' (ID: {dev_id}) has {len(raw_endpoints)} endpoints: {raw_endpoints}"
+            )
+        for ep_id, ep_name in raw_endpoints.items():
+            ep_id = int(ep_id)
+            endpoints[ep_id] = EntityState(dev_id=dev_id, sub_id=ep_id, name=ep_name)
+    return CyncDevice(
+        name=device_name,
+        dev_id=dev_id,
+        fw_version=fw_version,
+        home_id=home_id,
+        mac=btmac,
+        wifi_mac=wmac,
+        dev_type=dev_type,
+        entities=endpoints,
+    )
 
 
 def check_python_version():
@@ -295,12 +336,11 @@ def check_for_uuid():
             logger.info(
                 f"{lp} Created persistent directory: {persistent_dir.as_posix()}"
             )
-        except Exception as e:
+        except OSError as e:
             logger.error(
                 f"{lp} Failed to create persistent directory: {e} - Exiting..."
             )
             sys.exit(1)
-    os.chmod(persistent_dir, 0o777)
     uuid_file = Path(CYNC_UUID_PATH).expanduser().resolve()
     uuid_from_disk = ""
     create_uuid = False
@@ -311,11 +351,16 @@ def check_for_uuid():
             if not uuid_from_disk:
                 create_uuid = True
             else:
-                uuid_obj = uuid.UUID(uuid_from_disk)
-                if uuid_obj.version != 4:
-                    logger.warning(
-                        f"{lp} Invalid UUID version in uuid.txt: {uuid_from_disk}"
-                    )
+                try:
+                    uuid_obj = uuid.UUID(uuid_from_disk)
+                except ValueError:
+                    logger.warning(f"{lp} uuid.txt does not contain a valid UUID, creating a new one")
+                    uuid_obj = None
+                if uuid_obj is None or uuid_obj.version != 4:
+                    if uuid_obj is not None:
+                        logger.warning(
+                            f"{lp} Invalid UUID version in uuid.txt: {uuid_from_disk}"
+                        )
                     create_uuid = True
                 else:
                     logger.info(
@@ -336,9 +381,15 @@ def check_for_uuid():
             f"{lp} Creating and caching a new UUID to be used for the 'CyncLAN Bridge' MQTT device"
         )
         g.uuid = uuid.uuid4()
-        with open(uuid_file, "w") as f:
-            f.write(str(g.uuid))
-            os.chmod(uuid_file, 0o777)
+        try:
+            # not a secret (it only names the MQTT bridge device), so world-readable is fine
+            write_private_file(uuid_file, str(g.uuid), 0o644)
+        except OSError as e:
+            logger.warning(
+                f"{lp} Could not write {uuid_file.as_posix()} ({e}); using an in-memory UUID, "
+                f"the MQTT bridge device identity will change on every restart until this is fixed"
+            )
+        else:
             logger.info(f"{lp} UUID written to disk: {uuid_file.as_posix()}")
 
 
