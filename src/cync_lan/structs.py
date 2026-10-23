@@ -5,10 +5,9 @@ import datetime
 import logging
 import os
 import time
-from argparse import Namespace
-from enum import StrEnum
-from typing import TYPE_CHECKING, Coroutine, Dict, List, Optional, Tuple, Union
 import uuid
+from enum import StrEnum
+from typing import TYPE_CHECKING, Coroutine, Dict, List, Optional, Union
 
 import uvloop
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -113,9 +112,11 @@ class GlobalObject:
         self.env.mqtt_host = CYNC_MQTT_HOST = os.environ.get(
             "CYNC_MQTT_HOST", "homeassistant.local"
         )
-        self.env.mqtt_port = CYNC_MQTT_PORT = int(
-            os.environ.get("CYNC_MQTT_PORT", 1883)
-        )
+        try:
+            self.env.mqtt_port = CYNC_MQTT_PORT = int(os.environ.get("CYNC_MQTT_PORT", 1883))
+        except ValueError:
+            logger.error("CYNC_MQTT_PORT is not a number, using 1883")
+            self.env.mqtt_port = CYNC_MQTT_PORT = 1883
         self.env.mqtt_user = CYNC_MQTT_USER = os.environ.get("CYNC_MQTT_USER")
         self.env.mqtt_pass = CYNC_MQTT_PASS = os.environ.get("CYNC_MQTT_PASS")
         self.env.mqtt_topic = CYNC_TOPIC = os.environ.get("CYNC_TOPIC", "cync_lan")
@@ -134,8 +135,10 @@ class GlobalObject:
         self.env.cync_srv_host = CYNC_SRV_HOST = os.environ.get(
             "CYNC_SRV_HOST", "0.0.0.0"
         )
+        # same default as const.py: loopback unless running as the HA app
         self.env.cync_export_host = CYNC_EXPORT_HOST = os.environ.get(
-            "CYNC_EXPORT_HOST", CYNC_SRV_HOST
+            "CYNC_EXPORT_HOST",
+            CYNC_SRV_HOST if os.environ.get("CYNC_HASS_APP") else "127.0.0.1",
         )
         self.env.enable_export_server = CYNC_ENABLE_EXPORTER = (
             os.environ.get("CYNC_ENABLE_EXPORT", "0").casefold() in YES_ANSWER
@@ -163,30 +166,44 @@ class Tasks:
     dev_conn_watcher: Optional[asyncio.Task] = None
     proxy_conn_watcher: Optional[asyncio.Task] = None
 
+    def _all(self) -> List[asyncio.Task]:
+        tasks = [
+            self.receive,
+            self.send,
+            self.callback_cleanup,
+            self.dev_conn_watcher,
+            self.proxy_task,
+            self.proxy_conn_watcher,
+        ]
+        return [task for task in tasks if task is not None]
+
     def __iter__(self):
-        tasks = [self.receive, self.send, self.callback_cleanup, self.dev_conn_watcher]
-        for task in tasks:
-            if task is not None:
-                yield task
+        yield from self._all()
 
     def __len__(self):
-        tasks = [self.receive, self.send, self.callback_cleanup, self.dev_conn_watcher]
-        # remove any that are None
-        tasks = [task for task in tasks if task is not None]
-        return len(list(tasks))
+        return len(self._all())
 
     async def cancel_all(self):
-        """Cancels all active tasks and waits for them to finish."""
-        active_tasks = list(self)
-        if not active_tasks:
-            return
+        """Cancels all active tasks and waits for them to finish.
+
+        The calling task is skipped: close() can run from inside one of these tasks
+        (e.g. the proxy task) and cancelling ourselves would abort the rest of the teardown.
+        """
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        active_tasks = [t for t in self._all() if t is not current]
         for task in active_tasks:
             task.cancel()
-        await asyncio.gather(*active_tasks, return_exceptions=True)
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
         self.receive = None
         self.send = None
         self.callback_cleanup = None
         self.dev_conn_watcher = None
+        self.proxy_task = None
+        self.proxy_conn_watcher = None
 
 
 class ControlMessageCallback:
@@ -274,7 +291,7 @@ class ComputedTokenStruct(RawTokenStruct):
             datetime.datetime: The expiration time in UTC.
         """
         if self.issued_at and self.expire_in:
-            return self.issued_at + datetime.timedelta(seconds=self.expire_in)
+            return self.issued_at + datetime.timedelta(seconds=int(self.expire_in))
         return None
 
 
