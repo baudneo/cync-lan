@@ -316,7 +316,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         lp = f"{self.lp}conn_watch:"
         logger.debug(f"{lp} Starting background {conn_type.value} task")
         # most devices send a d3 ping every 20 seconds if no other data has come through
-        threshold = 22.5
+        threshold = 30
         delay_seconds = 5
         if conn_type == ConnectionType.device and self.is_app:
             # fixme: remember wth I was doing here, think it was from the proxy add and then trying to also
