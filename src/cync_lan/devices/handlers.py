@@ -7,6 +7,7 @@ from typing import Optional
 
 from cync_lan.const import (
     CYNC_LOG_NAME,
+    CYNC_MESH_REFRESH_SECS,
     CYNC_RAW,
     DATA_BOUNDARY,
 )
@@ -536,6 +537,37 @@ class PacketHandlersMixin:
         except OSError as e:
             logger.error(f"{lp} writing the mesh info request failed: {e!r}")
 
+    async def mesh_refresh_task(self, interval: float):
+        """
+        Re-request mesh info every `interval` seconds. A bridge reports 0x83 status changes (including the stale flag
+        the offline vote counts) only for a few minutes after it was asked for mesh info, which normally happens once,
+        on connect. Without this, a bulb cut at the wall later on is never reported stale and stays "on". [inferred,
+        baudneo/cync-lan#39]
+        """
+        lp = f"{self.lp}mesh_refresh:"
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if self.is_closed():
+                    break
+                await self.ask_for_mesh_info()
+        except asyncio.CancelledError:
+            logger.debug(f"{lp} CANCELLED cleanly, re-raising")
+            raise
+        except TimeoutError:
+            # ask_for_mesh_info already logged it; the connection watcher tears the session down
+            pass
+
+    def start_mesh_refresh(self, interval: float = CYNC_MESH_REFRESH_SECS):
+        if interval <= 0 or self.mitm_mode:
+            return
+        old = self.tasks.mesh_refresh
+        if old is not None and not old.done():
+            old.cancel()
+        self.tasks.mesh_refresh = asyncio.create_task(
+            self.mesh_refresh_task(interval), name=f"mesh_refresh-{self.ip_address}"
+        )
+
     async def send_a3(self):
         """
         The device will not be controllable until this messagee is sent,
@@ -555,3 +587,4 @@ class PacketHandlersMixin:
         # send mesh info request
         await asyncio.sleep(1.5)
         await self.ask_for_mesh_info()
+        self.start_mesh_refresh()

@@ -165,6 +165,7 @@ class Tasks:
     proxy_task: Optional[asyncio.Task] = None
     dev_conn_watcher: Optional[asyncio.Task] = None
     proxy_conn_watcher: Optional[asyncio.Task] = None
+    mesh_refresh: Optional[asyncio.Task] = None
 
     def _all(self) -> List[asyncio.Task]:
         tasks = [
@@ -174,6 +175,7 @@ class Tasks:
             self.dev_conn_watcher,
             self.proxy_task,
             self.proxy_conn_watcher,
+            self.mesh_refresh,
         ]
         return [task for task in tasks if task is not None]
 
@@ -204,6 +206,7 @@ class Tasks:
         self.dev_conn_watcher = None
         self.proxy_task = None
         self.proxy_conn_watcher = None
+        self.mesh_refresh = None
 
 
 class ControlMessageCallback:
