@@ -279,8 +279,9 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
 
         # Route to the appropriate handler
         if PacketBuilder.is_device_request(pkt_type):
-            if self.allowed_to_connect is False:
-                await self.can_connect()
+            if self.allowed_to_connect is False and await self.can_connect() is False:
+                # rejected: the socket was closed, don't answer the packet with writer=None
+                return
             await self._dispatch_device_request(
                 pkt_type, data, packet_data, queue_id, msg_id, packet_length, lp
             )

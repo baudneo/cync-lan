@@ -270,7 +270,9 @@ class ProxyMixin:
     async def can_connect(self) -> bool:
         """Based on TCP_WHITELIST and MAX_TCP_CONN, should only be used on Cync device connections"""
         lp = f"{self.lp}:can connect:"
-        tcp_dev_len = len(g.ncync_server.tcp_connections)
+        # only admitted, live bridges take a slot: closed sessions stay in tcp_connections, and counting this session
+        # or other not-yet-admitted ones made a full pool reject everyone, including a bridge reconnecting
+        tcp_dev_len = len([d for d in g.ncync_server.get_dev_tcp_pool_sync() if d is not self])
         num_attempts = g.ncync_server.tcp_conn_attempts[self.ip_address]
         if self.mitm_mode:
             logger.debug(f"{lp} MITM active, skipping connection check...")

@@ -25,6 +25,7 @@ class FakeSession:
     def __init__(self, ip):
         self.ip_address = ip
         self.is_app = False
+        self.allowed_to_connect = True
         self._closed = False
 
     def is_closed(self):
@@ -160,6 +161,7 @@ async def test_closing_a_device_session_triggers_the_revote(env):
     dead = CyncTCPSession.__new__(CyncTCPSession)
     dead.ip_address = "10.0.0.9"
     dead.is_app = False
+    dead.allowed_to_connect = True
     dead.writer = dead.reader = dead.node = None
     dead._closed = dead._closing = False
     dead.tasks = SimpleNamespace(cancel_all=cancel_all)

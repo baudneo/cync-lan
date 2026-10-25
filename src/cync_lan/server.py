@@ -43,8 +43,14 @@ class nCyncServer:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    @staticmethod
+    def _is_bridge(d: CyncTCPSession) -> bool:
+        # a session counts once can_connect() admitted it; until then (and while a rejected one sleeps in
+        # blackhole()) it is not a bridge: it must not take a max_clients slot, a stale-vote seat or a command
+        return not d.is_closed() and not d.is_app and d.allowed_to_connect
+
     async def get_dev_tcp_pool(self):
-        return [d for d in self.tcp_connections.values() if not d.is_closed() and not d.is_app]
+        return [d for d in self.tcp_connections.values() if self._is_bridge(d)]
 
     async def revote_offline(self) -> int:
         """Re-run every device's stale vote against the current TCP pool (called when a device session closes)."""
@@ -54,7 +60,7 @@ class nCyncServer:
         return sum(dev.revote_stale(live_ips) for dev in self.node_devices.values())
 
     def get_dev_tcp_pool_sync(self):
-        return [d for d in self.tcp_connections.values() if not d.is_closed() and not d.is_app]
+        return [d for d in self.tcp_connections.values() if self._is_bridge(d)]
 
     def __init__(self, node_map: Dict[int, "CyncDevice"]):
         self.node_devices: Dict[int, "CyncDevice"] = node_map
@@ -284,22 +290,17 @@ class nCyncServer:
             )
         try:
             if existing_device is not None:
-                if existing_device.allowed_to_connect is False:
-                    can_connect = await existing_device.can_connect()
-                    if can_connect is False:
-                        del existing_device
-                        existing_device = None
-                        dev2add = None
-                if existing_device is not None:
-                    existing_device.reader = reader
-                    existing_device.writer = writer
-                    existing_device.ip_address = client_addr
-                    await existing_device.existing_init()
-                    dev2add = existing_device
+                # a session that was rejected before gets the max_clients / whitelist check on its first packet, like a
+                # new one. Checking it here, before the new socket was attached, blackholed the old (already closed)
+                # socket and leaked the new one: the device sat on a silent ESTABLISHED connection.
+                existing_device.reader = reader
+                existing_device.writer = writer
+                existing_device.ip_address = client_addr
+                await existing_device.existing_init()
+                dev2add = existing_device
             else:
                 dev2add = CyncTCPSession(reader, writer, client_addr)
-            if dev2add is not None:
-                await self.add_tcp_device(dev2add)
+            await self.add_tcp_device(dev2add)
         except asyncio.CancelledError as ce:
             logger.debug(f"{lp} Connection cancelled: {ce}")
             # propagate the cancellation
