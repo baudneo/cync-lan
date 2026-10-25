@@ -269,12 +269,12 @@ class PacketHandlersMixin:
                     )
                     e_state_.recently_seen = recently_seen
                     logger.debug(f"{lp} Internal STATUS for {e_state_}")
-                    await cync_device.handle_entity_update(e_state_, from_pkt="0x83")
+                    await cync_device.handle_entity_update(e_state_, from_pkt="0x83", bridge_ip=self.ip_address)
         else:
             parsed_state.name = cync_device.name
             logger.debug(f"{lp} Internal STATUS for {parsed_state}")
             await cync_device.handle_entity_update(
-                parsed_state, from_pkt="0x83"
+                parsed_state, from_pkt="0x83", bridge_ip=self.ip_address
             )
 
         # Checksum Stream Logic, the LED light controller sends 0x83 in a stream of data with checksum mismatches

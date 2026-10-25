@@ -5,7 +5,7 @@ import random
 import struct
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Collection, Dict, List, Optional, Set, Union
 
 from cync_lan.const import (
     CYNC_CMD_BROADCASTS,
@@ -76,6 +76,7 @@ class CyncDevice:
         entities: Optional[Dict[int, "EntityState"]] = None,
     ):
         self.control_bytes = bytes([0x00, 0x00])
+        self.stale_voters: Set[str] = set()
         if dev_id is None:
             raise ValueError("ID must be provided to constructor")
         self.id = dev_id
@@ -426,23 +427,29 @@ class CyncDevice:
     def __str__(self):
         return f"CyncDevice:{self.id}:"
 
-    def stale_vote_passes(self, tcp_count: int) -> bool:
-        """With one TCP node, stale data immediately marks offline. With several, wait until the number of stale
-        reports reaches the node count."""
-        tcp_count = tcp_count or 1
-        return tcp_count == 1 or self.num_late_states >= tcp_count
+    @staticmethod
+    def stale_quorum(pool_size: int) -> int:
+        """Distinct live TCP bridges that must report a device stale before it is marked offline: a strict majority,
+        or the lone bridge if there is only one. Requiring *every* bridge is too strict: each bridge reports only the
+        devices it has heard from, so one bridge that never mentions a dead bulb keeps it "on" forever."""
+        return 1 if pool_size <= 1 else pool_size // 2 + 1
 
-    def revote_stale(self, tcp_count: int) -> bool:
-        """Re-run the stale vote after the TCP pool shrank. Stale reports are only evaluated when they arrive, so if a
-        dead bridge session is reaped *after* the other bridges reported this device stale, nothing would ever
-        re-check the vote against the smaller pool. Returns True if the device was just marked offline."""
-        if self.num_late_states < 1 or not self.online or not self.stale_vote_passes(tcp_count):
+    def stale_vote_passes(self, live_ips: Collection[str]) -> bool:
+        """Votes from bridges that have since disconnected don't count, and neither do their seats in the quorum."""
+        live = set(live_ips)
+        return len(self.stale_voters & live) >= max(1, self.stale_quorum(len(live)))
+
+    def revote_stale(self, live_ips: Collection[str]) -> bool:
+        """Re-run the stale vote after the TCP pool changed. Stale reports are only evaluated when they arrive, so if
+        a dead bridge session is reaped *after* the other bridges reported this device stale, nothing would re-check
+        the vote against the smaller pool. Returns True if the device was just marked offline."""
+        if not self.stale_voters or not self.online or not self.stale_vote_passes(live_ips):
             return False
         self.online = False
         stats.inc("offline_revotes")
         logger.warning(
-            f"{self.lp} marked OFFLINE on re-vote after the TCP pool shrank "
-            f"(stale state count {self.num_late_states} / num tcp nodes {tcp_count or 1})"
+            f"{self.lp} marked OFFLINE on re-vote after the TCP pool changed "
+            f"(stale votes {len(self.stale_voters & set(live_ips))} / quorum {self.stale_quorum(len(set(live_ips)))})"
         )
         return True
 
@@ -450,6 +457,7 @@ class CyncDevice:
         self,
         e_state: EntityState,
         from_pkt: Optional[str] = None,
+        bridge_ip: Optional[str] = None,
     ) -> bool:
         """Extracted status packet parsing, handles MQTT publishing and device state changes."""
         ts = time.time()
@@ -464,25 +472,28 @@ class CyncDevice:
                     return False
 
             logger.debug(f"{self.lp}{sub_fmt_str} seems to have STALE data (no BT mesh activity)")
-            self.num_late_states += 1
+            self.stale_voters.add(bridge_ip or "unknown")
+            self.num_late_states = len(self.stale_voters)
             tcp_pool = await g.ncync_server.get_dev_tcp_pool()
-            tcp_count = len(tcp_pool) or 1
-            if self.stale_vote_passes(tcp_count):
+            live_ips = [d.ip_address for d in tcp_pool]
+            votes = len(self.stale_voters & set(live_ips))
+            quorum = max(1, self.stale_quorum(len(live_ips)))
+            if self.stale_vote_passes(live_ips):
                 if self.online:
                     self.online = False
                     logger.warning(
                         f"{self.lp}{sub_fmt_str} marked OFFLINE "
-                        f"(stale state count {self.num_late_states} / num tcp nodes {tcp_count})"
+                        f"(stale votes {votes} / quorum {quorum} of {len(live_ips)} tcp nodes)"
                     )
                 else:
                     logger.warning(
                         f"{self.lp}{sub_fmt_str} is still marked as {'ONLINE' if self.online else 'OFFLINE'} -> "
-                        f"(stale state count {self.num_late_states} / num tcp nodes {tcp_count})"
+                        f"(stale votes {votes} / quorum {quorum} of {len(live_ips)} tcp nodes)"
                     )
                 return True
             else:
                 logger.debug(f"{self.lp} recently seen: {is_recent} but its marked as shouldnt be offline: "
-                             f"stale state count {self.num_late_states} / num tcp nodes {tcp_count}\nTCP pool: {tcp_pool}")
+                             f"stale votes {votes} / quorum {quorum} of {len(live_ips)} tcp nodes")
                 return False
 
         if not self.online:
@@ -494,6 +505,7 @@ class CyncDevice:
         # valid states are used to gauge CyncLAN health, if no valid states are received within a configured time limit
         # the bridge device 'Should restart?' sensor will be turned on. Trying to catch an edge case where CyncLAN stalls
         g.last_valid_state_ts = self.last_valid_state_ts = ts
+        self.stale_voters.clear()
         self.num_late_states = 0
         self.entities[e_state.sub_id] = e_state
         g.ncync_server.node_devices[self.id] = self
