@@ -53,3 +53,15 @@ def test_model_string_full():
 
 def test_model_string_plain():
     assert mi.DeviceTypeInfo(model_name="Plain").model_string == "Plain"
+
+
+def test_type_127_eave_lights():
+    """GE Cync Dynamic Effects Outdoor Smart Eave Lights (CEV100CDOD), fw 1.0.510."""
+    info = mi.device_type_map[127]
+    assert info.capabilities.color and info.capabilities.tunable_white and info.capabilities.dynamic
+
+
+def test_type_171_full_color_a19_matter():
+    """GE CYNC Full Color A19, Matter-capable revision (CLEDA199CD1MS), fw 1.1.204."""
+    info = mi.device_type_map[171]
+    assert info.capabilities.color and info.capabilities.tunable_white and info.protocol.MATTER
