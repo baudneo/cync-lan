@@ -1069,7 +1069,8 @@ class MQTTClient:
                     )
             mqtt_dev_state = json.dumps(mqtt_dev_state).encode()
 
-        if hasattr(node.metadata.capabilities, "motion") and node.metadata.capabilities.motion:
+        # metadata is None for a deviceType model_info does not know yet; the HA-birth re-announce stopped at the first one
+        if node.metadata is not None and getattr(node.metadata.capabilities, "motion", False):
             motion_payload = b"ON" if entity.motion else b"OFF"
             await self.pub_entity_state(
                 node,
