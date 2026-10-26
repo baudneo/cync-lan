@@ -12,6 +12,7 @@ from cync_lan.const import (
     CYNC_LOG_NAME,
     CYNC_RAW,
     FACTORY_EFFECTS_BYTES,
+    light_show_id,
 )
 from cync_lan.metadata.model_info import (
     DeviceClassification,
@@ -741,7 +742,7 @@ class CyncDevice:
         _sub_id = sub_id if sub_id is not None else 0x00
 
         # Payload: 0x11, 0x02, 0x07, 0x01, byte1, byte2 (6 bytes)
-        payload = struct.pack(">BBBBBB", 0x11, 0x02, 0x07, 0x01, chosen[0], chosen[1])
+        payload = struct.pack(">BBBBBB", 0x11, 0x02, 0x07, 0x01, light_show_id(show, self.type), chosen[1])
         m_cb = ControlMessageCallback(
             msg_id=0x00,
             message=None,

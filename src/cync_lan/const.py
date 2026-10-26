@@ -32,6 +32,8 @@ __all__ = [
     "CYNC_EXPORT_PORT",
     "CYNC_UUID_PATH",
     "FACTORY_EFFECTS_BYTES",
+    "LIGHT_SHOW_ID_OVERRIDES",
+    "light_show_id",
     "LOCAL_TZ",
     "CYNC_CONFIG_FILE_PATH",
     "CYNC_CLOUD_AUTH_PATH",
@@ -215,6 +217,17 @@ FACTORY_EFFECTS_BYTES: Dict[str, Tuple[int, int]] = {
     "vegas": (int(0x08), int(0xE3)),
     "party_time": (int(0x09), int(0x06)),
 }
+
+# Light-show IDs that differ by deviceType. 0x3A runs Fireworks on the devices the table above was built from, but on a type 75
+# (24' Cafe Lights, fw 1.0.516) it did nothing, even with the same last byte 0xDA; there 0x03 runs Fireworks (status 0x82).
+LIGHT_SHOW_ID_OVERRIDES: Dict[int, Dict[str, int]] = {
+    75: {"fireworks": 0x03},
+}
+
+
+def light_show_id(show: str, dev_type: Optional[int]) -> int:
+    """The run-mode index for a factory light show on this deviceType."""
+    return LIGHT_SHOW_ID_OVERRIDES.get(dev_type, {}).get(show, FACTORY_EFFECTS_BYTES[show][0])
 
 ORIGIN_STRUCT = {
     "name": "cync-lan",
