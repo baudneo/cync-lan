@@ -83,7 +83,7 @@ See section 3.
   | 3 | device id (mesh node id) [confirmed] |
   | 4 | power state [confirmed] |
   | 5 | brightness 0-100 [confirmed] |
-  | 6 | color temp; values above 100 mean the bulb is in RGB mode [confirmed] |
+  | 6 | mode: 0-100 = white, color temp [confirmed]; `FE` = RGB [confirmed]; `80`+index-1 = light show index running, `E3` = Cyber (index `43`); `A0`+index-1 = music show index running [confirmed on type 75, see run modes in section 5] |
   | 7-9 | R G B [confirmed] |
   | 10 | 0 = stale data, 1 = fresh [inferred] |
   | 11-18 | unknown (some differ for a bulb grouped with a dimmer) [unknown] |
@@ -140,9 +140,30 @@ sends; field meanings inferred]
 | brightness | `F0` (`D2` on Sol lamp) | `10` | `11 02 01 <0-100> FF FF FF FF` (Sol: `11 02 <bri> 00 00`) |
 | color temp | `F0` (`E2` on Sol lamp) | `10` | `11 02 01 FF <temp> 00 00 00` (Sol: `11 02 05 <temp> 00`) |
 | RGB | `F0` | `10` | `11 02 01 FF FE <R> <G> <B>` |
-| light show | `E2` | `0E` | `11 02 07 01 <b1> <b2>` |
+| run mode (light / music show) | `E2` | `0E` | `11 02 07 <mode> <index> <any>` (see run modes below) |
 A command is sent to up to `CYNC_CMD_BROADCASTS` randomly chosen connected devices (any bridge can relay to the BTLE
 mesh). All [inferred]. Fan commands go through brightness/percentage mappings (see `set_fan_*`).
+
+### Run modes (light shows, music shows) [confirmed on type 75, fw 1.0.516; other types untested]
+Measured one command at a time (2026-10-25): each command sent, the device's status read back (0x43 record byte 6), and the
+Cync app's highlighted tile and the light itself checked by eye. Code: `cync_lan/effects.py`.
+- `<mode>`: `00` exit the running show, `01` light show, `02` music show. Mode values first published by homebridge-cync-app
+  (`src/cync/tcp-client.ts`, `buildRunModePacket`).
+- `<any>`: the last byte did not matter for any show tested (homebridge sends a random nonce there). [confirmed]
+- Light show index (app tile name): 1 Candle, 2 Rainbow, 3 Fireworks, 4 Volcanic, 5 Aurora, 6 Happy Holidays,
+  7 Red White Blue, 8 Vegas, 9 Party Time, `43` Cyber. The app shows Cyber third, so tile order is not index order.
+  `64` did nothing. Fireworks is per deviceType: `3A` on the devices `FACTORY_EFFECTS_BYTES` was built from, but on
+  type 75 `3A` did nothing (also with last byte `DA`) and `03` runs it (`LIGHT_SHOW_ID_OVERRIDES`).
+- Music show index: 1 Midnight, 2 Earth Tones, 3 Heat Wave, 4 Solar Flare, 5 Breeze, 6 Tropical, 7 Spectrum, 8 Supernova.
+  Index 9 never answered.
+- Custom shows (the app's Custom tab) start at index 10 in both modes. With every slot the app allows filled, light shows ran
+  at 10-32 and music shows at 10-19; 33 / 20 did nothing. Custom tile order in the app is not slot order. The command carries
+  only the slot number: the show itself is stored when the user saves it in the app. Deleting a custom show did not renumber
+  the later ones. A newly saved show took a freed slot. [confirmed]
+- Status byte 6 reports the running show: `80`+index-1 for light shows (`E3` for Cyber), `A0`+index-1 for music shows, for
+  presets and custom slots alike. A deleted slot still answered with its code once, then the device went back to the
+  previous show about 5 s later (seen once). [inferred for the deleted-slot case]
+- The light-show code range `80`-`9F` ends where music codes begin, which is probably why custom light slots stop at 32. [inferred]
 
 ## 6. Device types
 `metadata/model_info.py` maps the cloud `deviceType` number to capabilities. Mesh info record byte `[2]` of the first
@@ -162,6 +183,8 @@ record equals this number. Types with special handling in the parser: 96 (motion
 10. Whether the 0x73 checksum rule excludes the `F8` byte by design or by accident.
 
 ## 8. Changelog
+- 2026-10-26: run modes (light / music shows, custom slots, exit) and status byte 6 as the running-show code, measured on a
+  type 75 (nathandlawrence-bot). Fireworks is index 3 on type 75 (`3A` elsewhere).
 - 2026-10-22 (later): code pointers updated after the `devices.py` split; `FA D9` ack note; session-behaviour notes. No new protocol facts yet, the next real additions should come from hardware logs (look for "dropping packet that failed to parse" lines, each carries the packet hex) and the APK pass.
 - 2026-10-22: first draft, from code read of `devices.py` / `builder.py` and the old `packet_structure.md`.
   `packet_structure.md` still holds the raw captures; fold it into this file when the APK pass is done.

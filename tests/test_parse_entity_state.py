@@ -16,7 +16,7 @@ class _Server:
 def _node(metadata, rgb=True):
     entity = SimpleNamespace(power=1, brightness=64, temperature=0xA7, red=0, green=0, blue=0, motion=0)
     return SimpleNamespace(
-        id=1, hass_id="123-1", entities={0: entity}, metadata=metadata, is_fan_controller=False, is_plug=False,
+        id=1, type=None, hass_id="123-1", entities={0: entity}, metadata=metadata, is_fan_controller=False, is_plug=False,
         is_switch=False, supports_rgb=rgb, supports_temperature=True,
     ), entity
 
