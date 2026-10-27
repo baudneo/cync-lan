@@ -31,6 +31,13 @@ Forked from [cync-lan](https://github.com/iburistu/cync-lan) and
 > It is extremely (change 1 param in a constructor or config) easy for Savant to disable this method of local control.
 > While new methods may restore functionality, I'd rather not go down that route.
 
+>[!NOTE]
+> I started CyncLAN when I knew nothing and struggled to get a raw socket to open and handle TLS.
+> I recall spending hours staring at raw binary, finding patterns and writing async code to monitor state changes.
+> CyncLAN has been my pet project that I didnt want to unleash AI on, but its time. The core idea was born
+> and wrought with human processing, now I'll let Claude make it stable, testable and most importantly, reliable.
+> If you dont like it, fork it :)
+
 ## Prerequisites
 - Docker
 - A minimum of 1, non battery powered, Wi-Fi (*Direct Connect*) Cync / C by GE device to act as the TCP <-> BT bridge (always on)
