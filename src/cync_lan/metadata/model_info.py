@@ -533,6 +533,15 @@ device_type_map = {
     #     protocol=DeviceProtocol(TCP=True, MATTER=True),
     #     capabilities=SwitchCapabilities(dimmable=True, color=True, tunable_white=True),
     # ),
+    127: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Dynamic Effects Outdoor Smart Eave Lights",
+        model_id="CEV100CDOD",
+        protocol=DeviceProtocol(TCP=True),
+        capabilities=LightCapabilities(color=True, tunable_white=True, dynamic=True),
+        characteristics=LightCharacteristics(min_kelvin=2000, max_kelvin=7000),
+        confirmed_by="nathandlawrence-bot",
+    ),
     128: DeviceTypeInfo(
         type=DeviceClassification.LIGHT,
         model_name="Dimmable A19 Bulb",
@@ -770,6 +779,15 @@ device_type_map = {
         capabilities=LightCapabilities(dimmable=True, color=True, tunable_white=True),
         characteristics=LightCharacteristics(reveal=True, lumens=1000, cri=95, wattage=16, min_kelvin=2000, max_kelvin=7000),
         confirmed_by="baudneo",
+    ),
+    171: DeviceTypeInfo(
+        type=DeviceClassification.LIGHT,
+        model_name="Full Color A19 Bulb (Matter)",
+        model_id="CLEDA199CD1MS",
+        protocol=DeviceProtocol(TCP=True, MATTER=True),
+        capabilities=LightCapabilities(color=True, tunable_white=True),
+        characteristics=LightCharacteristics(lumens=800, wattage=9.5, min_kelvin=2000, max_kelvin=7000),
+        confirmed_by="nathandlawrence-bot",
     ),
     224: DeviceTypeInfo(
         type=DeviceClassification.THERMOSTAT,

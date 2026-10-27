@@ -30,12 +30,12 @@ from cync_lan.const import (
     CYNC_TOPIC,
     CYNC_VERSION,
     DEVICE_LWT_MSG,
-    FACTORY_EFFECTS_BYTES,
     MQTT_DEAD,
     MQTT_DEBUG,
     ORIGIN_STRUCT,
 )
 from cync_lan.devices import CyncDevice
+from cync_lan.effects import effect_from_status, effect_names
 from cync_lan.metadata.model_info import DeviceClassification, device_type_map
 from cync_lan.stats import stats
 from cync_lan.structs import EntityState, FanSpeed, GlobalObject
@@ -907,6 +907,15 @@ class MQTTClient:
             )
         return False
 
+    async def update_effect(
+        self, node: CyncDevice, effect: Optional[str], sub_id: Optional[int] = None
+    ) -> bool:
+        """Publish the show that was just started (None = stopped). Intended for callbacks."""
+        node.online = True
+        return await self.pub_entity_state(
+            node, json.dumps({"state": "ON", "effect": effect}).encode(), sub_id
+        )
+
     async def update_rgb(
         self, node: CyncDevice, rgb: tuple[int, int, int], sub_id: Optional[int] = None
     ) -> bool:
@@ -1067,9 +1076,13 @@ class MQTTClient:
                         entity.temperature,
                         node
                     )
+                if node.supports_rgb:
+                    # the same byte names a running light / music show (cync_lan.effects); None clears it in HA
+                    mqtt_dev_state["effect"] = effect_from_status(entity.temperature, node.type)
             mqtt_dev_state = json.dumps(mqtt_dev_state).encode()
 
-        if hasattr(node.metadata.capabilities, "motion") and node.metadata.capabilities.motion:
+        # metadata is None for a deviceType model_info does not know yet; the HA-birth re-announce stopped at the first one
+        if node.metadata is not None and getattr(node.metadata.capabilities, "motion", False):
             motion_payload = b"ON" if entity.motion else b"OFF"
             await self.pub_entity_state(
                 node,
@@ -1157,7 +1170,9 @@ class MQTTClient:
                 if device.supports_rgb:
                     registry_struct["supported_color_modes"].append("rgb")
                     registry_struct["effect"] = True
-                    registry_struct["effect_list"] = list(FACTORY_EFFECTS_BYTES.keys())
+                    registry_struct["effect_list"] = effect_names(
+                        dynamic=bool(device.metadata and device.metadata.capabilities.dynamic)
+                    )
                 if device.metadata.capabilities.dynamic:
                     pass
                 # add brightness : True only when supported_color_modes are present

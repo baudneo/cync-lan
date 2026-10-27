@@ -13,6 +13,7 @@ from cync_lan.const import (
     CYNC_RAW,
     FACTORY_EFFECTS_BYTES,
 )
+from cync_lan.effects import RUN_MODE_EXIT, effect_command, run_mode_payload
 from cync_lan.metadata.model_info import (
     DeviceClassification,
     DeviceTypeInfo,
@@ -731,24 +732,25 @@ class CyncDevice:
     async def set_lightshow(self, show: str, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_lightshow:"
         show = show.casefold()
-        if show not in FACTORY_EFFECTS_BYTES:
+        target = effect_command(show, self.type)
+        if target is None:
             logger.error(f"{lp} Invalid effect: {show}")
             return
 
-        chosen = FACTORY_EFFECTS_BYTES[show]
+        mode, index = target
         op = 0xE2
         cmd_ = 0x0E
         _sub_id = sub_id if sub_id is not None else 0x00
 
-        # Payload: 0x11, 0x02, 0x07, 0x01, byte1, byte2 (6 bytes)
-        payload = struct.pack(">BBBBBB", 0x11, 0x02, 0x07, 0x01, chosen[0], chosen[1])
+        # Payload: 0x11, 0x02, 0x07, <run mode>, <show index>, <any byte> (6 bytes), see cync_lan.effects
+        last = FACTORY_EFFECTS_BYTES[show][1] if show in FACTORY_EFFECTS_BYTES else random.randint(0, 255)
+        payload = run_mode_payload(mode, index, last)
         m_cb = ControlMessageCallback(
             msg_id=0x00,
             message=None,
             sent_at=0.0,
-            # set to black to make it standout
             callback=partial(
-                g.mqtt_client.update_rgb, self, (0, 0, 0)
+                g.mqtt_client.update_effect, self, None if mode == RUN_MODE_EXIT else show
             ),
         )
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
