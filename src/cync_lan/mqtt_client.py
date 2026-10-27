@@ -1706,6 +1706,16 @@ class MQTTClient:
         )))
 
 
+        # these two are otherwise only published when the MQTT session starts / a Cync app connects or disconnects, so they
+        # were never sent again after an HA restart. Discovery only runs while connected, so "ON" is true here.
+        pub_tasks.append(self.publish(f"{self.topic}/status/bridge/mqtt_client/connected", "ON".encode()))
+        pub_tasks.append(self.publish(
+            f"{self.topic}/status/bridge/apps/connected",
+            str(len(getattr(g.ncync_server, "app_tcp_connections", None) or {})).encode(),
+        ))
+        # the states are not retained: give HA a moment to create the entities from the configs above and subscribe, as
+        # _reannounce_after_birth() does for the devices, or they arrive first and the bridge sensors stay "unknown"
+        await asyncio.sleep(2)
         await asyncio.gather(*pub_tasks, return_exceptions=True)
         logger.debug(f"{lp} Bridge device config published and seeded")
         return bool(results) and all(results)

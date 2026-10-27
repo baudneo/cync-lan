@@ -53,11 +53,12 @@ _CYBER_STATUS = 0xE3
 
 
 def effect_names(dynamic: bool) -> List[str]:
-    """The HA effect list. Every color light gets the factory light shows; dynamic (Dynamic Effects) devices also get the music
-    shows and the user's custom show slots, the only kind tested so far."""
+    """The HA effect list. Every color light gets the factory light shows and the user's custom light show slots (a plain
+    color bulb runs both: tested on a deviceType 171 Full Color A19); only dynamic (Dynamic Effects) devices get the music
+    shows and custom music slots - the app offers music shows only on Dynamic Effects products."""
     names = list(LIGHT_SHOW_IDS)
+    names += [f"custom_light_{n}" for n in range(1, CUSTOM_LIGHT_SHOW_SLOTS + 1)]
     if dynamic:
-        names += [f"custom_light_{n}" for n in range(1, CUSTOM_LIGHT_SHOW_SLOTS + 1)]
         names += list(MUSIC_SHOW_IDS)
         names += [f"custom_music_{n}" for n in range(1, CUSTOM_MUSIC_SHOW_SLOTS + 1)]
     return names + [STOP_SHOW]

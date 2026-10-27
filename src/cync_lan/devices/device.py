@@ -535,9 +535,13 @@ class CyncDevice:
             logger.debug(f"{lp} no eligible TCP connections available for command broadcast")
             return
 
-        tcp_connections: List["CyncTCPSession"] = random.sample(
-            tcp_pool,
-            k=min(CYNC_CMD_BROADCASTS, len(tcp_pool)),
+        # a device with its own live TCP session always gets the command directly through it: a show command relayed over
+        # the BLE mesh by another bridge was ACKed but never run by a deviceType 171 bulb. The other slots stay random.
+        own = next((d for d in tcp_pool if d is getattr(self, "tcp_session", None)), None)
+        k = min(CYNC_CMD_BROADCASTS, len(tcp_pool))
+        tcp_connections: List["CyncTCPSession"] = ([own] if own else []) + random.sample(
+            [d for d in tcp_pool if d is not own],
+            k=max(0, k - (1 if own else 0)),
         )
         for bridge_device in tcp_connections:
             if bridge_device.ready_to_control or bridge_device.mitm_mode:
