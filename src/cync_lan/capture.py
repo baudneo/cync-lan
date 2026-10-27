@@ -5,6 +5,8 @@ Recording is off unless CYNC_CAPTURE_DIR is set. One file per device TCP connect
     {"k":"meta","format":1,"started":"2026-...Z","ip":"10.0.0.1","app":false,"sanitized":true,"cync_lan":"0.0.8b1"}
     {"k":"rx","t":0.512,"h":"d3 00 00 00 00"}        bytes exactly as one socket read() returned them
     {"k":"tx","t":0.514,"h":"d8 00 00 00 00"}        bytes we wrote to the device
+    {"k":"tx","t":9.2,"h":"73 ...","cmd":{"id":1,"name":"set_brightness","args":{"brightness":46},"target":7,"msg_id":12}}
+    {"k":"ack","t":9.4,"cmd_id":1,"msg_id":12,"ok":true,"ms":212}   the device's reply to that command (ok null = none came)
     {"k":"info","t":3.1,"device_type":137,"firmware":"3.1.0","nodes":{"7":{"type":137,"endpoints":[0]}}}
     {"k":"end","t":61.0,"reason":"closed"}
 
@@ -34,7 +36,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from cync_lan.const import CYNC_LOG_NAME
 from cync_lan.packet.builder import PacketBuilder
@@ -285,7 +287,8 @@ class CaptureWriter:
         self._dirs = (
             {"rx": _DirectionState(self._redactor), "tx": _DirectionState(self._redactor)} if sanitize else {}
         )
-        self._queue: List[list] = []  # [t, kind, nbytes] waiting for their packet to complete
+        self._queue: List[list] = []  # [t, kind, nbytes, extra] waiting for their packet to complete
+        self._cmd_seq = 0
         directory_path = Path(directory)
         try:
             directory_path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -347,15 +350,15 @@ class CaptureWriter:
     def _t(self) -> float:
         return round(self._clock() - self._t0, 3)
 
-    def _record(self, kind: str, data: bytes) -> None:
+    def _record(self, kind: str, data: bytes, extra: Optional[dict] = None) -> None:
         if not data or self._fh is None:
             return
         t = self._t()
         if not self.sanitize:
-            self._line({"k": kind, "t": t, "h": _hex(data)})
+            self._line({"k": kind, "t": t, "h": _hex(data), **(extra or {})})
             return
         self._dirs[kind].feed(data)
-        self._queue.append([t, kind, len(data)])
+        self._queue.append([t, kind, len(data), extra])
         self._drain()
 
     def _drain(self, force: bool = False) -> None:
@@ -364,20 +367,33 @@ class CaptureWriter:
             for state in self._dirs.values():
                 state.flush()
         while self._queue:
-            t, kind, n = self._queue[0]
+            t, kind, n, extra = self._queue[0]
             state = self._dirs[kind]
             if len(state.out) < n:
                 break  # its packet is still incomplete; head-of-line wait keeps the order
             chunk = bytes(state.out[:n])
             del state.out[:n]
             self._queue.pop(0)
-            self._line({"k": kind, "t": t, "h": _hex(chunk)})
+            self._line({"k": kind, "t": t, "h": _hex(chunk), **(extra or {})})
 
     def rx(self, data: bytes) -> None:
         self._record("rx", data)
 
-    def tx(self, data: bytes) -> None:
-        self._record("tx", data)
+    def tx(self, data: bytes, cmd: Optional[dict] = None) -> None:
+        """``cmd`` describes the command these bytes carry (see ``next_cmd_id``); it rides on the tx line."""
+        self._record("tx", data, {"cmd": cmd} if cmd else None)
+
+    def next_cmd_id(self) -> int:
+        """Per-capture sequence number that ties a tx line to the ``ack`` record the device's reply produces."""
+        self._cmd_seq += 1
+        return self._cmd_seq
+
+    def ack(self, cmd: Optional[dict], *, msg_id: int, ok: Optional[bool], **fields) -> None:
+        """The device answered (``ok`` True/False) or never did (``ok`` None) for a command we sent."""
+        rec = {"k": "ack", "t": self._t(), "msg_id": msg_id, "ok": ok, **fields}
+        if cmd and "id" in cmd:
+            rec["cmd_id"] = cmd["id"]
+        self._line(rec)
 
     def info(self, **fields) -> None:
         clean = {k: v for k, v in fields.items() if v is not None}
@@ -422,6 +438,8 @@ class Capture:
     meta: dict = field(default_factory=dict)
     info: dict = field(default_factory=dict)  # later info records override earlier ones
     records: List[Tuple[float, str, bytes]] = field(default_factory=list)  # (t, "rx"|"tx", data)
+    tags: Dict[int, dict] = field(default_factory=dict)  # records index -> extra fields on that line (tx "cmd")
+    acks: List[dict] = field(default_factory=list)  # "ack" records: device replies to commands we sent
     ended: bool = False
     end_reason: str = ""
     redacted: dict = field(default_factory=dict)
@@ -467,6 +485,10 @@ def load_capture(path) -> Capture:
                     cap.records.append((float(rec.get("t", 0)), kind, bytes.fromhex(rec["h"])))
                 except (KeyError, ValueError):
                     continue
+                if isinstance(rec.get("cmd"), dict):
+                    cap.tags[len(cap.records) - 1] = {"cmd": rec["cmd"]}
+            elif kind == "ack":
+                cap.acks.append({k: v for k, v in rec.items() if k != "k"})
             elif kind == "info":
                 cap.info.update({k: v for k, v in rec.items() if k not in ("k", "t")})
             elif kind == "sanitize_report":
@@ -480,8 +502,10 @@ def load_capture(path) -> Capture:
 def dump_capture(cap: Capture, path) -> None:
     """Write a Capture back out in the same format (used by sanitize/organize and tests)."""
     lines = [json.dumps(cap.meta or {"k": "meta", "format": FORMAT_VERSION}, separators=(",", ":"))]
-    for t, kind, data in cap.records:
-        lines.append(json.dumps({"k": kind, "t": t, "h": _hex(data)}, separators=(",", ":")))
+    for i, (t, kind, data) in enumerate(cap.records):
+        lines.append(json.dumps({"k": kind, "t": t, "h": _hex(data), **cap.tags.get(i, {})}, separators=(",", ":")))
+    for ack in cap.acks:
+        lines.append(json.dumps({"k": "ack", **ack}, separators=(",", ":")))
     if cap.info:
         lines.append(json.dumps({"k": "info", **cap.info}, separators=(",", ":")))
     if cap.redacted:
@@ -498,7 +522,14 @@ def sanitize(cap: Capture, patterns: Sequence[Tuple[str, bytes, bool]] = ()) -> 
     Idempotent: sanitizing an already sanitized capture changes nothing further. Read chunk boundaries are kept.
     """
     redactor = Redactor(patterns)
-    out = Capture(meta=dict(cap.meta), info=dict(cap.info), ended=cap.ended, end_reason=cap.end_reason)
+    out = Capture(
+        meta=dict(cap.meta),
+        info=dict(cap.info),
+        ended=cap.ended,
+        end_reason=cap.end_reason,
+        tags=dict(cap.tags),
+        acks=list(cap.acks),
+    )
     if "ip" in out.meta:
         out.meta["ip"] = REDACTED_IP
     out.meta["sanitized"] = True
@@ -534,6 +565,9 @@ def summarize(cap: Capture) -> str:
         f"duration:    {cap.duration:.1f}s   chunks: {len(cap.records)}   ended: {cap.ended} ({cap.end_reason})",
         "packets:     " + (", ".join(f"{k}={v}" for k, v in sorted(types.items())) or "none"),
     ]
+    if cap.tags or cap.acks:
+        answered = sum(1 for a in cap.acks if a.get("ok"))
+        lines.append(f"commands:    sent={len(cap.tags)} acked={answered} acks_seen={len(cap.acks)}")
     if cap.redacted:
         lines.append("redacted:    " + ", ".join(f"{k}={v}" for k, v in cap.redacted.items()))
     return "\n".join(lines)

@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 import random
 import struct
+import time
 from typing import Optional
 
 from cync_lan.const import (
@@ -337,6 +338,13 @@ class PacketHandlersMixin:
                     ctrl_msg_id = packet_data[1]
                     success = packet_data[7] == 1
                     msg = self.messages.control.pop(ctrl_msg_id, None)
+                    if self.capture is not None and msg is not None and msg.cmd:
+                        self.capture.ack(
+                            msg.cmd,
+                            msg_id=ctrl_msg_id,
+                            ok=success,
+                            ms=round((time.time() - msg.sent_at) * 1000),
+                        )
 
                     if success and msg:
                         if callable(msg.callback):

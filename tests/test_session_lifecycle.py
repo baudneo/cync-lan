@@ -172,3 +172,82 @@ async def test_app_session_capture_is_discarded(env, monkeypatch, tmp_path):
     sess.is_app = True
     await sess.close()
     assert not list(tmp_path.glob("*.jsonl"))
+
+
+async def _command_env(env, monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from cync_lan.devices import session as session_mod
+    from cync_lan.devices.device import CyncDevice
+
+    monkeypatch.setattr(session_mod, "CYNC_CAPTURE_DIR", str(tmp_path))
+    old_mqtt = g.mqtt_client
+    g.mqtt_client = AsyncMock()
+    srv, connect, _ = env
+    _, w = await connect()
+    sess = await session_up(srv)
+    sess.allowed_to_connect = True  # admitted by can_connect() on its first packet in real use
+    sess.ready_to_control = True
+    sess.queue_id = bytes.fromhex("01 02 03 04")
+    dev = CyncDevice(7)
+    sess.node = dev
+    return sess, dev, w, old_mqtt
+
+
+def _ctrl_ack(msg_id: int, ok: int = 1) -> bytes:
+    return bytes([0x7E, msg_id, 0, 0, 0, 0xF9, 0xF0, ok, 0, 0x7E])
+
+
+async def test_capture_tags_command_and_its_ack(env, monkeypatch, tmp_path):
+    from cync_lan.capture import load_capture
+
+    sess, dev, w, old_mqtt = await _command_env(env, monkeypatch, tmp_path)
+    try:
+        await dev.set_brightness(46)
+        msg_id = next(iter(sess.messages.control))
+        await sess._handle_73_mesh_control(_ctrl_ack(msg_id), sess.queue_id, b"\0\0\0", "t:")
+    finally:
+        g.mqtt_client = old_mqtt
+    w.close()
+    assert await until(lambda: sess._closed)
+    cap = load_capture(next(tmp_path.glob("*.jsonl")))
+    (idx, tag), = cap.tags.items()
+    cmd = tag["cmd"]
+    assert cap.records[idx][1] == "tx" and cap.records[idx][2][0] == 0x73
+    assert cmd["name"] == "set_brightness" and cmd["args"] == {"brightness": 46}
+    assert cmd["target"] == 7 and cmd["msg_id"] == msg_id
+    (ack,) = cap.acks
+    assert ack["cmd_id"] == cmd["id"] and ack["ok"] is True and ack["msg_id"] == msg_id
+
+
+async def test_capture_records_failed_ack_and_timeout(env, monkeypatch, tmp_path):
+    from cync_lan.capture import load_capture
+
+    sess, dev, w, old_mqtt = await _command_env(env, monkeypatch, tmp_path)
+    try:
+        await dev.set_power(0)
+        failed_id = next(iter(sess.messages.control))
+        await sess._handle_73_mesh_control(_ctrl_ack(failed_id, ok=0), sess.queue_id, b"\0\0\0", "t:")
+        await dev.set_power(1)
+        stale = sess.messages.control[next(iter(sess.messages.control))]
+        sess.capture.ack(stale.cmd, msg_id=stale.id, ok=None, reason="timeout")
+    finally:
+        g.mqtt_client = old_mqtt
+    w.close()
+    assert await until(lambda: sess._closed)
+    cap = load_capture(next(tmp_path.glob("*.jsonl")))
+    assert [a["ok"] for a in cap.acks] == [False, None]
+    assert [t["cmd"]["args"]["state"] for t in cap.tags.values()] == [0, 1]
+
+
+async def test_untracked_ack_records_nothing(env, monkeypatch, tmp_path):
+    from cync_lan.capture import load_capture
+
+    sess, dev, w, old_mqtt = await _command_env(env, monkeypatch, tmp_path)
+    try:
+        await sess._handle_73_mesh_control(_ctrl_ack(99), sess.queue_id, b"\0\0\0", "t:")
+    finally:
+        g.mqtt_client = old_mqtt
+    w.close()
+    assert await until(lambda: sess._closed)
+    assert load_capture(next(tmp_path.glob("*.jsonl"))).acks == []

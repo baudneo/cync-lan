@@ -19,6 +19,23 @@ cync-lan version), `rx` (bytes as one socket read returned them), `tx` (bytes we
 firmware, protocol version, and the configured node ids with their types and endpoint ids), `end`. Mobile-app
 sessions are never kept: they carry account tokens.
 
+### Commands and their replies
+
+When the bridge sends a control command (power, brightness, color temperature, RGB, light show), the `tx` line
+carries a `cmd` tag, and the device's reply gets its own `ack` record that points back at it:
+
+```
+{"k":"tx","t":9.2,"h":"73 00 00 00 ...","cmd":{"id":1,"name":"set_brightness","args":{"brightness":46},"target":7,"sub_id":0,"msg_id":12}}
+{"k":"rx","t":9.4,"h":"73 00 00 00 ..."}
+{"k":"ack","t":9.4,"cmd_id":1,"msg_id":12,"ok":true,"ms":212}
+```
+
+`cmd.id` is a per-file counter, `msg_id` is the one-byte control id we put in the packet (it rolls over at 256, so
+use `cmd_id` to match). `ok` is true/false for the device's success flag, or null with `reason: "timeout"` when no
+reply arrived before the stale-callback cleanup. The tag is only metadata: it never goes to the device. Replies to
+commands that were not tagged (mesh info refreshes, app-issued commands) have no `ack` record. The `ack` lands
+right after the `rx` chunk the reply arrived in, which may hold several packets, so match on ids rather than position.
+
 ## Sanitizing (on by default)
 With `CYNC_CAPTURE_SANITIZE=yes` (the default) identifiers are replaced in memory, packet by packet, so they never
 reach the disk. Replacements keep the exact length and use markers that are obviously fake, so a replay still frames,

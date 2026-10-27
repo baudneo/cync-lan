@@ -454,6 +454,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                     timeout = ctrl_msg.sent_at + delay_seconds
                     if now > timeout:
                         logger.info(f"{lp} Removing STALE {ctrl_msg}")
+                        if self.capture is not None and ctrl_msg.cmd:
+                            self.capture.ack(ctrl_msg.cmd, msg_id=ctrl_msg_id, ok=None, reason="timeout")
                         ctrl_msg.callback = None
                         self.messages.control.pop(ctrl_msg_id, None)
 
@@ -539,12 +541,13 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                     )
                     return False
 
-    async def write(self, data: bytes, broadcast: bool = False) -> Optional[bool]:
+    async def write(self, data: bytes, broadcast: bool = False, cmd: Optional[dict] = None) -> Optional[bool]:
         """
         Write data to the device if there is an open connection
 
         :param data: The raw binary data to write to the device
         :param broadcast: If True, write to all TCP devices connected to the server
+        :param cmd: capture tag describing the command in ``data`` (never sent to the device)
         """
         if not isinstance(data, bytes):
             raise ValueError(f"Data must be bytes, not type: {type(data)}")
@@ -588,7 +591,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                             raise to_exc
                         else:
                             if self.capture is not None:
-                                self.capture.tx(data)
+                                self.capture.tx(data, cmd)
                             return True
             else:
                 logger.warning(f"{self.lp} writer is None, can't write data!")

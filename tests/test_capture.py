@@ -1,7 +1,13 @@
 """Capture file format, write-time sanitizing, offline sanitizer and organizer."""
 
 from cync_lan import capture as cap_mod
-from cync_lan.capture import CaptureWriter, load_capture, sanitize
+from cync_lan.capture import (
+    CaptureWriter,
+    dump_capture,
+    load_capture,
+    sanitize,
+    summarize,
+)
 
 PING = bytes.fromhex("d3 00 00 00 00")
 HELLO_23 = bytes.fromhex("23 00 00 00 1a 03 11 22 33 44 00 10") + b"1e07deadbeefcafef00dba5e" + b"\x00\x01"
@@ -186,3 +192,24 @@ def test_our_own_replies_are_redacted_too(tmp_path):
     assert tx[0][5:9] == cap_mod.REDACTED_QUEUE_ID and tx[0][9:] == ack_78[9:]
     assert tx[1] == connect_ack
     assert "unrecognized_bytes_kept" not in cap.redacted
+
+
+def test_cmd_tags_and_acks_survive_load_dump_sanitize(tmp_path):
+    cap = _cap_with_command(tmp_path)
+    assert cap.tags and cap.acks
+    clean, _ = sanitize(cap)
+    assert clean.tags == cap.tags and clean.acks == cap.acks
+    dump_capture(clean, tmp_path / "out.jsonl")
+    again = load_capture(tmp_path / "out.jsonl")
+    assert again.tags == cap.tags and again.acks == cap.acks
+    assert "commands:    sent=1 acked=1" in summarize(again)
+
+
+def _cap_with_command(tmp_path):
+    w = CaptureWriter(str(tmp_path), "10.0.0.1", sanitize=False)
+    cid = w.next_cmd_id()
+    cmd = {"id": cid, "name": "set_power", "args": {"state": 0}, "target": 7, "msg_id": 3}
+    w.tx(b"\x73\x00\x00\x00\x01\x00", cmd)
+    w.ack(cmd, msg_id=3, ok=True, ms=12)
+    w.close()
+    return load_capture(w.path)
