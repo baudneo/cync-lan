@@ -96,7 +96,10 @@ def test_effect_lists():
     plain = fx.effect_names(dynamic=False)
     full = fx.effect_names(dynamic=True)
     assert set(FACTORY_EFFECTS_BYTES) <= set(plain) and fx.STOP_SHOW in plain
-    assert not any(n.startswith(("music_", "custom_")) for n in plain)
+    # custom LIGHT shows run on a plain colour bulb too (tested on a deviceType 171 Full Color A19); music shows are
+    # Dynamic Effects only (the app refuses them for that bulb: "Switch to a Dynamic Effects Product to Use Music Shows")
+    assert {"custom_light_1", "custom_light_23"} <= set(plain)
+    assert not any(n.startswith(("music_", "custom_music_")) for n in plain)
     assert {"music_supernova", "custom_music_10", "custom_light_23"} <= set(full)
 
 
