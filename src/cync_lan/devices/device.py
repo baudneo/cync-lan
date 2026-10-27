@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import logging.handlers
 import random
@@ -528,7 +529,8 @@ class CyncDevice:
         # logger.debug(f"{lp} new data: ctrl_byte={id_byte} rollover_byte={rollover_byte} // {self.control_bytes=}")
         return self.control_bytes
 
-    async def send_command(self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str):
+    async def send_command(self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str, desc: Optional[dict] = None):
+        """``desc`` ({"name", "args"}) is only used to tag the capture log; it never reaches the device."""
         tasks = []
         tcp_pool = await g.ncync_server.get_dev_tcp_pool()
         if not tcp_pool:
@@ -570,8 +572,20 @@ class CyncDevice:
                     m_cb.id = cmsg_id
                     m_cb.message = full_packet
                     m_cb.sent_at = time.time()
-                    bridge_device.messages.control[cmsg_id] = m_cb
-                    tasks.append(bridge_device.write(full_packet))
+                    cmd_tag = None
+                    if desc and bridge_device.capture is not None:
+                        cmd_tag = {
+                            "id": bridge_device.capture.next_cmd_id(),
+                            **desc,
+                            "target": self.id,
+                            "sub_id": sub_id,
+                            "msg_id": cmsg_id,
+                        }
+                    # one callback object is shared by every broadcast target, so each gets its own copy
+                    bridge_cb = copy.copy(m_cb)
+                    bridge_cb.cmd = cmd_tag
+                    bridge_device.messages.control[cmsg_id] = bridge_cb
+                    tasks.append(bridge_device.write(full_packet, cmd=cmd_tag))
                     str_appnd = "..."
                     if CYNC_RAW:
                         str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node.id}|queue_id: {bridge_device.queue_id.hex(" ")}):\n'
@@ -651,7 +665,9 @@ class CyncDevice:
                 g.mqtt_client.update_entity_power, self, state, _sub_id
             ),
         )
-        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
+        await self.send_command(
+            op, cmd_, _sub_id, payload, m_cb, lp, {"name": "set_power", "args": {"state": state}}
+        )
 
     async def set_brightness(self, bri: int, sub_id: Optional[int] = None, callback = None):
         lp = f"{self.lp}set_brightness:"
@@ -678,7 +694,9 @@ class CyncDevice:
             callback=callback,
         )
 
-        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
+        await self.send_command(
+            op, cmd_, _sub_id, payload, m_cb, lp, {"name": "set_brightness", "args": {"brightness": bri}}
+        )
 
     async def set_temperature(self, temp: int, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_temperature:"
@@ -705,7 +723,9 @@ class CyncDevice:
             sent_at=0.0,
             callback=partial(g.mqtt_client.update_temperature, self, temp),
         )
-        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
+        await self.send_command(
+            op, cmd_, _sub_id, payload, m_cb, lp, {"name": "set_temperature", "args": {"temperature": temp}}
+        )
 
     async def set_rgb(
             self, red: int, green: int, blue: int, sub_id: Optional[int] = None
@@ -731,7 +751,9 @@ class CyncDevice:
                 g.mqtt_client.update_rgb, self, (red, green, blue)
             ),
         )
-        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
+        await self.send_command(
+            op, cmd_, _sub_id, payload, m_cb, lp, {"name": "set_rgb", "args": {"rgb": [red, green, blue]}}
+        )
 
     async def set_lightshow(self, show: str, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_lightshow:"
@@ -757,6 +779,8 @@ class CyncDevice:
                 g.mqtt_client.update_effect, self, None if mode == RUN_MODE_EXIT else show
             ),
         )
-        await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
+        await self.send_command(
+            op, cmd_, _sub_id, payload, m_cb, lp, {"name": "set_lightshow", "args": {"show": show, "mode": mode, "index": index}}
+        )
 
 

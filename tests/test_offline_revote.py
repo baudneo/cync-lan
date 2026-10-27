@@ -163,6 +163,7 @@ async def test_closing_a_device_session_triggers_the_revote(env):
     dead.is_app = False
     dead.allowed_to_connect = True
     dead.writer = dead.reader = dead.node = None
+    dead.capture = None
     dead._closed = dead._closing = False
     dead.tasks = SimpleNamespace(cancel_all=cancel_all)
     dead.is_closed = lambda: dead._closed

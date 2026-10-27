@@ -5,9 +5,18 @@ import logging.handlers
 import time
 from typing import List, Optional
 
+from cync_lan import __version__
+from cync_lan.capture import CaptureWriter, pii_patterns
 from cync_lan.const import (
+    CYNC_ACCOUNT_PASSWORD,
+    CYNC_ACCOUNT_USERNAME,
+    CYNC_CAPTURE_DIR,
+    CYNC_CAPTURE_FILE_MAX_MB,
+    CYNC_CAPTURE_MAX_MB,
+    CYNC_CAPTURE_SANITIZE,
     CYNC_LOG_NAME,
     CYNC_RAW,
+    CYNC_SECRET_KEY,
     STREAM_CHUNK_SIZE,
 )
 from cync_lan.devices.device import CyncDevice
@@ -64,6 +73,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         self.tasks = Tasks()
         self.framer = PacketFramer()
         self.bad_packets = 0
+        self.capture: Optional[CaptureWriter] = None
         self.mitm_button_added = False
         self.is_app = False
         self.name: Optional[str] = None
@@ -96,6 +106,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         self._closed = False
         self.closing = False
         self.mitm_button_added = False
+        self.capture = self._new_capture()  # needs ip_address, so it comes last
 
 
     async def existing_init(self):
@@ -104,6 +115,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         # new socket: any half-received packet from the old one is meaningless
         self.framer.reset()
         self.bad_packets = 0
+        self.capture = self._new_capture()  # a new socket is a new capture file
         self._closed = False
         self.closing = False
         self.xa3_msg_id: bytes = bytes([0x00, 0x00, 0x00])
@@ -130,6 +142,66 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
             else:
                 logger.debug(f"{lp} Proxy connection is up!")
 
+
+    def _new_capture(self) -> Optional[CaptureWriter]:
+        """A recorder for this connection when CYNC_CAPTURE_DIR is set, else None."""
+        if not CYNC_CAPTURE_DIR:
+            return None
+        writer = CaptureWriter(
+            CYNC_CAPTURE_DIR,
+            self.ip_address or "unknown",
+            version=__version__,
+            sanitize=CYNC_CAPTURE_SANITIZE,
+            patterns=self._pii_patterns() if CYNC_CAPTURE_SANITIZE else (),
+            file_max_bytes=CYNC_CAPTURE_FILE_MAX_MB * 1024 * 1024,
+            dir_max_bytes=CYNC_CAPTURE_MAX_MB * 1024 * 1024,
+        )
+        return writer if writer.active else None
+
+    def _pii_patterns(self):
+        """Everything we know that must not appear in a capture: from the user's own config and account."""
+        server = getattr(g, "ncync_server", None)
+        nodes = list(server.node_devices.values()) if server else []
+        return pii_patterns(
+            macs=[m for n in nodes for m in (getattr(n, "mac", None), getattr(n, "wifi_mac", None))],
+            home_ids={n.home_id for n in nodes if n.home_id},
+            secrets=[CYNC_ACCOUNT_USERNAME, CYNC_ACCOUNT_PASSWORD, CYNC_SECRET_KEY],
+            ips=[self.ip_address] if self.ip_address else [],
+        )
+
+    def capture_info(self) -> None:
+        """Record what we have learned about this device so far (type, firmware, node ids -> types)."""
+        cap = self.capture
+        if cap is None or not cap.active:
+            return
+        server = getattr(g, "ncync_server", None)
+        # ids, types and endpoint ids only: no names, MACs or home ids
+        nodes = (
+            {str(i): {"type": n.type, "endpoints": sorted(n.entities or {})} for i, n in server.node_devices.items()}
+            if server
+            else None
+        )
+        cap.info(
+            node_id=self.node.id if self.node else None,
+            device_type=self.node.type if self.node else None,
+            device_type_id=self.device_type_id,
+            firmware=self.version_str,
+            firmware_num=self.version,
+            protocol=self.protocol_version_str,
+            nodes=nodes,
+        )
+
+    def _end_capture(self, reason: str) -> None:
+        cap, self.capture = self.capture, None
+        if cap is None:
+            return
+        if self.is_app:
+            cap.discard()  # app sessions carry account tokens: never keep them
+            return
+        self.capture = cap
+        self.capture_info()
+        self.capture = None
+        cap.close(reason)
 
     async def start_tasks(self):
         """Start background tasks safely, ensuring old ones are killed first."""
@@ -292,6 +364,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                     f"{lp} Device has been identified as the Cync mobile app, enabling proxying to the Cync cloud for all App connections..."
                 )
                 self.is_app = True
+                self._end_capture("app session")
                 await self.blackhole("is app", True)
                 # g.ncync_server.app_tcp_connections[self.ip_address] = g.ncync_server.tcp_connections.pop(self.ip_address)
                 # # update app / node / tcp conn stats
@@ -381,6 +454,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                     timeout = ctrl_msg.sent_at + delay_seconds
                     if now > timeout:
                         logger.info(f"{lp} Removing STALE {ctrl_msg}")
+                        if self.capture is not None and ctrl_msg.cmd:
+                            self.capture.ack(ctrl_msg.cmd, msg_id=ctrl_msg_id, ok=None, reason="timeout")
                         ctrl_msg.callback = None
                         self.messages.control.pop(ctrl_msg_id, None)
 
@@ -418,6 +493,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                     if not data:
                         await asyncio.sleep(0)
                         continue
+                    if self.capture is not None:
+                        self.capture.rx(data)
                     await self.parse_raw_data(data)
 
                 except Exception as e:
@@ -464,12 +541,13 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                     )
                     return False
 
-    async def write(self, data: bytes, broadcast: bool = False) -> Optional[bool]:
+    async def write(self, data: bytes, broadcast: bool = False, cmd: Optional[dict] = None) -> Optional[bool]:
         """
         Write data to the device if there is an open connection
 
         :param data: The raw binary data to write to the device
         :param broadcast: If True, write to all TCP devices connected to the server
+        :param cmd: capture tag describing the command in ``data`` (never sent to the device)
         """
         if not isinstance(data, bytes):
             raise ValueError(f"Data must be bytes, not type: {type(data)}")
@@ -512,6 +590,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                             )
                             raise to_exc
                         else:
+                            if self.capture is not None:
+                                self.capture.tx(data, cmd)
                             return True
             else:
                 logger.warning(f"{self.lp} writer is None, can't write data!")
@@ -520,6 +600,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
     async def close(self, remove_mitm_button: bool = True):
         lp = f"{self.ip_address}:close:"
         logger.debug(f"{lp} Cancelling device tasks...")
+        self._end_capture("closed")
         try:
             self.closing = True
             await self.tasks.cancel_all()

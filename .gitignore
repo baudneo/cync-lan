@@ -3,6 +3,7 @@ raw_mesh.cync
 cync_mesh.yaml
 /docs/debug.md
 /config/
+/captures/
 uuid.txt
 /tailwindcss
 docker-compose.yaml
