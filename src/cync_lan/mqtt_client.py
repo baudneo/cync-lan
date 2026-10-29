@@ -501,21 +501,31 @@ class MQTTClient:
             else:
                 tasks.append(node.set_power(0, sub_id))
             queued = True
+        # Brightness + colour (or colour temp) in one message go out as ONE packet carrying both: sent as two
+        # packets, the light kept its old brightness. Sol lamps use separate packets and keep the two calls.
+        combo_bri = None
         if "brightness" in json_data:
             bri = parse_int(json_data["brightness"])
             if bri is None:
                 logger.warning(f"{lp} invalid brightness {json_data['brightness']!r}, skipping")
+            elif not getattr(node, "is_sol_lamp", False) and (
+                    "color_temp" in json_data or isinstance(json_data.get("color"), dict)):
+                combo_bri = clamp(bri, 0, 100)
             else:
                 tasks.append(node.set_brightness(clamp(bri, 0, 100), sub_id))
                 queued = True
+        combo = {} if combo_bri is None else {"bri": combo_bri}
 
         if "color_temp" in json_data:
             kelvin = parse_int(json_data["color_temp"])
             if kelvin is None:
                 logger.warning(f"{lp} invalid color_temp {json_data['color_temp']!r}, skipping")
+                if combo_bri is not None:
+                    tasks.append(node.set_brightness(combo_bri, sub_id))
+                    queued = True
             else:
                 tasks.append(
-                    node.set_temperature(self.kelvin2cync(kelvin, node), sub_id)
+                    node.set_temperature(self.kelvin2cync(kelvin, node), sub_id, **combo)
                 )
                 queued = True
         elif "color" in json_data:
@@ -529,7 +539,7 @@ class MQTTClient:
                 ]
                 if sub_id is not None:
                     color.append(sub_id)
-                tasks.append(node.set_rgb(*color))
+                tasks.append(node.set_rgb(*color, **combo))
                 queued = True
         return queued
 
