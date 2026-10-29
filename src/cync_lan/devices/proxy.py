@@ -304,4 +304,8 @@ class ProxyMixin:
         else:
             self.allowed_to_connect = True
 
+        if self.allowed_to_connect and g.ncync_server is not None:
+            # add_tcp_device() published the bridge's TCP device count before this session was admitted, so without it;
+            # publish it again now that it counts
+            await g.ncync_server._update_app_stats()
         return self.allowed_to_connect
