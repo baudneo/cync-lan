@@ -119,6 +119,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         self.messages = MessageCache()
         self.lp = f"{self.ip_address}:"
         self.tasks = Tasks()
+        # re-arm the switch: the first 0x73 on the new socket publishes it again
+        self.mitm_button_added = False
         if self.mitm_mode is True:
             logger.debug(f"{lp} MITM mode is active, making sure the proxy is started...")
             if self.node:
@@ -550,7 +552,10 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         finally:
             self.reader = None
 
-        if self.node and remove_mitm_button and g.mqtt_client:
+        # only the node's CURRENT session may delete its switch (a stale session closing after the device reconnected
+        # from another IP would delete the new session's switch)
+        current = getattr(self.node, "tcp_session", None) if self.node else None
+        if self.node and remove_mitm_button and g.mqtt_client and (current is None or current is self):
             await g.mqtt_client.remove_mitm_button(self.node)
         self.closing = False
         self._closed = True

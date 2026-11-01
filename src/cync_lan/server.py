@@ -284,7 +284,8 @@ class nCyncServer:
             _add_str = ""
             if not existing_device.mitm_mode:
                 _add_str = " closing and"
-                await existing_device.close()
+                # the same session object carries on with the new socket - keep its MITM switch
+                await existing_device.close(remove_mitm_button=False)
             logger.debug(
                 f"{lp} Existing TCP session found, gracefully{_add_str} replacing..."
             )

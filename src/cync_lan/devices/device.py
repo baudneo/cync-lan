@@ -37,6 +37,12 @@ logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
 
 
+async def _run_callbacks(*callbacks):
+    """Run several state-update callbacks for one acknowledged packet (e.g. colour + brightness)."""
+    for cb in callbacks:
+        await cb()
+
+
 class CyncDevice:
     """
     A class to represent a physical Cync device
@@ -680,10 +686,14 @@ class CyncDevice:
 
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
-    async def set_temperature(self, temp: int, sub_id: Optional[int] = None):
+    async def set_temperature(self, temp: int, sub_id: Optional[int] = None, bri: Optional[int] = None):
+        """Set the white temperature. With ``bri`` (0-100) the brightness goes out in the SAME packet (not on Sol lamps)."""
         lp = f"{self.lp}set_temperature:"
         if temp < 0 or (temp > 100 and temp not in (129, 254)):
             logger.error(f"{lp} Invalid temperature! must be 0-100")
+            return
+        if bri is not None and not 0 <= bri <= 100:
+            logger.error(f"{lp} Invalid brightness: {bri} must be 0-100")
             return
 
         op = 0xE2 if self.is_sol_lamp else 0xF0
@@ -695,41 +705,49 @@ class CyncDevice:
             # Payload: 0x11, 0x02, 0x05, temp, 0x00 (5 bytes)
             payload = struct.pack(">BBBBB", 0x11, 0x02, 0x05, temp, 0x00)
         else:
-            # Payload: 0x11, 0x02, 0x01, 0xFF, temp, 0x00, 0x00, 0x00 (8 bytes)
+            # Payload: 0x11, 0x02, 0x01, <brightness, 0xFF = keep>, temp, 0x00, 0x00, 0x00 (8 bytes)
             payload = struct.pack(
-                ">BBBBBBBB", 0x11, 0x02, 0x01, 0xFF, temp, 0x00, 0x00, 0x00
+                ">BBBBBBBB", 0x11, 0x02, 0x01, 0xFF if bri is None else bri, temp, 0x00, 0x00, 0x00
             )
+        cb = partial(g.mqtt_client.update_temperature, self, temp)
+        if bri is not None and not self.is_sol_lamp:
+            cb = partial(_run_callbacks, cb, partial(g.mqtt_client.update_brightness, self, bri))
         m_cb = ControlMessageCallback(
             msg_id=0x00,
             message=None,
             sent_at=0.0,
-            callback=partial(g.mqtt_client.update_temperature, self, temp),
+            callback=cb,
         )
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
     async def set_rgb(
-            self, red: int, green: int, blue: int, sub_id: Optional[int] = None
+            self, red: int, green: int, blue: int, sub_id: Optional[int] = None, bri: Optional[int] = None
     ):
+        """Set an RGB colour. With ``bri`` (0-100) the brightness goes out in the SAME packet."""
         lp = f"{self.lp}set_rgb:"
         if not (0 <= red <= 255) or not (0 <= green <= 255) or not (0 <= blue <= 255):
             logger.error(f"{lp} Invalid RGB value! channels must be 0-255")
+            return
+        if bri is not None and not 0 <= bri <= 100:
+            logger.error(f"{lp} Invalid brightness: {bri} must be 0-100")
             return
 
         op = 0xF0
         cmd_ = 0x10
         _sub_id = sub_id if sub_id is not None else 0x00
 
-        # Payload: 0x11, 0x02, 0x01, 0xFF, 0xFE, red, green, blue (8 bytes)
+        # Payload: 0x11, 0x02, 0x01, <brightness, 0xFF = keep>, 0xFE, red, green, blue (8 bytes)
         payload = struct.pack(
-            ">BBBBBBBB", 0x11, 0x02, 0x01, 0xFF, 0xFE, red, green, blue
+            ">BBBBBBBB", 0x11, 0x02, 0x01, 0xFF if bri is None else bri, 0xFE, red, green, blue
         )
+        cb = partial(g.mqtt_client.update_rgb, self, (red, green, blue))
+        if bri is not None:
+            cb = partial(_run_callbacks, cb, partial(g.mqtt_client.update_brightness, self, bri))
         m_cb = ControlMessageCallback(
             msg_id=0x00,
             message=None,
             sent_at=0.0,
-            callback=partial(
-                g.mqtt_client.update_rgb, self, (red, green, blue)
-            ),
+            callback=cb,
         )
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
 
