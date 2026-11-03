@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 import random
 import struct
+import time
 from typing import Optional
 
 from cync_lan.const import (
@@ -337,6 +338,13 @@ class PacketHandlersMixin:
                     ctrl_msg_id = packet_data[1]
                     success = packet_data[7] == 1
                     msg = self.messages.control.pop(ctrl_msg_id, None)
+                    if self.capture is not None and msg is not None and msg.cmd:
+                        self.capture.ack(
+                            msg.cmd,
+                            msg_id=ctrl_msg_id,
+                            ok=success,
+                            ms=round((time.time() - msg.sent_at) * 1000),
+                        )
 
                     if success and msg:
                         if callable(msg.callback):
@@ -430,6 +438,7 @@ class PacketHandlersMixin:
                             f"{self.lp}0x73: Setting TCP"
                             f" Node ID to: {self.node.id}"
                         )
+                        self.capture_info()
                         # dynamically add the MITM mode button for nodes that are connected via TCP
                         self.mitm_button_added = True
                         await g.mqtt_client.add_mitm_button(node_repr)

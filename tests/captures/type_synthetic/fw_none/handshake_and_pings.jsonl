@@ -1,0 +1,11 @@
+{"k":"meta","format":1,"started":"2026-01-01T00:00:00+00:00","ip":"10.0.0.1","app":false,"sanitized":true,"sanitizer":2,"cync_lan":"synthetic"}
+{"k":"rx","t":0.1,"h":"23 00 00 00 1a 03 de"}
+{"k":"rx","t":0.2,"h":"ad be ef 00 10 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30"}
+{"k":"tx","t":0.3,"h":"28 00 00 00 02 00 00"}
+{"k":"rx","t":20.0,"h":"d3 00 00 00 00"}
+{"k":"tx","t":20.01,"h":"d8 00 00 00 00"}
+{"k":"rx","t":40.0,"h":"d3 00 00 00 00 d3 00 00 00 00"}
+{"k":"tx","t":40.01,"h":"d8 00 00 00 00 d8 00 00 00 00"}
+{"k":"info","firmware":"synthetic","nodes":{}}
+{"k":"sanitize_report","redacted":{"auth_codes":1,"queue_ids":1}}
+{"k":"end","reason":"synthetic example"}

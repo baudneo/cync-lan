@@ -221,7 +221,9 @@ class ControlMessageCallback:
         message: Union[None, str, bytes, List[int]],
         sent_at: float,
         callback: Union[asyncio.Task, Coroutine],
+        cmd: Optional[dict] = None,
     ):
+        self.cmd = cmd  # capture tag for this command (name/args/target), set when it is sent
         self.id = msg_id
         self.message = message
         self.sent_at = sent_at

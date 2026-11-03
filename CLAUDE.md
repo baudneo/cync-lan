@@ -24,6 +24,7 @@ proxies a session to the real Cync cloud.
 | `devices/proxy.py` | `ProxyMixin`: cloud proxy / MITM logging / connection gating |
 | `packet/framer.py` | `PacketFramer`: pure byte-stream -> complete packets |
 | `stats.py` | `stats`: process-wide event counters, published to `<topic>/status/bridge/stats` |
+| `capture.py` | record raw device traffic (`CYNC_CAPTURE_DIR`), load/sanitize/organize captures; replay harness is `tests/replay_harness.py` (docs/capture.md) |
 | `supervisor.py` | `supervise()`: service-task supervision used by `main.py` |
 | `packet/builder.py` | `PacketBuilder`: header constants, ack/control/mesh-info packet builders |
 | `mqtt_client.py` | MQTT + Home Assistant discovery, command parsing |

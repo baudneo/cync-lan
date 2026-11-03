@@ -49,6 +49,9 @@ services:
     # Debug logging, regular and raw binary
 #      CYNC_DEBUG: yes
 #      CYNC_RAW_DEBUG: yes
+    # Record raw device traffic (sanitized by default) to build replay tests, see docs/capture.md.
+    # Inside the mounted config volume so the files land in ./config/captures on the host.
+#      CYNC_CAPTURE_DIR: /root/cync-lan/config/captures
     networks:
       - cync-lan
 

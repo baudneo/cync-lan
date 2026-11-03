@@ -178,6 +178,9 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_APP_MITM_LOGGING`      | Cync mobile apps are always proxied, this controls if the proxied data is logged or not                        | `no`                                  | str  |
 | `CYNC_DEBUG`                 | Enable debug logging                                                                                           | `no`                                  | str  |
 | `CYNC_RAW_DEBUG`             | Enable raw binary message debug logging (non-MITM, so strictly between dev and CyncLAN)                        | `no`                                  | str  |
+| `CYNC_CAPTURE_SANITIZE`      | Replace identifiers (queue ids, auth code, MACs, home ids, account, IP) in captures before writing; leave on | `yes`                                 | str  |
+| `CYNC_CAPTURE_DIR`           | Record raw device traffic here (one file per connection) to build replay tests; see `docs/capture.md`. Files hold identifiers, do not share them | unset                                 | str  |
+| `CYNC_CAPTURE_FILE_MAX_MB` / `CYNC_CAPTURE_MAX_MB` | Size caps: per file / whole directory                                                       | `20` / `200`                          | int  |
 | `CYNC_MITM_DEV_LOGGER`       | Enable MITM console logging for Cync Devices (enabling this will also output to the console)                   | `no`                                  | str  |
 | `CYNC_MITM_APP_LOGGER`       | Enable MITM console logging for mobile APPS (enabling this will also output to the console)                    | `no`                                  | str  |
 | `CYNC_DEVICE_CERT`           | Path to cert file                                                                                              | `certs/server.pem`                    | str  |
