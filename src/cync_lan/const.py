@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import zoneinfo
 from typing import Dict, List, Optional, Tuple, Union
@@ -32,6 +33,8 @@ __all__ = [
     "CYNC_EXPORT_PORT",
     "CYNC_UUID_PATH",
     "FACTORY_EFFECTS_BYTES",
+    "LIGHT_SHOW_ID_OVERRIDES",
+    "light_show_id",
     "LOCAL_TZ",
     "CYNC_CONFIG_FILE_PATH",
     "CYNC_CLOUD_AUTH_PATH",
@@ -41,6 +44,7 @@ __all__ = [
     "CYNC_MQTT_CONN_DELAY",
     "CYNC_CMD_BROADCASTS",
     "CYNC_MAX_TCP_CONN",
+    "CYNC_MESH_REFRESH_SECS",
     "CYNC_TCP_WHITELIST",
     "CYNC_API_BASE",
     "CYNC_MQTT_HOST",
@@ -91,10 +95,16 @@ MQTT_DEBUG = os.environ.get("CYNC_MQTT_DEBUG", "1").casefold() in YES_ANSWER
 MQTT_DEAD = os.environ.get("CYNC_MQTT_DEAD", "0").casefold() in YES_ANSWER
 
 CYNC_SRV_HOST = os.environ.get("CYNC_SRV_HOST", "0.0.0.0")
-CYNC_EXPORT_HOST = os.environ.get("CYNC_EXPORT_HOST", CYNC_SRV_HOST)
-CYNC_EXPORT_SOURCE = os.environ.get("CYNC_EXPORT_SOURCE")
-
 CYNC_HASS_APP = os.environ.get("CYNC_HASS_APP", "no") in YES_ANSWER
+# The export web app can download the cloud config (access keys) and restart the bridge, so it
+# only listens on loopback unless told otherwise. The HA app is reached through ingress from
+# another container and must listen on all interfaces; ingress authenticates the user.
+CYNC_EXPORT_HOST = os.environ.get(
+    "CYNC_EXPORT_HOST", CYNC_SRV_HOST if CYNC_HASS_APP else "127.0.0.1"
+)
+CYNC_EXPORT_SOURCE = os.environ.get("CYNC_EXPORT_SOURCE")
+# Optional fixed access token for the export web app (otherwise derived from CYNC_SECRET_KEY)
+CYNC_EXPORT_TOKEN = os.environ.get("CYNC_EXPORT_TOKEN")
 
 CYNC_ACCOUNT_LANGUAGE: str = os.environ.get("CYNC_ACCOUNT_LANGUAGE", "en-us").casefold()
 CYNC_ACCOUNT_USERNAME: str = os.environ.get("CYNC_ACCOUNT_USERNAME", None)
@@ -118,6 +128,25 @@ else:
         CYNC_MAX_TCP_CONN = int(CYNC_MAX_TCP_CONN)
     except ValueError:
         CYNC_MAX_TCP_CONN = 8
+# re-ask every TCP bridge for mesh info this often, in seconds (0 = only on connect). Bridges seem to push 0x83 status
+# changes, including the stale flag that marks a powered-off bulb offline, only for a few minutes after a request.
+# [inferred, baudneo/cync-lan#39] On by default: without it a bulb cut at the wall minutes after start stays "on".
+DEFAULT_MESH_REFRESH_SECS: float = 90.0
+
+
+def parse_mesh_refresh_secs(raw: Union[str, int, float, None]) -> float:
+    """Unset, empty, "null" (the HA add-on passes that for a missing option) or unusable values mean the default;
+    0 (or less) turns the refresh off."""
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        return DEFAULT_MESH_REFRESH_SECS
+    if not math.isfinite(value):
+        return DEFAULT_MESH_REFRESH_SECS
+    return max(0.0, value)
+
+
+CYNC_MESH_REFRESH_SECS: float = parse_mesh_refresh_secs(os.environ.get("CYNC_MESH_REFRESH_SECS"))
 CYNC_TCP_WHITELIST: Optional[Union[str, List[Optional[str]]]] = os.environ.get(
     "CYNC_TCP_WHITELIST"
 )
@@ -201,6 +230,17 @@ FACTORY_EFFECTS_BYTES: Dict[str, Tuple[int, int]] = {
     "vegas": (int(0x08), int(0xE3)),
     "party_time": (int(0x09), int(0x06)),
 }
+
+# Light-show IDs that differ by deviceType. 0x3A runs Fireworks on the devices the table above was built from, but on a type 75
+# (24' Cafe Lights, fw 1.0.516) it did nothing, even with the same last byte 0xDA; there 0x03 runs Fireworks (status 0x82).
+LIGHT_SHOW_ID_OVERRIDES: Dict[int, Dict[str, int]] = {
+    75: {"fireworks": 0x03},
+}
+
+
+def light_show_id(show: str, dev_type: Optional[int]) -> int:
+    """The run-mode index for a factory light show on this deviceType."""
+    return LIGHT_SHOW_ID_OVERRIDES.get(dev_type, {}).get(show, FACTORY_EFFECTS_BYTES[show][0])
 
 ORIGIN_STRUCT = {
     "name": "cync-lan",

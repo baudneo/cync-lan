@@ -8,6 +8,9 @@ There seems to be some fine-tuning that can be done using `CYNC_MAX_TCP_CONN` an
 - `CYNC_MAX_TCP_CONN` is the maximum number of TCP devices connected to cync-lan at a time. This is set to 8 by default.
   - I've had a decent experience with 4-6 devices connected at a time and 2-3 commands broadcast.
 - Having 2-6 WiFi devices connected to cync-lan is recommended.
+- `CYNC_MESH_REFRESH_SECS` is how often (seconds, default 90) each connected device is asked for mesh info again. Devices only report
+  that a bulb lost power (switched off at the wall) for a few minutes after being asked, so without the refresh a bulb cut later stays
+  `on` in HASS. Set it to `0` to only ask when a device connects.
 
 >[!NOTE]
 > It may also be the way HASS issues commands in a light group. I also notice slow / not in-sync responses with ZigBee lights as well

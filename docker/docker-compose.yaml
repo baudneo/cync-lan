@@ -35,7 +35,10 @@ services:
       CYNC_ACCOUNT_PASSWORD: "cync-account-password"
       # Interface to listen for cync devices on, default is 0.0.0.0 but can be set to a specific IP if needed.
 #      CYNC_SRV_HOST: "192.168.45.67"
-      # Interface for the export server, default is 127.0.0.1, but can be set to a specific IP if needed.
+      # Interface for the export server. Defaults to 127.0.0.1 outside Docker; the image sets 0.0.0.0 so the
+      # port mapping above works. The web app asks for an access token (CYNC_EXPORT_TOKEN, or derived from
+      # CYNC_SECRET_KEY and printed in the log at startup).
+#      CYNC_EXPORT_TOKEN: "choose-something-long"
 #      CYNC_EXPORT_HOST: "192.168.97.65"
 
 #      CYNC_MQTT_HOST: "homeassistant.local"

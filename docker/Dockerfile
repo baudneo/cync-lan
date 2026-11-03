@@ -1,6 +1,9 @@
 FROM python:3.14-slim-bookworm
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+# The export web app listens on loopback by default; inside a container it must listen on all
+# interfaces for the published port to work. It still requires an access token (see README).
+ENV CYNC_EXPORT_HOST=0.0.0.0 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     DEBIAN_FRONTEND=noninteractive

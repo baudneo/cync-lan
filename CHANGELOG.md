@@ -1,3 +1,17 @@
+### 0.0.8b1 (pre-release)
+- **CyncLAN is now maintained and deployed with Claude (AI).** A human wrote it from raw hex, by hand. The AI now does the upkeep: it refactors, writes the tests and keeps it reliable, and a human reviews every change.
+- Big reliability refactor, back up first and report problems at https://github.com/baudneo/cync-lan/issues
+- **`CYNC_MESH_REFRESH_SECS` is now ON by default (90 s)**: every connected device is asked for mesh info again on a timer. Bridges only report a bulb that lost power (cut at the wall) for a few minutes after being asked, so without it a bulb cut later stayed `on` in HA. Set it to `0` to only ask on connect (HA app: `tuning` -> `mesh_refresh_secs`). Hardware test: 0/8 bulbs went offline with it off, 8/8 with 90 s; thanks [crdson93](https://github.com/crdson93), see [#39](https://github.com/baudneo/cync-lan/issues/39)
+- Devices cut off at the wall go offline more reliably (distinct-bridge majority vote, re-checked when a connection drops); thanks crdson93
+- Connection limit counts only live bridges, and rejected devices that reconnect no longer leak sockets; thanks crdson93
+- Packets are reassembled from the TCP stream properly; a bad packet no longer drops the device connection
+- MQTT reconnects with backoff, the app exits (and gets restarted) if a service crashes, bad config/export entries are skipped
+- Light shows: music shows, custom show slots, stop, and the running effect shown in HA; Fireworks fixed on type 75; thanks [nathandlawrence-bot](https://github.com/nathandlawrence-bot)
+- Brightness is sent together with colour / colour temp in one packet; the MITM switch survives a device's reconnects; the bridge TCP device count is published again; commands go through the target device's own TCP session; thanks nathandlawrence-bot
+- New device types 127 and 171
+- Fix: the MQTT receiver no longer dies on an HA restart when a device type is unknown
+- Connection watchdog timeout raised to 30 s (LED strip controllers were disconnecting)
+
 ### 0.0.7b3
 - NOTE: always backup, I am a carpenter who does this in my spare time, not a software engineer
 - All fixes thanks to [crdson93](https://github.com/crdson93)

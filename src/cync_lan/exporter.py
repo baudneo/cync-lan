@@ -1,16 +1,18 @@
 """FastAPI application for exporting Cync device configuration from the Cync Cloud API."""
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import aiohttp
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -19,8 +21,10 @@ from cync_lan.const import (
     CYNC_EXPORT_HOST,
     CYNC_EXPORT_PORT,
     CYNC_EXPORT_SOURCE,
+    CYNC_EXPORT_TOKEN,
     CYNC_HASS_APP,
     CYNC_LOG_NAME,
+    CYNC_SECRET_KEY,
     CYNC_STATIC_DIR,
 )
 from cync_lan.structs import GlobalObject
@@ -35,19 +39,89 @@ class OTPRequest(BaseModel):
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Or set to your frontend URL
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# what talking to the Cync cloud / reading or writing the export can raise; anything else is a bug and
+# becomes a logged 500 instead of being reported to the user as a bad request
+_CLOUD_ERRORS = (RuntimeError, aiohttp.ClientError, OSError, TimeoutError, ValueError)
 
-app.mount(
-    "/static",
-    StaticFiles(directory=Path(CYNC_STATIC_DIR).expanduser().resolve()),
-    name="static",
-)
+# The web UI is served by this app, so every legitimate browser request is same-origin and no
+# CORS is needed. (It used to allow every origin with credentials, which let any website the
+# user visited drive this LAN service.) Extra origins, e.g. behind a reverse proxy that rewrites
+# the Host header, can be allowed with CYNC_EXPORT_ALLOWED_ORIGINS="https://a.example,https://b".
+_EXTRA_ORIGINS = {
+    o.strip().rstrip("/").lower()
+    for o in os.environ.get("CYNC_EXPORT_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+}
+
+
+def origin_allowed(origin: Optional[str], host: Optional[str]) -> bool:
+    """
+    Cross-site request check. Browsers attach an Origin header to cross-origin requests and to
+    same-origin POSTs; non-browser clients (curl, healthchecks) send none and are allowed.
+    """
+    if not origin:
+        return True
+    origin = origin.rstrip("/").lower()
+    if origin in _EXTRA_ORIGINS:
+        return True
+    if origin == "null":
+        return False
+    return urlparse(origin).netloc == (host or "").lower()
+
+
+def export_token() -> Optional[str]:
+    """
+    Access token for /api/*: CYNC_EXPORT_TOKEN if set, otherwise derived from CYNC_SECRET_KEY
+    (so there is nothing extra to configure, and the secret itself is never sent over HTTP).
+    """
+    if CYNC_EXPORT_TOKEN:
+        return CYNC_EXPORT_TOKEN
+    if CYNC_SECRET_KEY:
+        mac = hmac.new(CYNC_SECRET_KEY.encode(), b"cync-lan-export-ui-v1", hashlib.sha256)
+        return mac.hexdigest()[:32]
+    return None
+
+
+def token_ok(auth_header: Optional[str], expected: Optional[str]) -> bool:
+    """True if ``Authorization: Bearer <token>`` matches. No configured token means deny."""
+    if not expected or not auth_header:
+        return False
+    scheme, _, value = auth_header.partition(" ")
+    return scheme.lower() == "bearer" and hmac.compare_digest(
+        value.strip().encode(), expected.encode()
+    )
+
+
+# the UI shell (/, /static) holds no secrets; the health check reveals nothing
+_PUBLIC_API = {"/api/healthcheck"}
+
+
+@app.middleware("http")
+async def protect_api(request: Request, call_next):
+    # Home Assistant ingress is already authenticated by the supervisor and rewrites Host
+    if not CYNC_HASS_APP:
+        if not origin_allowed(request.headers.get("origin"), request.headers.get("host")):
+            logger.warning(
+                f"ExportServer: blocked cross-site request from origin "
+                f"{request.headers.get('origin')!r} to {request.url.path}"
+            )
+            return JSONResponse({"detail": "cross-site request blocked"}, status_code=403)
+        path = request.url.path
+        if path.startswith("/api/") and path not in _PUBLIC_API:
+            if not token_ok(request.headers.get("authorization"), export_token()):
+                return JSONResponse(
+                    {"detail": "missing or invalid access token"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+    return await call_next(request)
+
+
+_static_dir = Path(CYNC_STATIC_DIR).expanduser().resolve()
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+else:
+    logger.warning(f"ExportServer: static dir {_static_dir} does not exist, the web UI will not load")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -56,7 +130,7 @@ async def get_index():
         return f.read()
 
 
-@app.get("/api/export/start")
+@app.post("/api/export/start")
 async def start_export():
     ret_msg = "Export started successfully"
     if CYNC_EXPORT_SOURCE is None:
@@ -70,17 +144,23 @@ async def start_export():
                 else:
                     ret_msg = "Failed to request OTP. Please check your credentials or network connection."
                     return {"success": False, "message": ret_msg}
-        except Exception as e:
+        except _CLOUD_ERRORS as e:
             logger.exception(f"Export start failed: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
     else:
         ret_msg = "CYNC_EXPORT_SOUCE configured, reading from a file instead of the cloud API."
 
-    await g.cloud_api.export_config_file()
+    try:
+        exported = await g.cloud_api.export_config_file()
+    except _CLOUD_ERRORS as e:
+        logger.exception(f"Export failed: {e}")
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    if not exported:
+        return {"success": False, "message": "Export failed, see the cync-lan log for details."}
     return {"success": True, "message": ret_msg}
 
 
-@app.get("/api/export/otp/request")
+@app.post("/api/export/otp/request")
 async def request_otp():
     """Request OTP for export."""
     ret_msg = "OTP requested successfully"
@@ -91,9 +171,9 @@ async def request_otp():
         else:
             ret_msg = "Failed to request OTP. Please check your credentials or network connection."
             return {"success": False, "message": ret_msg}
-    except Exception as e:
+    except _CLOUD_ERRORS as e:
         logger.exception(f"OTP request failed: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.post("/api/restart")
@@ -104,7 +184,8 @@ async def restart():
         supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
         if not supervisor_token:
             logger.info(f"{lp} No SUPERVISOR_TOKEN found trying: cync_lan.stop()...")
-            g.cync_lan.stop()
+            await g.cync_lan.stop()
+            return {"success": True, "message": "Shutting down, the container/service manager should restart it."}
         else:
             # The 'self' slug is a special value that refers to the current App.
             # This is the recommended endpoint for self-restarts.
@@ -117,13 +198,14 @@ async def restart():
             logger.info(f"{lp} Attempting to restart App via API call to {url}...")
 
             try:
-                async with aiohttp.ClientSession() as session:
+                timeout = aiohttp.ClientTimeout(total=10)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.post(url, headers=headers) as response:
                         if response.status == 200:
                             logger.debug(
                                 f"{lp} Successfully called the restart API. The App will now restart."
                             )
-                            return True, "App is restarting."
+                            return {"success": True, "message": "App is restarting."}
                         else:
                             # Try to get more details from the response if it fails
                             error_details = await response.text()
@@ -131,20 +213,23 @@ async def restart():
                                 f"{lp} Error: Failed to restart App. API returned status {response.status}"
                             )
                             logger.warning(f"{lp} Response: {error_details}")
-                            return (
-                                False,
-                                f"API returned status {response.status}: {error_details}",
+                            raise HTTPException(
+                                status_code=502,
+                                detail=f"API returned status {response.status}: {error_details}",
                             )
 
-            except aiohttp.ClientError as e:
-                logger.error(f"{lp} Error: An aiohttp client error occurred: {e}")
-                return False, f"AIOHTTP Client Error: {e}"
+            except HTTPException:
+                raise
+            except (aiohttp.ClientError, TimeoutError) as e:
+                logger.error(f"{lp} Error: An aiohttp client error occurred: {e!r}")
+                raise HTTPException(status_code=502, detail=f"Supervisor request failed: {e!r}") from e
             except Exception as e:
                 logger.error(f"{lp} An unexpected error occurred: {e}")
-                return False, f"An unexpected error occurred: {e}"
+                raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}") from e
     else:
         logger.info(f"{lp} Trying: cync_lan.stop()...")
         await g.cync_lan.stop()
+        return {"success": True, "message": "Shutting down, the container/service manager should restart it."}
 
 
 @app.post("/api/export/otp/submit")
@@ -161,9 +246,9 @@ async def submit_otp(otp_request: OTPRequest):
         else:
             ret_msg = "Invalid OTP. Please try again."
 
-    except Exception as e:
+    except _CLOUD_ERRORS as e:
         logger.exception(f"Export completion failed: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     else:
         return {"success": export_succ, "message": ret_msg}
 
@@ -215,6 +300,15 @@ class ExportServer:
             f"{lp} Starting FastAPI export server on {CYNC_EXPORT_HOST}:{CYNC_EXPORT_PORT}"
         )
         self.running = True
+        if not CYNC_HASS_APP:
+            if CYNC_EXPORT_TOKEN:
+                logger.info(f"{lp} The export web app requires the access token from CYNC_EXPORT_TOKEN")
+            elif export_token():
+                logger.info(
+                    f"{lp} The export web app asks for an access token, enter: {export_token()}"
+                )
+            else:
+                logger.error(f"{lp} No CYNC_EXPORT_TOKEN or CYNC_SECRET_KEY set, all /api routes will be denied")
         # ["state_topic"] = f"{self.topic}/status/bridge/export_server/running"
         if g.mqtt_client:
             await g.mqtt_client.publish(
@@ -227,6 +321,7 @@ class ExportServer:
             raise ce
         except Exception as e:
             logger.exception(f"{lp} Error starting FastAPI export server: {e}")
+            raise
         else:
             logger.info(f"{lp} FastAPI export server lifecycle completed successfully")
 

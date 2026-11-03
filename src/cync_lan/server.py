@@ -1,14 +1,14 @@
 import asyncio
 import logging
 import ssl
-import time
 from typing import Dict, Optional, Union
 
 import uvloop
 
 from cync_lan.const import CYNC_LOG_NAME, CYNC_SRV_HOST, CYNC_SRV_PORT
 from cync_lan.devices import CyncDevice, CyncTCPSession
-from cync_lan.structs import EntityState, GlobalObject
+from cync_lan.stats import stats
+from cync_lan.structs import GlobalObject
 
 __all__ = [
     "nCyncServer",
@@ -23,9 +23,9 @@ class nCyncServer:
     The Wi-Fi devices translate messages, status updates and commands to/from the Cync BTLE mesh.
     """
 
-    node_devices: Dict[int, CyncDevice] = {}
-    tcp_connections: Dict[str, Optional[CyncTCPSession]] = {}
-    app_tcp_connections: Dict[str, Optional[CyncTCPSession]] = {}
+    node_devices: Dict[int, CyncDevice]
+    tcp_connections: Dict[str, Optional[CyncTCPSession]]
+    app_tcp_connections: Dict[str, Optional[CyncTCPSession]]
     shutting_down: bool = False
     running: bool = False
     host: str
@@ -43,14 +43,29 @@ class nCyncServer:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    @staticmethod
+    def _is_bridge(d: CyncTCPSession) -> bool:
+        # a session counts once can_connect() admitted it; until then (and while a rejected one sleeps in
+        # blackhole()) it is not a bridge: it must not take a max_clients slot, a stale-vote seat or a command
+        return not d.is_closed() and not d.is_app and d.allowed_to_connect
+
     async def get_dev_tcp_pool(self):
-        return [d for d in self.tcp_connections.values() if not d.is_closed() and not d.is_app]
+        return [d for d in self.tcp_connections.values() if self._is_bridge(d)]
+
+    async def revote_offline(self) -> int:
+        """Re-run every device's stale vote against the current TCP pool (called when a device session closes)."""
+        if g.mqtt_client is None:
+            return 0
+        live_ips = [d.ip_address for d in await self.get_dev_tcp_pool()]
+        return sum(dev.revote_stale(live_ips) for dev in self.node_devices.values())
 
     def get_dev_tcp_pool_sync(self):
-        return [d for d in self.tcp_connections.values() if not d.is_closed() and not d.is_app]
+        return [d for d in self.tcp_connections.values() if self._is_bridge(d)]
 
     def __init__(self, node_map: Dict[int, "CyncDevice"]):
         self.node_devices: Dict[int, "CyncDevice"] = node_map
+        self.tcp_connections = {}
+        self.app_tcp_connections = {}
         self.tcp_conn_attempts: dict = {}
         self.ssl_context: Optional[ssl.SSLContext] = None
         self.host: str = CYNC_SRV_HOST
@@ -174,6 +189,7 @@ class nCyncServer:
             raise ce
         except Exception as e:
             logger.exception("%s Failed to start server: %s" % (lp, e))
+            raise
         else:
             logger.info(
                 f"{lp} bound to {self.host}:{self.port} - Waiting for connections from Cync devices, if you dont"
@@ -192,6 +208,7 @@ class nCyncServer:
                 raise ce
             except Exception as e:
                 logger.exception("%s Server Exception: %s" % (self.lp, e))
+                raise
             else:
                 logger.debug(
                     f"{lp} DEBUG>>> AFTER self._server.serve_forever() <<<DEBUG"
@@ -260,37 +277,37 @@ class nCyncServer:
             self.tcp_conn_attempts[client_addr] += 1
         else:
             self.tcp_conn_attempts[client_addr] = 1
+        stats.inc("connections_accepted")
         lp = f"{self.lp}new_conn:{client_addr}:"
         existing_device = await self.remove_tcp_device(client_addr)
         if existing_device is not None:
             _add_str = ""
             if not existing_device.mitm_mode:
                 _add_str = " closing and"
-                await existing_device.close()
+                # the same session object carries on with the new socket - keep its MITM switch
+                await existing_device.close(remove_mitm_button=False)
             logger.debug(
                 f"{lp} Existing TCP session found, gracefully{_add_str} replacing..."
             )
         try:
             if existing_device is not None:
-                if existing_device.allowed_to_connect is False:
-                    can_connect = await existing_device.can_connect()
-                    if can_connect is False:
-                        del existing_device
-                        existing_device = None
-                        dev2add = None
-                if existing_device is not None:
-                    existing_device.reader = reader
-                    existing_device.writer = writer
-                    existing_device.ip_address = client_addr
-                    await existing_device.existing_init()
-                    dev2add = existing_device
+                # a session that was rejected before gets the max_clients / whitelist check on its first packet, like a
+                # new one. Checking it here, before the new socket was attached, blackholed the old (already closed)
+                # socket and leaked the new one: the device sat on a silent ESTABLISHED connection.
+                existing_device.reader = reader
+                existing_device.writer = writer
+                existing_device.ip_address = client_addr
+                await existing_device.existing_init()
+                dev2add = existing_device
             else:
                 dev2add = CyncTCPSession(reader, writer, client_addr)
-            if dev2add is not None:
-                await self.add_tcp_device(dev2add)
+            await self.add_tcp_device(dev2add)
         except asyncio.CancelledError as ce:
             logger.debug(f"{lp} Connection cancelled: {ce}")
             # propagate the cancellation
             raise ce
         except Exception as e:
+            # boundary of a client_connected callback: log it, and don't leak the socket
+            stats.inc("connection_setup_failures")
             logger.exception(f"{lp} Error creating new Cync Wi-Fi device: {e}")
+            writer.close()
