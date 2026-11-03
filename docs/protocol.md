@@ -56,6 +56,7 @@ The code stores the queue id from this packet and reuses it in every packet it s
 | 2 | (after 0.5 s) | we send `0xA3` "want to control" | `A3 00 00 00 07 <queue id> <2 random bytes> 00`. Device is not controllable until this is sent. [confirmed, per code comment] |
 | 3 | `0xC3` connect | `C8 00 00 00 0B 0D 07 E8 03 0A 01 0C 04 1F FE 0C` | fixed reply; looks like it contains a date/time (`E8 03` = 1000?). How it is built is unknown. [unknown] |
 | 4 | (after 1.5 s) | we send mesh info request (0x73) | asks the device for the list of mesh devices and their state |
+| periodic | (every `CYNC_MESH_REFRESH_SECS`, default 90 s) | we resend the mesh info request (0x73) | a bridge seems to push 0x83 stale flags (a bulb that lost power) only for a few minutes after a mesh info request; without re-asking, a bulb cut later is never reported. A/B on real hardware: refresh off 0/8 bulbs went offline, 90 s 8/8 (baudneo/cync-lan#39). [inferred] |
 | periodic | `0xD3` ping | `D8 00 00 00 00` | [confirmed] |
 | periodic | `0x43` | `48 00 00 00 03 <msg id[0:2]> 00` | see section 4 |
 

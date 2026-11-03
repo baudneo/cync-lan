@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import zoneinfo
 from typing import Dict, List, Optional, Tuple, Union
@@ -129,11 +130,23 @@ else:
         CYNC_MAX_TCP_CONN = 8
 # re-ask every TCP bridge for mesh info this often, in seconds (0 = only on connect). Bridges seem to push 0x83 status
 # changes, including the stale flag that marks a powered-off bulb offline, only for a few minutes after a request.
-CYNC_MESH_REFRESH_SECS: float = os.environ.get("CYNC_MESH_REFRESH_SECS", 0)
-try:
-    CYNC_MESH_REFRESH_SECS = max(0.0, float(CYNC_MESH_REFRESH_SECS or 0))
-except ValueError:
-    CYNC_MESH_REFRESH_SECS = 0.0
+# [inferred, baudneo/cync-lan#39] On by default: without it a bulb cut at the wall minutes after start stays "on".
+DEFAULT_MESH_REFRESH_SECS: float = 90.0
+
+
+def parse_mesh_refresh_secs(raw: Union[str, int, float, None]) -> float:
+    """Unset, empty, "null" (the HA add-on passes that for a missing option) or unusable values mean the default;
+    0 (or less) turns the refresh off."""
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        return DEFAULT_MESH_REFRESH_SECS
+    if not math.isfinite(value):
+        return DEFAULT_MESH_REFRESH_SECS
+    return max(0.0, value)
+
+
+CYNC_MESH_REFRESH_SECS: float = parse_mesh_refresh_secs(os.environ.get("CYNC_MESH_REFRESH_SECS"))
 CYNC_TCP_WHITELIST: Optional[Union[str, List[Optional[str]]]] = os.environ.get(
     "CYNC_TCP_WHITELIST"
 )

@@ -20,7 +20,7 @@ def make_session(monkeypatch):
     return CyncTCPSession(None, None, "10.0.0.1"), calls
 
 
-async def test_refresh_disabled_by_default(monkeypatch):
+async def test_refresh_disabled_when_interval_is_zero(monkeypatch):
     sess, _ = make_session(monkeypatch)
     sess.start_mesh_refresh(0)
     assert sess.tasks.mesh_refresh is None
