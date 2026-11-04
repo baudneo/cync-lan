@@ -3,7 +3,7 @@ import logging
 import logging.handlers
 import random
 import struct
-from typing import Optional
+from typing import List, NamedTuple, Optional
 
 from cync_lan.const import (
     CYNC_LOG_NAME,
@@ -12,6 +12,7 @@ from cync_lan.const import (
     DATA_BOUNDARY,
 )
 from cync_lan.devices.device import CyncDevice
+from cync_lan.devices.registry import ambiguity_message
 from cync_lan.metadata.model_info import (
     MULTI_ENDPOINT_TYPES,
 )
@@ -21,11 +22,46 @@ from cync_lan.structs import (
     EntityState,
     GlobalObject,
 )
-from cync_lan.utils import bytes2list, extract_firmware_dynamically
+from cync_lan.utils import (
+    bytes2list,
+    extract_firmware_dynamically,
+    hello_23_hex_redacted,
+)
 
-__all__ = ["PacketHandlersMixin"]
+__all__ = ["MeshRecord", "PacketHandlersMixin", "parse_mesh_records"]
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
+
+MESH_RECORD_LEN = 24
+# mesh records held back while a session's home is unknown; keyed by the 1-byte dev_id, so 255 is the real ceiling
+MAX_PENDING_MESH_RECORDS = 256
+
+
+class MeshRecord(NamedTuple):
+    """One 24-byte device record of a 0x73 f9 52 mesh-info page."""
+
+    dev_id: int
+    dev_type: int
+    state: int
+    brightness: int
+    temperature: int
+    red: int
+    green: int
+    blue: int
+
+
+def parse_mesh_records(inner_struct: bytes, start_idx: int) -> List[MeshRecord]:
+    """The complete 24-byte records of a mesh-info page, from ``start_idx`` on (a trailing partial one is skipped)."""
+    records = []
+    for i in range(start_idx, len(inner_struct), MESH_RECORD_LEN):
+        rec = inner_struct[i : i + MESH_RECORD_LEN]
+        if len(rec) < MESH_RECORD_LEN:
+            continue
+        state, bri = rec[8], rec[12]
+        if state == 0 and bri > 0:
+            bri = 0
+        records.append(MeshRecord(rec[0], rec[2], state, bri, rec[16], rec[20], rec[21], rec[22]))
+    return records
 
 
 class PacketHandlersMixin:
@@ -44,6 +80,21 @@ class PacketHandlersMixin:
         """Routes device requests to their specific parsing logic."""
         if pkt_type == 0x23:
             self.queue_id = raw_data[6:10]
+            # multi-home signal (c): the queue id is the device's cloud switchID (confirmed on hardware, docs/protocol.md
+            # section 7), and the export says which home that device is in. INFO with several homes, so a user can see
+            # what every bridge matched; DEBUG with one home, where it decides nothing.
+            match = self.home.observe_queue_id(self.queue_id)
+            if self.home.queue_id is not None:
+                logger.log(
+                    logging.INFO if len(self.registry.home_ids()) > 1 else logging.DEBUG,
+                    f"{lp} 0x23 queue id 0x{self.home.queue_id_hex} ({self.home.queue_id}) {self.home.queue_id_detail}",
+                )
+            await self._home_resolved(match)
+            # the switchID names the bridge device itself, which is more direct than the first mesh-info record
+            # (and some bridges send their mesh info where it is not parsed yet, see docs/protocol.md section 4)
+            device = self._queue_id_device()
+            if device is not None and device is not self.node:
+                await self._bind_node(device, "its 0x23 queue id (switch_id)")
             # a device can re-send 0x23; never stack watchers (each would close the session)
             old_watcher = self.tasks.dev_conn_watcher
             if old_watcher is not None and not old_watcher.done():
@@ -51,13 +102,16 @@ class PacketHandlersMixin:
             self.tasks.dev_conn_watcher = asyncio.create_task(
                 self.connection_watcher_task(ConnectionType.device), name=f"connection_watcher-{self.ip_address}"
             )
+            # the hello carries the device's auth code (a per-device secret): never log it
             logger.debug(
-                f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {raw_data.hex(' ')}"
+                f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {hello_23_hex_redacted(raw_data)}"
             )
             if not self.mitm_mode:
                 await self.write(PacketBuilder.build_23_ack())
                 await asyncio.sleep(0.5)
                 await self.send_a3()
+            # after the handshake: publishing the MITM switch and reading its retained state must not delay the 0x28 ack
+            await self._ensure_mitm_button()
 
         elif pkt_type == 0xC3:
             if not self.mitm_mode:
@@ -248,11 +302,12 @@ class PacketHandlersMixin:
             logger.error(f"{lp} Failed to unpack status packet: {e}")
             return
 
-        cync_device: CyncDevice = g.ncync_server.node_devices.get(dev_id)
+        cync_device: Optional[CyncDevice] = await self._session_device(dev_id, lp)
         if not cync_device:
-            logger.warning(
-                f"{lp} Received internal STATUS for unknown device [group/room?, safe to ignore]: {parsed_state}"
-            )
+            if self.home.resolved:
+                logger.warning(
+                    f"{lp} Received internal STATUS for unknown device [group/room?, safe to ignore]: {parsed_state}"
+                )
             return
         # type 96 recently_seen is actually the motion state
         if cync_device and cync_device.type == 96:
@@ -302,7 +357,7 @@ class PacketHandlersMixin:
         dev_id = packet_data[9]
         motion_flag = packet_data[15]
 
-        cync_device = g.ncync_server.node_devices.get(dev_id)
+        cync_device = await self._session_device(dev_id, lp)
         if not cync_device:
             return
 
@@ -366,6 +421,117 @@ class PacketHandlersMixin:
             # logger.debug(f"DBG>>>> Queue ID = {queue_id.hex(' ')}")
             await self.write(PacketBuilder.build_73_ack(self.queue_id, msg_id))
 
+    async def _session_device(self, dev_id: int, lp: str) -> Optional[CyncDevice]:
+        """
+        The device this bridge means by a mesh id in a status packet (0x83). Known home: that home's device. Unknown
+        home: the data is dropped (the periodic mesh refresh sends it again). The id is NOT used as evidence for the
+        home: a status can carry a group/room id, or a device added after the last export, and fingerprint evidence is
+        never removed, so one such id could stop the bridge's real home from ever fitting (docs/multi_home.md).
+        """
+        if self.home.resolved:
+            return self.registry.get_device(self.home.home_id, dev_id)
+        logger.debug(f"{lp} home of this bridge not known yet, dropping data for device id {dev_id}")
+        return None
+
+    async def _resolve_home_from_mesh(self, records: List[MeshRecord], new_sequence: bool) -> None:
+        """Multi-home signal (d): add a mesh-info page to the fingerprint evidence (bridge record first)."""
+        r = self.home
+        if r.resolved:
+            return
+        match = None
+        if new_sequence:
+            # the first record of a sequence is the bridge itself (and carries its device type)
+            match = r.observe_bridge(records[0].dev_id, records[0].dev_type)
+        match = match or r.observe_ids(rec.dev_id for rec in records)
+        await self._home_resolved(match)
+
+    async def _flush_pending_mesh(self) -> None:
+        """Apply the mesh records held back while the home was unknown (bridge record first)."""
+        pending = getattr(self, "_pending_mesh", None)
+        if not pending:
+            return
+        bridge_id = getattr(self, "_pending_bridge_id", None)
+        self._pending_mesh, self._pending_bridge_id = {}, None
+        lp = f"{self.lp}0x73:"
+        logger.debug(f"{lp} applying {len(pending)} mesh record(s) received before the home was known")
+        if bridge_id in pending:
+            await self._handle_mesh_record(pending.pop(bridge_id), True, lp)
+        for rec in pending.values():
+            await self._handle_mesh_record(rec, False, lp)
+
+    async def _handle_mesh_record(self, rec: MeshRecord, is_bridge: bool, lp: str) -> None:
+        """One mesh-info record: update the device (in this bridge's home), or hold it back until the home is known."""
+        dev_id = rec.dev_id
+        if not self.home.resolved:
+            if is_bridge and self._pending_bridge_id is None:
+                self._pending_bridge_id = dev_id
+            if dev_id in self._pending_mesh or len(self._pending_mesh) < MAX_PENDING_MESH_RECORDS:
+                self._pending_mesh[dev_id] = rec
+            return
+
+        node_repr: Optional["CyncDevice"] = self.registry.get_device(self.home.home_id, dev_id)
+        if node_repr:
+            dev_name = node_repr.name
+            if is_bridge:
+                # byte 3 (idx 2) is a device type byte but,
+                # it only reports on the first item (itself)
+                # convert to int, and it is the same as deviceType from cloud.
+                if not self.node:
+                    await self._bind_node(node_repr, "its first mesh-info record")
+                    await self._ensure_mitm_button()
+
+                elif self.node:
+                    await self._ensure_mitm_button()
+                    if self.node is not node_repr:
+                        logger.warning(
+                            f"{self.lp}0x73: node_id MISMATCH "
+                            f"open an issue on github. current: {self.node.hass_id} "
+                            f"// proposed: {node_repr.hass_id}"
+                        )
+                lp = f"{self.lp}0x73:"
+                if rec.dev_type:
+                    self.device_type_id = rec.dev_type
+                self.name = dev_name
+
+            if node_repr.type in MULTI_ENDPOINT_TYPES:
+                if node_repr.type == 67:
+                    # bri byte is a bitmask for on/off state of endpoints
+                    # since we know the state of up to 8 endpoints at once, parse them all
+                    for e_state_ in node_repr.entities.values():
+                        bit_shift = e_state_.sub_id - 1
+                        e_state_.power = 1 if (rec.brightness & (1 << bit_shift)) else 0
+                        e_state_.recently_seen = 1
+                        logger.debug(
+                            f"{lp} MeshInfo for {node_repr.name} - {e_state_}"
+                        )
+                        await node_repr.handle_entity_update(
+                            e_state_,
+                            from_pkt="0x73",
+                        )
+            else:
+                # Standard single endpoint
+                e_state = EntityState(
+                    name=node_repr.name,
+                    dev_id=dev_id,
+                    power=rec.state,
+                    brightness=rec.brightness,
+                    temperature=rec.temperature,
+                    red=rec.red,
+                    green=rec.green,
+                    blue=rec.blue,
+                )
+                logger.debug(f"{lp} MeshInfo for {e_state}")
+                await node_repr.handle_entity_update(
+                    e_state,
+                    from_pkt="0x73",
+                )
+
+        else:
+            logger.warning(
+                f"{lp} Received MeshInfo for unknown device ID: {dev_id} in home "
+                f"{self.registry.describe_home(self.home.home_id)} -> You need to export a new config file from the cloud!"
+            )
+
     async def _process_73_mesh_info(
         self, inner_struct: bytes, queue_id: bytes, lp: str
     ):
@@ -374,7 +540,6 @@ class PacketHandlersMixin:
             return
 
         minfo_start_idx = 14
-        minfo_length = 24
         if inner_struct[minfo_start_idx] == 0x00:
             minfo_start_idx += 1
         if inner_struct[minfo_start_idx] == 0x00:
@@ -385,119 +550,25 @@ class PacketHandlersMixin:
 
         packet_devices = inner_struct[8]
         total_devices = inner_struct[12]
+        new_sequence = False
         if getattr(self, "_mesh_expected", 0) == 0 or getattr(
             self, "_mesh_received", 0
         ) >= getattr(self, "_mesh_expected", 0):
             self._mesh_expected = total_devices
             self._mesh_received = 0
+            new_sequence = True
+            # the count is only logged: it is not a reliable home fingerprint (offline devices, paging)
             logger.debug(
                 f"{lp} Starting new MeshInfo parsing sequence. Expecting {total_devices} total devices."
             )
         self._mesh_received += packet_devices
 
-        loop_num = 0
-        for i in range(minfo_start_idx, len(inner_struct), minfo_length):
-            loop_num += 1
-            mesh_dev_struct = inner_struct[i : i + minfo_length]
-            if len(mesh_dev_struct) < minfo_length:
-                continue
-
-            dev_id = mesh_dev_struct[0]
-            dev_type_id = mesh_dev_struct[2]
-            dev_state, dev_bri, dev_tmp = (
-                mesh_dev_struct[8],
-                mesh_dev_struct[12],
-                mesh_dev_struct[16],
-            )
-            dev_r, dev_g, dev_b = mesh_dev_struct[20:23]
-
-            if dev_state == 0 and dev_bri > 0:
-                dev_bri = 0
-
-            node_repr: Optional["CyncDevice"] = g.ncync_server.node_devices.get(dev_id)
-            if node_repr:
-                dev_name = node_repr.name
-                if loop_num == 1:
-                    # byte 3 (idx 2) is a device type byte but,
-                    # it only reports on the first item (itself)
-                    # convert to int, and it is the same as deviceType from cloud.
-                    if not self.node:
-                        self.node = node_repr
-                        self.node.tcp_session = self
-                        self.name = node_repr.name
-                        self.lp = f"{self.ip_address}[{self.node.id}]:"
-                        logger.debug(
-                            f"{self.lp}0x73: Setting TCP"
-                            f" Node ID to: {self.node.id}"
-                        )
-                        # dynamically add the MITM mode button for nodes that are connected via TCP
-                        self.mitm_button_added = True
-                        await g.mqtt_client.add_mitm_button(node_repr)
-                        # check mqtt mitm button retain state
-                        payload = await g.mqtt_client.get_startup_topic_state(
-                            f"{g.mqtt_client.topic}/status/{node_repr.home_id}-{node_repr.id}/mitm")
-                        if payload is not None:
-                            # Find the TCP device instance and trigger start/stop
-                            tcp_pool = g.ncync_server.get_dev_tcp_pool_sync()
-                            for tcp_dev in tcp_pool:
-                                if tcp_dev.node:
-                                    if tcp_dev.node.id == self.node.id:
-                                        if payload.upper() == "ON":
-                                            await tcp_dev.start_mitm()
-
-                    elif self.node:
-                        if self.mitm_button_added is False:
-                            self.mitm_button_added = True
-                            await g.mqtt_client.add_mitm_button(node_repr)
-                        if self.node.id != dev_id:
-                            logger.warning(
-                                f"{self.lp}0x73: node_id MISMATCH "
-                                f"open an issue on github. current: {self.node.id} "
-                                f"// proposed: {dev_id}"
-                            )
-                    lp = f"{self.lp}0x73:"
-                    if dev_type_id:
-                        self.device_type_id = dev_type_id
-                    self.name = dev_name
-
-                if node_repr.type in MULTI_ENDPOINT_TYPES:
-                    if node_repr.type == 67:
-                        # bri byte is a bitmask for on/off state of endpoints
-                        # since we know the state of up to 8 endpoints at once, parse them all
-                        for e_state_ in node_repr.entities.values():
-                            bit_shift = e_state_.sub_id - 1
-                            e_state_.power = 1 if (dev_bri & (1 << bit_shift)) else 0
-                            e_state_.recently_seen = 1
-                            logger.debug(
-                                f"{lp} MeshInfo for {node_repr.name} - {e_state_}"
-                            )
-                            await node_repr.handle_entity_update(
-                                e_state_,
-                                from_pkt="0x73",
-                            )
-                else:
-                    # Standard single endpoint
-                    e_state = EntityState(
-                        name=node_repr.name,
-                        dev_id=dev_id,
-                        power=dev_state,
-                        brightness=dev_bri,
-                        temperature=dev_tmp,
-                        red=dev_r,
-                        green=dev_g,
-                        blue=dev_b,
-                    )
-                    logger.debug(f"{lp} MeshInfo for {e_state}")
-                    await node_repr.handle_entity_update(
-                        e_state,
-                        from_pkt="0x73",
-                    )
-
-            else:
-                logger.warning(
-                    f"{lp} Received MeshInfo for unknown device ID: "
-                    f"{dev_id} -> You need to export a new config file from the cloud!"
-                )
+        records = parse_mesh_records(inner_struct, minfo_start_idx)
+        if records:
+            await self._resolve_home_from_mesh(records, new_sequence)
+            for n, rec in enumerate(records):
+                # the bridge's own record is the first one of a reply, not the first one of every page
+                await self._handle_mesh_record(rec, new_sequence and n == 0, lp)
 
         if not self.mitm_mode:
             mesh_ack = PacketBuilder.build_mesh_status_ack(self.queue_id)
@@ -506,6 +577,87 @@ class PacketHandlersMixin:
         if getattr(self, "_mesh_received", 0) >= getattr(self, "_mesh_expected", 0):
             self._mesh_expected = 0
             self._mesh_received = 0
+            # a full sequence and still no home: tell the user how to fix it, once per connection
+            if not self.home.resolved and not self._ambiguity_warned and self.registry.home_ids():
+                self._ambiguity_warned = True
+                logger.warning(
+                    f"{self.lp}0x73: "
+                    + ambiguity_message(
+                        self.registry, self.home.candidates or self.registry.home_ids(), self.home.queue_id,
+                        self.ip_address, none_fit=bool(self.home.fits) and not any(f.fits for f in self.home.fits.values()),
+                    )
+                )
+
+    # ---- which device this bridge is
+    def _queue_id_device(self) -> Optional[CyncDevice]:
+        """The configured device whose switch_id equals this session's 0x23 queue id, in the session's home."""
+        if not self.home.resolved or self.home.queue_id is None:
+            return None
+        return self.registry.home_switch_ids(self.home.home_id).get(self.home.queue_id)
+
+    async def _bind_node(self, device: CyncDevice, how: str) -> None:
+        """
+        This session is ``device``'s own TCP connection. A same-IP reconnect reuses the session object, so a previous
+        device (another device that had this IP before, e.g. after a DHCP change) is unbound first.
+        """
+        if self.node is not None and self.node is not device:
+            await self._unbind_node(f"this IP is now {device.hass_id}")
+        self.node = device
+        device.tcp_session = self
+        self.name = device.name
+        self.lp = f"{self.ip_address}[{device.id}]:"
+        # first binding of this device to this session: restore its retained MITM switch state once
+        self._check_mitm_retained = True
+        logger.debug(
+            f"{self.lp} this bridge is device '{device.name}' ({device.id}) in home "
+            f"{self.registry.describe_home(device.home_id)}, from {how}"
+        )
+
+    async def _unbind_node(self, why: str) -> None:
+        """Forget the device this session was bound to (its MITM switch goes, it no longer has an own session)."""
+        old = self.node
+        if old is None:
+            return
+        logger.debug(f"{self.lp} no longer bridge device {old.hass_id}: {why}")
+        # only when this session was still that device's connection: if the device already reconnected from another IP,
+        # its switch belongs to that session now. (A same-IP reconnect keeps the switch on purpose and re-arms
+        # mitm_button_added, so that flag cannot tell whether one is published.)
+        if old.tcp_session is self:
+            old.tcp_session = None
+            if g.mqtt_client is not None:
+                await g.mqtt_client.remove_mitm_button(old)
+        self.node = None
+        self.mitm_button_added = False
+        self.lp = f"{self.ip_address}:"
+
+    async def _ensure_mitm_button(self) -> None:
+        """Publish the bound device's HA 'MITM mode' switch once per connection; on a new binding also restore its
+        retained state (the switch was ON when cync-lan last ran)."""
+        if self.node is None or self.mitm_button_added or g.mqtt_client is None:
+            return
+        self.mitm_button_added = True
+        await g.mqtt_client.add_mitm_button(self.node)
+        if not getattr(self, "_check_mitm_retained", False):
+            return
+        self._check_mitm_retained = False
+        # the lookup is a broker round trip of up to several seconds: run it beside the packet loop, not in it (the
+        # device's 0xC3, pings and mesh info would wait behind it). Kept in self.tasks, so close() cancels it.
+        old = self.tasks.mitm_probe
+        if old is not None and not old.done():
+            old.cancel()
+        self.tasks.mitm_probe = asyncio.create_task(
+            self._restore_mitm_state(self.node), name=f"mitm_probe-{self.ip_address}"
+        )
+
+    async def _restore_mitm_state(self, node: CyncDevice) -> None:
+        """Start MITM mode if the device's retained HA switch state is ON (it was on when cync-lan last ran)."""
+        payload = await g.mqtt_client.get_startup_topic_state(f"{g.mqtt_client.topic}/status/{node.hass_id}/mitm")
+        if payload is None or payload.upper() != "ON" or self.node is not node:
+            return
+        # by identity: the same mesh id exists in every home
+        for tcp_dev in g.ncync_server.get_dev_tcp_pool_sync(self.home.home_id):
+            if tcp_dev.node is node:
+                await tcp_dev.start_mitm()
 
     async def ask_for_mesh_info(self):
         """

@@ -21,7 +21,7 @@ from cync_lan.const import (
 from cync_lan.structs import EntityState, GlobalObject
 
 if TYPE_CHECKING:
-    from cync_lan.devices import CyncDevice
+    from cync_lan.devices.registry import DeviceRegistry
 
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
@@ -216,43 +216,69 @@ def _as_bool_enabled(enabled) -> bool:
     return bool(enabled)
 
 
-def build_nodes(raw_config) -> Dict[int, "CyncDevice"]:
+def build_nodes(raw_config) -> "DeviceRegistry":
     """
-    Turn the parsed config file into CyncDevice objects.
+    Turn the parsed config file into a DeviceRegistry of CyncDevice objects, keyed by
+    (home_id, dev_id): mesh ids restart at 1 in every Cync home, so a bare id is not unique.
 
     The file is user editable, so a problem with one home or device is logged and that entry
     skipped instead of aborting startup. Only a file that is unusable as a whole raises
-    ConfigError.
+    ConfigError. A home's 'id' must be an integer (a quoted number is accepted); a home with a
+    non-numeric or duplicate id is skipped. Optional per-home 'bridges:' (list of bridge IPs) and
+    per-device 'switch_id' fields are read, see docs/multi_home.md.
     """
-    from cync_lan.devices import CyncDevice
+    from cync_lan.devices.registry import (
+        BRIDGES_KEY,
+        CONFIG_MAIN_KEYS,
+        DeviceRegistry,
+        as_home_id,
+    )
 
     lp = "parse_config:"
     if not isinstance(raw_config, dict) or not raw_config:
         raise ConfigError("config file is empty or not a YAML mapping")
-    main_key = next((k for k in ("account data", "exported_homes") if k in raw_config), None)
+    main_key = next((k for k in CONFIG_MAIN_KEYS if k in raw_config), None)
     if main_key is None or not isinstance(raw_config[main_key], dict):
         raise ConfigError(
             "config file has no 'exported_homes' (or legacy 'account data') section, "
             "export a new one from the cloud"
         )
 
-    nodes: Dict[int, CyncDevice] = {}
+    nodes = DeviceRegistry()
     skipped = 0
+    bridge_owner: Dict[str, str] = {}
     for cync_home_name, home_cfg in raw_config[main_key].items():
+        cync_home_name = str(cync_home_name)
         if not isinstance(home_cfg, dict) or "id" not in home_cfg:
             logger.error(f"{lp} Home '{cync_home_name}' has no 'id', skipping the whole home")
             skipped += 1
             continue
-        home_id = home_cfg["id"]
+        home_id = as_home_id(home_cfg["id"])
+        if home_id is None:
+            logger.error(
+                f"{lp} Home '{cync_home_name}' has a non-numeric 'id' ({home_cfg['id']!r}), skipping the "
+                f"whole home. Re-export the config or fix the id."
+            )
+            skipped += 1
+            continue
+        if nodes.home(home_id) is not None:
+            logger.error(
+                f"{lp} Home '{cync_home_name}' has the same 'id' ({home_id}) as home "
+                f"'{nodes.home_name(home_id)}', skipping '{cync_home_name}'"
+            )
+            skipped += 1
+            continue
         devices = home_cfg.get("devices")
         if not devices or not isinstance(devices, dict):
             logger.warning(
                 f"{lp} No devices found in config for: {cync_home_name} (ID: {home_id}), skipping..."
             )
             continue
+        bridges = _home_bridges(home_cfg, cync_home_name, lp)
+        home_nodes = []
         for cync_id, cync_device in devices.items():
             try:
-                node = _build_node(cync_id, cync_device, home_id, lp)
+                node = _build_node(cync_id, cync_device, home_id, lp, home_name=cync_home_name)
             except Exception as exc:
                 skipped += 1
                 logger.error(
@@ -261,13 +287,65 @@ def build_nodes(raw_config) -> Dict[int, "CyncDevice"]:
                 )
                 continue
             if node is not None:
-                nodes[node.id] = node
+                home_nodes.append(node)
+        if not home_nodes:
+            logger.warning(f"{lp} No enabled devices in home '{cync_home_name}' (ID: {home_id}), skipping...")
+            continue
+        nodes.add_home(home_id, cync_home_name, bridges)
+        for node in home_nodes:
+            nodes.add(node)
+        for ip in nodes.home(home_id).bridges:
+            if ip in bridge_owner:
+                logger.error(
+                    f"{lp} Bridge IP {ip} is listed in '{BRIDGES_KEY}:' of both home '{bridge_owner[ip]}' and "
+                    f"'{cync_home_name}'; it will be ignored for both, keep it in one home only"
+                )
+            else:
+                bridge_owner[ip] = cync_home_name
+        if bridges:
+            logger.debug(f"{lp} Home '{cync_home_name}' (ID: {home_id}) bridges override: {sorted(bridges)}")
     if skipped:
         logger.warning(f"{lp} {skipped} home(s)/device(s) in the config file were skipped, see errors above")
     return nodes
 
 
-def _build_node(cync_id, cync_device, home_id, lp: str):
+def _home_bridges(home_cfg: dict, cync_home_name: str, lp: str) -> List[str]:
+    """The home's optional 'bridges:' list as normalized IP strings; bad entries are logged and dropped."""
+    from cync_lan.devices.registry import BRIDGES_KEY, normalize_ip
+
+    raw = home_cfg.get(BRIDGES_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        logger.error(
+            f"{lp} Home '{cync_home_name}': '{BRIDGES_KEY}:' must be a list of IP addresses, "
+            f"got {type(raw).__name__} ({raw!r}), ignoring it"
+        )
+        return []
+    out = []
+    for entry in raw:
+        ip = normalize_ip(entry)
+        if ip is None:
+            logger.error(f"{lp} Home '{cync_home_name}': '{BRIDGES_KEY}:' entry {entry!r} is not an IP address, ignoring it")
+            continue
+        out.append(ip)
+    return out
+
+
+def _as_switch_id(value, device_name: str, dev_id: int, lp: str) -> Optional[int]:
+    """Optional device 'switch_id' (see ``as_positive_int``). Absent or 0 means "none"; anything else unusable is
+    logged and treated as absent, and the device still loads."""
+    from cync_lan.devices.registry import as_positive_int
+
+    switch_id = as_positive_int(value)
+    if switch_id is None and value is not None and str(value).strip() != "0":
+        logger.warning(
+            f"{lp} Device '{device_name}' (ID: {dev_id}) has an invalid 'switch_id' ({value!r}), ignoring it"
+        )
+    return switch_id
+
+
+def _build_node(cync_id, cync_device, home_id, lp: str, home_name: Optional[str] = None):
     """Build one CyncDevice, None if it is disabled in the config. Raises on bad data."""
     from cync_lan.devices import CyncDevice
 
@@ -313,6 +391,8 @@ def _build_node(cync_id, cync_device, home_id, lp: str):
         wifi_mac=wmac,
         dev_type=dev_type,
         entities=endpoints,
+        home_name=home_name,
+        switch_id=_as_switch_id(cync_device.get("switch_id"), device_name, dev_id, lp),
     )
 
 
@@ -425,3 +505,18 @@ def format_socat_style(
 
     lines.append("--")
     return "\n".join(lines)
+
+
+def hello_23_hex_redacted(raw: bytes) -> str:
+    """
+    Hex dump of a device hello (0x23) for logs, without the device's auth code.
+
+    Layout (docs/protocol.md section 3): 5-byte header, 0x03, 4-byte queue id, 0x00, a length byte, then the auth code
+    (a per-device secret from the cloud account) and a short trailer. That layout is only inferred, so the length byte
+    is not trusted: every byte after it is shown as ``xx``. The queue id (the device's switchID) stays readable.
+    """
+    raw = bytes(raw)
+    keep = 12  # header, 0x03, queue id, 0x00, length byte
+    if len(raw) <= keep:
+        return raw.hex(" ")
+    return " ".join([raw[:keep].hex(" ")] + ["xx"] * (len(raw) - keep))

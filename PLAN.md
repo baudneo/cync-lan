@@ -140,6 +140,135 @@ Nothing here has run against real devices, a real broker, or Docker. Suggested o
 9. Docker: image build, `CYNC_EXPORT_HOST=0.0.0.0` set, file permissions on `config/` OK for your PUID/PGID, `docker stop` shuts down cleanly (exit code 0) and a forced failure exits non-zero.
 Things most likely to need a tweak: framer behavior with real traffic, availability-list discovery on your HA version, `0o600` files vs container user.
 
+## Multi-home support (branch `multi-home`)
+User guide: `docs/multi_home.md`. Protocol notes: `docs/protocol.md` section 7.
+
+**Problem.** Each Cync home is its own BLE mesh and mesh ids restart at 1 in every home. Devices were keyed by bare id
+(`utils.build_nodes`: `nodes[node.id] = node`), so with several homes the last home loaded overwrote the others. On a
+real account (4 homes with 12, 51, 36 and 6 devices, plus one empty home; ids 1..N in each, so the id sets are nested)
+only 15 ids are unique to one home.
+
+**What changed.**
+- New `devices/registry.py` (pure: no `g`, no I/O, no logging in the resolver). `DeviceRegistry(dict)` is keyed by
+  `(home_id, dev_id)`, so `.values()` / `len()` keep working. Helpers: `get_device`, `in_home`, `homes_with`,
+  `home_ids`, `home_name`, `describe_home`, `home_switch_ids`, `homes_for_bridge_ip`.
+- `CyncDevice.key` = `(home_id, id)`; new `home_name` and `switch_id`. `id` is still the per-home mesh id and the
+  control packet `target`. `hass_id` and every HA unique id / object id / MQTT topic are unchanged.
+- `build_nodes` returns a `DeviceRegistry`. Home `id` must be an int (quoted digits accepted); non-numeric or
+  duplicate ids skip that home with an ERROR. Empty homes and homes with no enabled device are not registered.
+  Optional per-home `bridges:` (list of IPs) and per-device `switch_id`.
+- `HomeResolver`, one per session, decides the session's home in a fixed order; the first answer sticks:
+  a) one home configured; b) IP in a home's `bridges:`; c) 0x23 queue id (big-endian) equals a home id or a device
+  `switch_id`; d) fingerprint of reported ids (`home_fits` / `plausible_homes`): per home, "lacks" = reported ids it
+  does not have (+1 for a known, different bridge type) and "unreported" = its ids not reported. A fitting home rules
+  out another only if that one lacks more ids than the fitting home has unreported; picked when one fitting home is
+  left. Evidence accumulates per connection, nothing is dropped for good. One id unique to a home is NOT proof (a
+  device added after the export gets an id the stale config may only have in a bigger home), so there is no
+  unique-id pin. Fingerprint picks are logged at WARNING with the evidence. Absence of an id never picks a home; the
+  mesh-info total count is only logged.
+- Sessions: mesh-info records seen before the home is known are held back (bounded, 256) and applied on resolution;
+  ambiguous 0x83 records are dropped (debug log). After a full mesh-info sequence with no home, one WARNING per
+  connection (`ambiguity_message`) names the candidate homes and the queue id and says to add `bridges:`. Resolution
+  is reset on every reconnect (a and b come back at once, c and d are relearned).
+- Server: `get_dev_tcp_pool(home_id=None)` / `_sync`: with a home, only admitted bridges resolved into that home.
+  Unresolved sessions never get commands. Stale vote, quorum and `revote_offline` use the device's home pool.
+  `send_command` samples only from that pool (own TCP session still preferred) and logs a WARNING when the home has no
+  bridge.
+- Per-home no-bridge timer (`CYNC_HOME_NO_BRIDGE_GRACE_SECS`, default 30, `0` = off): armed at server start for each
+  home and when a home's last bridge closes, cancelled when a bridge resolves into the home and is admitted. On expiry:
+  WARNING naming the home, its devices marked offline. Tasks are stored, cancelled and awaited on `stop()`.
+- MQTT: `_parse_device_target` uses home and device id; `pub_online(device, ...)` and
+  `parse_entity_state(node, state, ...)` take the device; MITM matching is by object identity. MITM log file is
+  `mitm_dev_<home_id>-<dev_id>-<date>.log`.
+- Cloud export writes `switch_id` (cloud `switchID`, non-zero) and carries each existing home's `bridges:` into the
+  new file, matched by home id (`carry_over_bridges`), also for numbered exports.
+- Tests: `tests/test_device_registry.py`, `tests/test_home_resolution.py`, `tests/test_multi_home_runtime.py`; existing
+  tests moved to the composite key.
+
+**Decisions.**
+- Composite key instead of a global unique id: the mesh id must stay the control `target`, and HA ids already embed
+  the home id, so nothing user-visible moves.
+- `bridges:` is the manual override. The queue id was a hypothesis when written and is now confirmed (below).
+- Fingerprinting never treats a missing id as evidence for a home (offline devices) and ignores the total count.
+  It also never trusts a single id or the type alone: a config older than the account (devices added after the
+  export) would otherwise send a bridge of a smaller nested home into a bigger one, crossing state and commands
+  between homes without any warning (review finding, test with the nested 12/51/36/6 layout plus one new id).
+- An unresolved bridge is kept connected (it may resolve later) but gets no commands: a wrong-home command would most
+  likely drive the device with the same id in another home.
+- Single-home: resolved at session creation, bytes on the wire unchanged. Visible differences: an INFO queue id line
+  per connection, a WARNING (was debug) for a command dropped with no bridge, and the 30 s no-bridge WARNING that marks
+  devices offline.
+
+**Needs hardware confirmation.**
+- [x] Queue id: CONFIRMED 2026-11-04 on hardware (Docker Desktop test, 4-home account): the 0x23 queue id is the
+  device's cloud `switchID`, not the home id, same value on every reconnect. 9 bridges (5 type 53 switches fw 1.0.110,
+  4 type 137 bulbs fw 1.0.380) across all 4 homes, every one resolved to the right home by queue id (0 unmatched,
+  0 fingerprint picks). The 6-device home (ids 1-6, nested in every other home) could never be told apart by ids. Other device types still unchecked (`docs/multi_home.md` asks).
+- [x] Full multi-home run, 2026-11-04, on the HA host (Portainer, host networking), 4 homes / 105 devices: bridges of
+  all 4 homes connected from their own IPs, each resolved by queue id. Mesh info and 0x83 status from each bridge only
+  updated its own home's devices (ids 1-6 exist in every home). Commands for ids 7 and 11 of one home were confirmed by
+  that home's bridge within ~1 s, and the devices with the same ids in two other homes did not change.
+- [ ] Sessions are keyed by peer IP. Behind source NAT (Docker Desktop on Windows: every device arrives as the Docker
+  gateway IP) devices replace each other every few seconds (seen in the test). Documented in `docs/multi_home.md` and
+  `docs/troubleshooting.md`. Possible follow-up (separate PR): key sessions by the 0x23 queue id instead of the IP.
+- [x] `CYNC_MAX_TCP_CONN` was one cap for all homes: seen on hardware, with a cap of 32 and ~100 Wi-Fi devices
+  redirected, one home got no bridge at first. FIXED: with several homes it counts per home; the home comes from the
+  0x23 queue id at admission (`ProxyMixin._admission_home`); a bridge whose home is not known at admission is admitted
+  while all bridges are fewer than limit x homes (a separate unplaced pool let fingerprint-placed bridges free their
+  slot, so one home collected any number: second review); single home unchanged. Tests:
+  `test_connection_cap_counts_per_home` and neighbours in tests/test_multi_home.py.
+- [x] Second review (2026-11-04): the retained MITM-state lookup ran in the packet loop for seconds: now a task
+  (`tasks.mitm_probe`, cancelled on close); a device taking over another's IP left that device's MITM switch in HA:
+  removed now; `as_positive_int("²")` raised: `isdecimal`; the 0x23 redaction trusted the inferred length byte:
+  everything after it is redacted, also in the ERROR dump of a failed packet. `CYNC_RAW_DEBUG` dumps stay raw.
+- [ ] Known limit (not a regression): the "first record is the bridge" rule needs `_mesh_received >= _mesh_expected` to
+  find the start of a reply. If a reply lists fewer records than its total, a later page can be taken as a new reply
+  and its first record as the bridge. Only matters without a switch_id match (the switch_id binds the bridge first).
+- [ ] Found on hardware, not multi-home: some bridges (the 51-device home) answer the mesh info request on **0x83**
+  with `F9 52`, which `_handle_83_packet` never handled ("UNKNOWN packet data (ctrl_bytes: f9 52)"); those bridges' mesh
+  info is dropped and their own node is never set. The payload holds `7D 5E` where a `7E` would be: probably
+  HDLC-style byte stuffing that the parsers never undo (inferred). Separate PR, test from the capture.
+- [x] The debug `RAW HEX:` line of every 0x23 printed the device's auth code. FIXED: `utils.hello_23_hex_redacted`.
+- [x] 0x83 status ids fed the fingerprint, and a group/room id (or a device added after the export) matching another
+  home's device id could stop the real home from ever fitting (evidence is never removed). FIXED: only mesh-info ids
+  count (review finding, 2026-11-04).
+- [x] Review fixes, 2026-11-04: the bridge's own record is only the first record of a mesh reply (was: of every page);
+  the switch_id binds the session to its device at the 0x23 and a same-IP reconnect from another device (or home)
+  unbinds the old one; one "command dropped" WARNING per outage; queue id line DEBUG on single-home; the ambiguity
+  WARNING no longer says "fit" when no home fits and recommends re-exporting first; one id parser
+  (`registry.as_positive_int`) for home ids, config switch_ids and the cloud switchID; one config-section order
+  (`registry.CONFIG_MAIN_KEYS`) for the parser and the exporter carry-over; `DeviceRegistry.find_unique` removed (unused,
+  and it invited single-id home guesses). Not done: a per-home index in the registry (105 devices, not measurable).
+- [ ] Does a bridge's mesh info list offline devices too? If it does, "unreported" ids are strong evidence and the
+  fingerprint could be stricter; if not, a home with many offline devices stays ambiguous (WARNING, use `bridges:`).
+- [ ] Which id does a device added after the export get (next free id of its home?). The stale-config tolerance of
+  the fingerprint assumes so.
+- [ ] A bridge only reports its own home's mesh (assumed throughout).
+- [ ] Whether a command through a wrong-home bridge really reaches the same id in the other home (do not test on
+  devices where that matters).
+- [ ] `_handle_mitm_extra` still searches the global pool (by identity), because after a reconnect `node` is kept while
+  the home is relearned. Check the MITM switch on a multi-home install.
+
+**Test checklist (multi-home install)**, with `-D` debug logging, after the general checklist above:
+1. Startup: the INFO line lists every home with the right device count; no ERROR for home ids; an empty home is skipped.
+2. Before adding `bridges:`: each bridge logs a `0x23 queue id` line. Note what it matched. Bridges in the biggest home
+   should resolve by `fingerprint` (a WARNING listing which ids each other home lacks: check it names the right home);
+   bridges in smaller nested homes should log the "Could not work out"
+   WARNING once and get no commands.
+3. Add `bridges:` for every home, restart: each bridge logs `Cync home: ... ('bridges:' list ...)` at connect.
+4. In every home: toggle a light from HA, check the right physical device changes and no device with the same id in
+   another home does. Check state changes made in the Cync app or by a switch reach the right HA entity.
+5. Power-cut a bulb in one home: only that home's device goes offline, the same id in other homes stays.
+6. Unplug every bridge of one home: after 30 s the `No TCP bridge for Cync home ...` WARNING appears and only that
+   home's devices go offline; commands to it log the "dropped" WARNING. Replug: the home recovers.
+7. Reconnect a bridge from the same IP: its home comes back (no lingering grace WARNING).
+8. Re-export from the cloud: `bridges:` lists survive (`Kept the 'bridges:' list ...`), `switch_id` appears.
+9. MITM switch on a bridge in a non-first home: only that session switches; the log file name has the home id.
+10. Single-home install: nothing changes except the log lines listed under Decisions.
+11. Stale config: add a device to a smaller home in the Cync app without re-exporting. Its bridge must NOT resolve
+    into a bigger home (no `by fingerprint` WARNING naming the wrong home); expect "Could not work out" naming the
+    right home among the candidates. Re-export and restart afterwards.
+
 ## Protocol documentation (requested by user)
 - [x] DRAFT 1 written: `docs/protocol.md` (confidence-tagged, open questions list at the end). Still to do: captures-backed examples, fold in `packet_structure.md`, APK pass.
 - [ ] (original spec) Write a clear, structured protocol reference (`docs/protocol.md`) of everything we currently know: framing, header fields, queue_id/msg_id, every packet type (request, response, example hex, field table), handshake sequence (0x23 -> 0xC3 -> 0xD3 pings -> 0xA3 -> mesh info), control packet layout + checksum, mesh info / status parsing, device types, TLS quirks.

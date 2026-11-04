@@ -110,7 +110,8 @@ class MQTTClient:
         self._receiver_task: Optional[asyncio.Task] = None
         self._force_reconnect = False
         self._birth_task: Optional[asyncio.Task] = None
-        # nodes that currently show a MITM switch in HA, re-announced after every discovery
+        # nodes that currently show a MITM switch in HA, re-announced after every discovery. Keyed by
+        # (home_id, dev_id): the bridges of two homes are often the same mesh id (ids restart at 1 per home)
         self._mitm_nodes: dict = {}
         self.tasks: Optional[List[Union[asyncio.Task, Coroutine]]] = []
         lp = f"{self.lp}init:"
@@ -238,17 +239,18 @@ class MQTTClient:
 
         if itr == 1:
             logger.debug(f"{lp} Seeding all devices: offline")
-            for device_id in g.ncync_server.node_devices:
-                await self.pub_online(device_id, False)
+            for device in g.ncync_server.node_devices.values():
+                await self.pub_online(device, False)
         else:
             tasks = []
             # set the device online/offline and set its status
             for node in g.ncync_server.node_devices.values():
                 # key is entity id (sub_id), value is state class which has node and entity id
                 for epoint_state in node.entities.values():
-                    tasks.append(self.pub_online(node.id, node.online))
+                    tasks.append(self.pub_online(node, node.online))
                     tasks.append(
                         self.parse_entity_state(
+                            node,
                             epoint_state,
                             from_pkt="'re-connect'",
                         )
@@ -357,19 +359,23 @@ class MQTTClient:
             return None, None
 
         try:
+            # "<home_id>-<dev_id>[-<sub_id>]": the mesh id alone is reused in every home
+            home_id = int(ids[0])
             device_id = int(ids[1])
             sub_id = int(ids[-1]) if len(ids) >= 3 else None
         except ValueError:
-            logger.warning(f"{lp} Invalid numeric device/sub ID in UUID: {device_uuid}")
+            logger.warning(f"{lp} Invalid numeric home/device/sub ID in UUID: {device_uuid}")
             return None, None
 
-        if device_id not in g.ncync_server.node_devices:
+        device = g.ncync_server.node_devices.get_device(home_id, device_id)
+        if device is None:
             logger.warning(
-                f"{lp} Device ID {device_id} not found, device is disabled in config file or have you deleted / added any devices recently?"
+                f"{lp} Device ID {device_id} in home {home_id} not found, device is disabled in config file or have "
+                f"you deleted / added any devices recently?"
             )
             return None, sub_id
 
-        return g.ncync_server.node_devices[device_id], sub_id
+        return device, sub_id
 
     async def _handle_bridge_extra(self, extra_data: List[str], payload: bytes, lp: str) -> bool:
         norm_pl = payload.decode(errors="ignore").casefold()
@@ -411,7 +417,8 @@ class MQTTClient:
         is_on = payload.decode(errors="ignore").upper() == "ON"
         tcp_pool = await g.ncync_server.get_dev_tcp_pool()
         for tcp_dev in tcp_pool:
-            if tcp_dev.node and tcp_dev.node.id == node.id:
+            # by identity: the same mesh id exists in every home
+            if tcp_dev.node is not None and tcp_dev.node is node:
                 if is_on:
                     self._spawn(tcp_dev.start_mitm(), f"MQTT_START_MITM-{tcp_dev.ip_address}")
                 else:
@@ -660,9 +667,9 @@ class MQTTClient:
             await self.homeassistant_discovery()
             await asyncio.sleep(2)
             for node in list(g.ncync_server.node_devices.values()):
-                await self.pub_online(node.id, node.online)
+                await self.pub_online(node, node.online)
                 for epoint_state in node.entities.values():
-                    await self.parse_entity_state(epoint_state, from_pkt="'hass_birth'")
+                    await self.parse_entity_state(node, epoint_state, from_pkt="'hass_birth'")
         except asyncio.CancelledError:
             raise
         except aiomqtt.MqttError as exc:
@@ -734,7 +741,7 @@ class MQTTClient:
                 f"{self.topic}/availability/bridge", "offline".encode(), retain=True
             )
             results = await asyncio.gather(
-                *(self.pub_online(n.id, False) for n in g.ncync_server.node_devices.values()),
+                *(self.pub_online(n, False) for n in g.ncync_server.node_devices.values()),
                 return_exceptions=True,
             )
             for res in results:
@@ -767,19 +774,12 @@ class MQTTClient:
             self.tasks = []
 
 
-    async def pub_online(self, device_id: int, status: bool) -> bool:
+    async def pub_online(self, device: CyncDevice, status: bool) -> bool:
         # no need for sub_id, if the parent device is online, children are online
         lp = f"{self.lp}pub_online:"
         if self._connected:
-            if device_id not in g.ncync_server.node_devices:
-                logger.error(
-                    f"{lp} Device ID {device_id} not found?! Have you deleted or added any devices recently? "
-                    f"You may need to re-export devices from your Cync account!"
-                )
-                return False
             availability = b"online" if status else b"offline"
-            device: CyncDevice = g.ncync_server.node_devices[device_id]
-            device_uuid = f"{device.home_id}-{device_id}"
+            device_uuid = f"{device.home_id}-{device.id}"
             data = []
             if device.has_multi_entities:
                 for child_id in device.entities:
@@ -997,22 +997,16 @@ class MQTTClient:
 
     async def parse_entity_state(
         self,
+        node: CyncDevice,
         entity_state: EntityState,
         from_pkt: Optional[str] = None,
     ) -> bool:
-        """Parse device status and publish to MQTT for HASS devices to update."""
+        """Parse device status and publish to MQTT for HASS devices to update. ``node`` is the device the state
+        belongs to (the caller has it: ``entity_state.dev_id`` alone is ambiguous across homes)."""
         lp = f"{self.lp}parse state:"
-        node_id = entity_state.dev_id
         sub_id = entity_state.sub_id
         if from_pkt:
             lp = f"{lp}{from_pkt}:"
-        if node_id not in g.ncync_server.node_devices:
-            logger.warning(
-                f"{lp} Device ID {node_id} not found! Device may be disabled in config file or "
-                f"you may need to re-export devices from your Cync account"
-            )
-            return False
-        node: CyncDevice = g.ncync_server.node_devices[node_id]
         entity = self._entity_for(node, sub_id)
         if entity is None:
             return False
@@ -1402,7 +1396,7 @@ class MQTTClient:
             f"{node.lp} Adding a 'MITM mode' button to node: '{node.name}' (ID: {node.id}) as it is "
             f"connected via IP: {node.tcp_session.ip_address}"
         )
-        self._mitm_nodes[node.id] = node
+        self._mitm_nodes[(node.home_id, node.id)] = node
         device_uuid = node.hass_id
         mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"
         mitm_switch_conf = {
@@ -1425,14 +1419,14 @@ class MQTTClient:
         for node in list(self._mitm_nodes.values()):
             session = getattr(node, "tcp_session", None)
             if session is None or session.is_closed():
-                self._mitm_nodes.pop(node.id, None)
+                self._mitm_nodes.pop((node.home_id, node.id), None)
                 continue
             await self.add_mitm_button(node)
 
     async def remove_mitm_button(self, node: CyncDevice):
         """Delete a MITM mode button"""
         logger.debug(f"{node.lp} Removing 'MITM mode' button from node: '{node.name}'")
-        self._mitm_nodes.pop(node.id, None)
+        self._mitm_nodes.pop((node.home_id, node.id), None)
         mitm_switch_unique_id = f"{node.home_id}_{node.id}_mitm_mode"
         # await self.publish(f"{self.topic}/status/{node.hass_id}/mitm", b"OFF", retain=True)
         # send empty payload to the config topic to delete the entity

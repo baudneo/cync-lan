@@ -1,0 +1,336 @@
+# Sanitized multi-home cync_mesh.yaml for tests/test_multi_home.py. ALL DATA IS FAKE.
+#
+# It mirrors the shape of a real multi-home account export: every Cync home is its own BLE mesh and the
+# mesh ids restart at 1 in each home, so the id sets are NESTED (1-6 within 1-12 within 1-20). Only ids 13-20
+# are unique to one home (Barn). The fourth home has no devices, as the cloud export writes for an empty home.
+# MACs use the locally administered 02:00:00:... range; access keys and home ids are made up.
+#   Cabin  100000001  ids 1-6   all type 137 (Full Color A19)
+#   House  100000002  ids 1-12  type 53 (Toggle Switch), id 7 is a type 67 dual outlet plug with 2 endpoints
+#   Barn   100000003  ids 1-20  mixed: 53, 81 (fan controller), 112 (no model metadata yet), 137
+#   Empty  100000004  no devices
+exported_homes:
+  Cabin:
+    access_key: fake-access-key-cabin
+    id: 100000001
+    mac: '02:00:00:01:00:00'
+    devices:
+      1:
+        name: Porch Light
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:01:B0:01'
+        wifi_mac: '02:00:00:01:F0:01'
+        endpoints:
+          0: Porch Light
+      2:
+        name: Kitchen Bulb
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:01:B0:02'
+        wifi_mac: '02:00:00:01:F0:02'
+        endpoints:
+          0: Kitchen Bulb
+      3:
+        name: Bedroom Bulb
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:01:B0:03'
+        wifi_mac: '02:00:00:01:F0:03'
+        endpoints:
+          0: Bedroom Bulb
+      4:
+        name: Bath Bulb
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:01:B0:04'
+        wifi_mac: '02:00:00:01:F0:04'
+        endpoints:
+          0: Bath Bulb
+      5:
+        name: Loft Bulb
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:01:B0:05'
+        wifi_mac: '02:00:00:01:F0:05'
+        endpoints:
+          0: Loft Bulb
+      6:
+        name: Deck Bulb
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:01:B0:06'
+        wifi_mac: '02:00:00:01:F0:06'
+        endpoints:
+          0: Deck Bulb
+  House:
+    access_key: fake-access-key-house
+    id: 100000002
+    mac: '02:00:00:02:00:00'
+    devices:
+      1:
+        name: House Switch 1
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:01'
+        wifi_mac: '02:00:00:02:F0:01'
+        endpoints:
+          0: House Switch 1
+      2:
+        name: House Switch 2
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:02'
+        wifi_mac: '02:00:00:02:F0:02'
+        endpoints:
+          0: House Switch 2
+      3:
+        name: House Switch 3
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:03'
+        wifi_mac: '02:00:00:02:F0:03'
+        endpoints:
+          0: House Switch 3
+      4:
+        name: House Switch 4
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:04'
+        wifi_mac: '02:00:00:02:F0:04'
+        endpoints:
+          0: House Switch 4
+      5:
+        name: House Switch 5
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:05'
+        wifi_mac: '02:00:00:02:F0:05'
+        endpoints:
+          0: House Switch 5
+      6:
+        name: House Switch 6
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:06'
+        wifi_mac: '02:00:00:02:F0:06'
+        endpoints:
+          0: House Switch 6
+      7:
+        name: Patio Plug
+        type: 67
+        fw: '10203'
+        mac: '02:00:00:02:B0:07'
+        wifi_mac: '02:00:00:02:F0:07'
+        endpoints:
+          1: Patio Plug Left
+          2: Patio Plug Right
+      8:
+        name: House Switch 8
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:08'
+        wifi_mac: '02:00:00:02:F0:08'
+        endpoints:
+          0: House Switch 8
+      9:
+        name: House Switch 9
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:09'
+        wifi_mac: '02:00:00:02:F0:09'
+        endpoints:
+          0: House Switch 9
+      10:
+        name: House Switch 10
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:0A'
+        wifi_mac: '02:00:00:02:F0:0A'
+        endpoints:
+          0: House Switch 10
+      11:
+        name: House Switch 11
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:0B'
+        wifi_mac: '02:00:00:02:F0:0B'
+        endpoints:
+          0: House Switch 11
+      12:
+        name: House Switch 12
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:02:B0:0C'
+        wifi_mac: '02:00:00:02:F0:0C'
+        endpoints:
+          0: House Switch 12
+  Barn:
+    access_key: fake-access-key-barn
+    id: 100000003
+    mac: '02:00:00:03:00:00'
+    devices:
+      1:
+        name: Barn Bulb 1
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:03:B0:01'
+        wifi_mac: '02:00:00:03:F0:01'
+        endpoints:
+          0: Barn Bulb 1
+      2:
+        name: Barn Switch 2
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:02'
+        wifi_mac: '02:00:00:03:F0:02'
+        endpoints:
+          0: Barn Switch 2
+      3:
+        name: Barn Switch 3
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:03'
+        wifi_mac: '02:00:00:03:F0:03'
+        endpoints:
+          0: Barn Switch 3
+      4:
+        name: Barn Fan 4
+        type: 81
+        fw: '10203'
+        mac: '02:00:00:03:B0:04'
+        wifi_mac: '02:00:00:03:F0:04'
+        endpoints:
+          0: Barn Fan 4
+      5:
+        name: Barn Unknown Type 5
+        type: 112
+        fw: '10203'
+        mac: '02:00:00:03:B0:05'
+        wifi_mac: '02:00:00:03:F0:05'
+        endpoints:
+          0: Barn Unknown Type 5
+      6:
+        name: Barn Bulb 6
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:03:B0:06'
+        wifi_mac: '02:00:00:03:F0:06'
+        endpoints:
+          0: Barn Bulb 6
+      7:
+        name: Barn Switch 7
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:07'
+        wifi_mac: '02:00:00:03:F0:07'
+        endpoints:
+          0: Barn Switch 7
+      8:
+        name: Barn Switch 8
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:08'
+        wifi_mac: '02:00:00:03:F0:08'
+        endpoints:
+          0: Barn Switch 8
+      9:
+        name: Barn Fan 9
+        type: 81
+        fw: '10203'
+        mac: '02:00:00:03:B0:09'
+        wifi_mac: '02:00:00:03:F0:09'
+        endpoints:
+          0: Barn Fan 9
+      10:
+        name: Barn Bulb 10
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:03:B0:0A'
+        wifi_mac: '02:00:00:03:F0:0A'
+        endpoints:
+          0: Barn Bulb 10
+      11:
+        name: Barn Switch 11
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:0B'
+        wifi_mac: '02:00:00:03:F0:0B'
+        endpoints:
+          0: Barn Switch 11
+      12:
+        name: Barn Unknown Type 12
+        type: 112
+        fw: '10203'
+        mac: '02:00:00:03:B0:0C'
+        wifi_mac: '02:00:00:03:F0:0C'
+        endpoints:
+          0: Barn Unknown Type 12
+      13:
+        name: Barn Switch 13
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:0D'
+        wifi_mac: '02:00:00:03:F0:0D'
+        endpoints:
+          0: Barn Switch 13
+      14:
+        name: Barn Bulb 14
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:03:B0:0E'
+        wifi_mac: '02:00:00:03:F0:0E'
+        endpoints:
+          0: Barn Bulb 14
+      15:
+        name: Barn Switch 15
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:0F'
+        wifi_mac: '02:00:00:03:F0:0F'
+        endpoints:
+          0: Barn Switch 15
+      16:
+        name: Barn Fan 16
+        type: 81
+        fw: '10203'
+        mac: '02:00:00:03:B0:10'
+        wifi_mac: '02:00:00:03:F0:10'
+        endpoints:
+          0: Barn Fan 16
+      17:
+        name: Barn Switch 17
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:11'
+        wifi_mac: '02:00:00:03:F0:11'
+        endpoints:
+          0: Barn Switch 17
+      18:
+        name: Barn Bulb 18
+        type: 137
+        fw: '10203'
+        mac: '02:00:00:03:B0:12'
+        wifi_mac: '02:00:00:03:F0:12'
+        endpoints:
+          0: Barn Bulb 18
+      19:
+        name: Barn Switch 19
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:13'
+        wifi_mac: '02:00:00:03:F0:13'
+        endpoints:
+          0: Barn Switch 19
+      20:
+        name: Barn Switch 20
+        type: 53
+        fw: '10203'
+        mac: '02:00:00:03:B0:14'
+        wifi_mac: '02:00:00:03:F0:14'
+        endpoints:
+          0: Barn Switch 20
+  Empty:
+    access_key: fake-access-key-empty
+    id: 100000004
+    mac: '02:00:00:04:00:00'
+    devices: {}

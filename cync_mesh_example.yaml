@@ -1,6 +1,7 @@
 exported_homes:
   # each of these are a "home" in the app. This one is named "Home"
-  # work in progress to import several homes and import 'suggested' groups.
+  # several homes are supported, each is its own BT mesh with ids starting at 1 (see docs/multi_home.md).
+  # work in progress to import 'suggested' groups.
   Home:
     # Some Cync Home identifiers.
     id: 123456789
@@ -9,6 +10,9 @@ exported_homes:
     # This is what all Cync BT devices will broadcast as their name after joining this home.
     # When you do a BT scan, you'll see a bunch of devices with this name.
     mac: ABCDEF1234567890
+    # optional: IPs of this home's Wi-Fi devices that connect to cync-lan. Recommended with more than one home,
+    # so each connection is matched to the right home (see docs/multi_home.md). Kept when you re-export.
+    # bridges: ["10.0.3.20"]
 
     devices:
       # this is the device id

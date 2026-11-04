@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from cync_lan import mqtt_client as mqtt_mod
+from cync_lan.devices.registry import DeviceRegistry
 
 
 class _MsgTopic:
@@ -21,7 +22,7 @@ class _Msg:
 
 class _DummyServer:
     def __init__(self):
-        self.node_devices = {}
+        self.node_devices = DeviceRegistry()
 
     async def get_dev_tcp_pool(self):
         return []
@@ -75,7 +76,7 @@ class TestMQTTMessageParsing(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_json_on_payload_is_handled(self):
         node = _DummyNode(dev_id=46)
-        mqtt_mod.g.ncync_server.node_devices[46] = node
+        mqtt_mod.g.ncync_server.node_devices[(123, 46)] = node
         msg = _Msg(f"{mqtt_mod.CYNC_TOPIC}/set/123-46", b"ON")
         result = await self.client.async_parse_mqtt_msg(msg)
         self.assertIsInstance(result, bool)

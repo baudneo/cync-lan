@@ -18,3 +18,4 @@ build/
 Dockerfile.rootless
 docs/Dockerfile
 docs/roadmap_ideas.md
+docker/.env

@@ -3,7 +3,7 @@ import datetime
 import logging
 import logging.handlers
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from cync_lan.const import (
     CYNC_LOG_NAME,
@@ -11,8 +11,16 @@ from cync_lan.const import (
     STREAM_CHUNK_SIZE,
 )
 from cync_lan.devices.device import CyncDevice
-from cync_lan.devices.handlers import PacketHandlersMixin
+from cync_lan.devices.handlers import MeshRecord, PacketHandlersMixin
 from cync_lan.devices.proxy import ProxyMixin
+from cync_lan.devices.registry import (
+    BRIDGES_KEY,
+    METHOD_FINGERPRINT,
+    METHOD_SINGLE_HOME,
+    DeviceRegistry,
+    HomeMatch,
+    HomeResolver,
+)
 from cync_lan.packet import PacketBuilder
 from cync_lan.packet.framer import PacketFramer
 from cync_lan.stats import stats
@@ -22,7 +30,7 @@ from cync_lan.structs import (
     MessageCache,
     Tasks,
 )
-from cync_lan.utils import bytes2list, format_socat_style
+from cync_lan.utils import bytes2list, format_socat_style, hello_23_hex_redacted
 
 __all__ = ["CyncTCPSession"]
 logger = logging.getLogger(CYNC_LOG_NAME)
@@ -55,6 +63,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         ip_address: str,
+        registry: Optional[DeviceRegistry] = None,
     ):
         if not ip_address:
             raise ValueError(
@@ -96,7 +105,66 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         self._closed = False
         self.closing = False
         self.mitm_button_added = False
+        self._check_mitm_retained = False
+        # multi-home: which Cync home this bridge relays (see docs/multi_home.md). The server passes its registry in;
+        # the fallback keeps sessions built without one (tests, tools) working.
+        if registry is None:
+            registry = getattr(g.ncync_server, "node_devices", None)
+        self.registry: DeviceRegistry = registry if isinstance(registry, DeviceRegistry) else DeviceRegistry()
+        self._reset_home_resolution()
 
+    # ---- multi-home resolution state
+    def _reset_home_resolution(self):
+        """
+        Fresh per-connection home resolution. Only one home configured, or this IP in a home's 'bridges:' list,
+        resolves right here (HomeResolver decides that at construction), so those assignments survive a reconnect;
+        anything learned from the old socket (queue id, fingerprint) is redone on the new one.
+        """
+        self.home = HomeResolver(self.registry, self.ip_address)
+        # mesh-info records seen before the home was known: dev_id -> latest record, applied once it resolves.
+        # dev_id is one byte, so this holds at most 255 entries (bounded).
+        self._pending_mesh: Dict[int, MeshRecord] = {}
+        self._pending_bridge_id: Optional[int] = None
+        self._ambiguity_warned = False
+        self._mesh_expected = 0
+        self._mesh_received = 0
+        if self.home.resolved and self.home.method != METHOD_SINGLE_HOME:
+            logger.info(f"{self.lp} Cync home: {self.registry.describe_home(self.home.home_id)} ({self.home.match.detail})")
+
+    @property
+    def home_id(self) -> Optional[int]:
+        """The Cync home this bridge belongs to, None while it is not known (then it is in no home's TCP pool)."""
+        return self.home.home_id
+
+    def _announce_home_bridge(self) -> None:
+        """This session is a usable bridge of a known home: disarm that home's no-bridge timer."""
+        if self.home.resolved and self.allowed_to_connect and not self.is_app and not self.is_closed():
+            cancel = getattr(g.ncync_server, "cancel_home_grace", None)
+            if cancel is not None:
+                cancel(self.home.home_id)
+
+    async def _home_resolved(self, match: Optional[HomeMatch]) -> None:
+        """Called with whatever an observe_*/pin call returned; acts only on a NEW resolution."""
+        if match is None:
+            return
+        if self.node is not None and self.node.home_id != match.home_id:
+            # a same-IP reconnect reuses this session object: the device bound before is from another home
+            await self._unbind_node(f"this connection is in home {self.registry.describe_home(match.home_id)}")
+        msg = (
+            f"{self.lp} Cync home resolved to {self.registry.describe_home(match.home_id)} by {match.method}: "
+            f"{match.detail}"
+        )
+        if match.method == METHOD_FINGERPRINT:
+            # inferred from device ids only: make a wrong match visible and say how to pin it
+            logger.warning(
+                f"{msg}. This is inferred from device ids. If it is the wrong home (for example devices were added "
+                f"after the last export), add {self.ip_address} to the right home's '{BRIDGES_KEY}:' list in "
+                f"cync_mesh.yaml (see docs/multi_home.md)"
+            )
+        else:
+            logger.info(msg)
+        self._announce_home_bridge()
+        await self._flush_pending_mesh()
 
     async def existing_init(self):
         """Used when replacing an existing TCP connection, when a device reconnects"""
@@ -121,6 +189,9 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         self.tasks = Tasks()
         # re-arm the switch: the first 0x73 on the new socket publishes it again
         self.mitm_button_added = False
+        # a manual ('bridges:') or single-home assignment is redone identically; everything else is relearned
+        self._reset_home_resolution()
+        self._announce_home_bridge()
         if self.mitm_mode is True:
             logger.debug(f"{lp} MITM mode is active, making sure the proxy is started...")
             if self.node:
@@ -240,9 +311,14 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                 # a handler bug / odd packet must cost one packet, not the device connection
                 self.bad_packets += 1
                 stats.inc("packets_failed")
+                # a 0x23 hello carries the device's auth code: never dump it
+                dump = (
+                    hello_23_hex_redacted(extracted_packet) if extracted_packet[:1] == b"\x23"
+                    else extracted_packet.hex(" ")
+                )
                 logger.error(
                     f"{lp} dropping packet that failed to parse ({self.bad_packets} in a row): "
-                    f"{exc!r}\nPACKET: {extracted_packet.hex(' ')}",
+                    f"{exc!r}\nPACKET: {dump}",
                     exc_info=True,
                 )
                 if self.bad_packets >= MAX_CONSECUTIVE_BAD_PACKETS:
@@ -281,7 +357,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
 
         # Route to the appropriate handler
         if PacketBuilder.is_device_request(pkt_type):
-            if self.allowed_to_connect is False and await self.can_connect() is False:
+            # the 0x23 hello goes along so a multi-home setup can count this connection against its own home
+            if self.allowed_to_connect is False and await self.can_connect(data if pkt_type == 0x23 else None) is False:
                 # rejected: the socket was closed, don't answer the packet with writer=None
                 return
             await self._dispatch_device_request(
@@ -575,6 +652,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         if not self.is_app:
             # the pool just shrank: bulbs the other bridges already reported stale may now meet the vote
             await g.ncync_server.revote_offline()
+            # last bridge of its home gone: arm that home's no-bridge timer
+            await g.ncync_server.bridge_closed(self)
 
     @property
     def reader(self):
