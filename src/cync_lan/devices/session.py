@@ -52,6 +52,9 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
     reader: Optional[asyncio.StreamReader]
     writer: Optional[asyncio.StreamWriter]
     mitm_mode: bool = False
+    hybrid: bool = False
+    hybrid_sent_at: float = 0.0
+    _cloud_framer = None
     messages: MessageCache
     is_app: bool
     node: Optional[CyncDevice] = None
@@ -96,6 +99,10 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         self._closing = False
         self.control_bytes = [0x00, 0x00]
         self.mitm_mode = False
+        # hybrid relay (CYNC_HYBRID_RELAY): MITM to the cloud AND local control on the same connection
+        self.hybrid = False
+        self.hybrid_sent_at = 0.0
+        self._cloud_framer = None
         self.mitm_bytes_to_cloud = 0
         self.mitm_bytes_from_cloud = 0
         self.mitm_logger: Optional[logging.Logger] = None
@@ -201,6 +208,14 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                 await self.stop_proxy()
                 await asyncio.sleep(0.25)
                 await self.start_proxy()
+                if self.cloud_writer is None:
+                    # cloud unreachable: run this connection locally instead of leaving the device with nobody
+                    # answering it (no cloud, and the local acks are off in MITM mode)
+                    logger.warning(
+                        f"{lp} the Cync cloud cannot be reached, this connection runs local-only "
+                        f"({'hybrid relay' if self.hybrid else 'MITM'} resumes when the device reconnects)"
+                    )
+                    self.mitm_mode = False
             else:
                 logger.debug(f"{lp} Proxy connection is up!")
 
@@ -275,7 +290,7 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
             # first bytes of a connection, from the Cync app (0x13 auth): relay the whole stream to the cloud untouched
             if await self.start_app_proxy(data):
                 return
-        if self.mitm_mode:
+        if self.mitm_mode and not self.hybrid:
             if self.cloud_writer:
                 await self.write_to_cloud(data)
             else:
@@ -303,8 +318,19 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                 f"{lp} partial packet, {self.framer.pending} bytes buffered until next read"
             )
         for extracted_packet in packets:
+            own_reply = False
+            if self.mitm_mode and self.hybrid:
+                # hybrid: forward packet by packet, keeping the device's replies to OUR commands from the cloud
+                own_reply = self.is_own_reply(extracted_packet)
+                if own_reply:
+                    logger.debug(f"{lp} hybrid: kept a reply to a cync-lan command from the cloud: {extracted_packet.hex(' ')}")
+                elif self.cloud_writer:
+                    await self.write_to_cloud(extracted_packet)
             try:
                 await self.parse_packet(extracted_packet)
+                if own_reply and extracted_packet[0] == 0x73:
+                    # the cloud never saw it, so it will not ack it: we do (as in local mode)
+                    await self.write(PacketBuilder.build_73_ack(self.queue_id, extracted_packet[9:12]))
             except (OSError, TimeoutError, asyncio.IncompleteReadError):
                 # the connection itself is broken: let receive_task tear the session down
                 raise
@@ -334,6 +360,18 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                 f"HEX: {raw_input.hex(' ')}\n"
                 f"INT: {bytes2list(raw_input)}\n\n"
             )
+
+    def is_own_reply(self, pkt: bytes) -> bool:
+        """
+        Hybrid relay: is this device packet a reply to a command cync-lan sent (so it must not go to the cloud)?
+        - 0x73 control reply (inner ``F9 xx``) whose control id is one we are waiting for;
+        - 0x7B with msg id 00 00 00 (ours: cync-lan sends its 0x73 with msg id 0) shortly after we sent one.
+        """
+        if len(pkt) >= 19 and pkt[0] == 0x73 and pkt[12] == 0x7E and pkt[17] == 0xF9:
+            return pkt[13] in self.messages.control
+        if len(pkt) >= 12 and pkt[0] == 0x7B and pkt[9:12] == b"\x00\x00\x00":
+            return time.time() - self.hybrid_sent_at < 10
+        return False
 
     async def parse_packet(self, data: bytes):
         """Parse what type of packet based on header (first 12 bytes)."""

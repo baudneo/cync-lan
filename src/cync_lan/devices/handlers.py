@@ -7,6 +7,7 @@ from typing import List, NamedTuple, Optional
 
 from cync_lan.const import (
     CYNC_CLOUD_UPLINK,
+    CYNC_HYBRID_RELAY,
     CYNC_LOG_NAME,
     CYNC_MESH_REFRESH_SECS,
     CYNC_RAW,
@@ -703,7 +704,17 @@ class PacketHandlersMixin:
 
     async def _restore_mitm_state(self, node: CyncDevice) -> None:
         """Start MITM mode if the device's retained HA switch state is ON (it was on when cync-lan last ran), or if it
-        is its home's cloud uplink bridge (CYNC_CLOUD_UPLINK)."""
+        is its home's cloud uplink bridge (CYNC_CLOUD_UPLINK); hybrid relay if it is listed in CYNC_HYBRID_RELAY."""
+        if "all" in CYNC_HYBRID_RELAY or node.hass_id.casefold() in CYNC_HYBRID_RELAY:
+            if self.node is not node:
+                return
+            self.hybrid = True
+            logger.info(
+                f"{self.lp} '{node.name}' is in hybrid relay: its connection goes on to the Cync cloud (so the app sees "
+                f"it) and cync-lan keeps controlling it locally"
+            )
+            await self.start_mitm()
+            return
         if self._claim_cloud_uplink(node):
             if self.node is not node:
                 return

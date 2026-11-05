@@ -21,6 +21,7 @@ from cync_lan.const import (
     TCP_BLACKHOLE_DELAY,
 )
 from cync_lan.devices.registry import homes_for_queue_id, parse_queue_id
+from cync_lan.packet.framer import PacketFramer
 from cync_lan.structs import (
     ConnectionType,
     GlobalObject,
@@ -37,6 +38,8 @@ class ProxyMixin:
 
     async def start_proxy(self):
         lp = f"{self.lp}start proxy:"
+        # a new cloud stream starts on a packet boundary
+        self._cloud_framer = None
         try:
             ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
             ssl_context.check_hostname = False
@@ -201,6 +204,7 @@ class ProxyMixin:
         # if self.mitm is True or self.cloud_reader or self.cloud_writer:
         await self.stop_proxy()
         self.mitm_mode = False
+        self.hybrid = False
         self.mitm_logger = None
         logger.info(f"{self.lp} MITM Mode disabled, forcing disconnect to enable normal operation...")
         await self.close()
@@ -226,8 +230,18 @@ class ProxyMixin:
                         )
                     )
                     self.mitm_bytes_from_cloud += len(data)
-                    self.writer.write(data)
-                    await self.writer.drain()
+                    if getattr(self, "hybrid", False):
+                        # cync-lan writes its own commands to this device too: pass the cloud's data on as whole
+                        # packets, under the write lock, so a command of ours never lands inside one of the cloud's
+                        if self._cloud_framer is None:
+                            self._cloud_framer = PacketFramer(valid_headers=range(256))
+                        for pkt in self._cloud_framer.feed(data):
+                            async with self.write_lock:
+                                self.writer.write(pkt)
+                                await self.writer.drain()
+                    else:
+                        self.writer.write(data)
+                        await self.writer.drain()
         except asyncio.CancelledError:
             logger.debug(f"{lp} Cloud proxy task CANCELED cleanly, re-raising...")
             raise

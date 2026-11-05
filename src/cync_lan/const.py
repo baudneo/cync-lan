@@ -11,6 +11,8 @@ from cync_lan import __version__
 __all__ = [
     "CYNC_APP_PROXY",
     "CYNC_CLOUD_UPLINK",
+    "CYNC_HYBRID_RELAY",
+    "parse_hybrid_relay",
     "CYNC_EXPORT_HOST",
     "CYNC_OVERWRITE_CONFIG_FILE",
     "CYNC_EXPORT_HOST",
@@ -244,6 +246,17 @@ CYNC_APP_MITM_LOGGING = (
 CYNC_CLOUD_IP = os.environ.get("CYNC_CLOUD_IP", "34.73.130.191")
 # one bridge per home relays to the real Cync cloud (MITM) so the app sees live status; see docs/cloud_uplink.md
 CYNC_CLOUD_UPLINK = os.environ.get("CYNC_CLOUD_UPLINK", "0").casefold() in YES_ANSWER
+
+
+def parse_hybrid_relay(raw) -> frozenset:
+    """CYNC_HYBRID_RELAY: comma separated "<home_id>-<device_id>" (as in the MQTT topics), or "all"; empty = off."""
+    if not raw:
+        return frozenset()
+    return frozenset(x.strip().casefold() for x in str(raw).split(",") if x.strip())
+
+
+# devices whose connection is relayed to the Cync cloud AND still controlled locally (docs/hybrid_relay.md)
+CYNC_HYBRID_RELAY = parse_hybrid_relay(os.environ.get("CYNC_HYBRID_RELAY", ""))
 # forward Cync app connections (DNS-redirected phones) to the real cloud instead of closing them
 CYNC_APP_PROXY = os.environ.get("CYNC_APP_PROXY", "0").casefold() in YES_ANSWER
 

@@ -600,7 +600,7 @@ class CyncDevice:
                     inner_packet=inner_pkt
                 )
 
-                if bridge_device.mitm_mode is True:
+                if bridge_device.mitm_mode is True and not getattr(bridge_device, "hybrid", False):
                     logger.debug(
                         f"{lp} MITM mode active for this device: {bridge_device.ip_address} "
                         f"(ID: {getattr(bridge_device.node, 'hass_id', None)})"
@@ -610,6 +610,9 @@ class CyncDevice:
                     m_cb.message = full_packet
                     m_cb.sent_at = time.time()
                     bridge_device.messages.control[cmsg_id] = m_cb
+                    if getattr(bridge_device, "hybrid", False) and bridge_device.mitm_mode:
+                        # its replies to this command must not reach the cloud (see CyncTCPSession.is_own_reply)
+                        bridge_device.hybrid_sent_at = time.time()
                     tasks.append(bridge_device.write(full_packet))
                     str_appnd = "..."
                     if CYNC_RAW:
