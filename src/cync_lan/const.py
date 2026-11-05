@@ -11,6 +11,7 @@ from cync_lan import __version__
 __all__ = [
     "CYNC_APP_PROXY",
     "CYNC_CLOUD_UPLINK",
+    "CYNC_CMD_BATCH_MS",
     "CYNC_HYBRID_RELAY",
     "parse_hybrid_relay",
     "CYNC_EXPORT_HOST",
@@ -117,6 +118,12 @@ CYNC_ACCOUNT_PASSWORD: str = os.environ.get("CYNC_ACCOUNT_PASSWORD", None)
 CYNC_MITM_DEV_LOGGER: bool = os.environ.get("CYNC_MITM_DEV_LOGGER", 'no').casefold() in YES_ANSWER
 CYNC_MITM_APP_LOGGER: bool = os.environ.get("CYNC_MITM_APP_LOGGER", 'no').casefold() in YES_ANSWER
 
+# commands to one home that arrive within this many ms (an HA light group fires one per member at once) go through the
+# SAME bridges, written to each bridge in one burst, so the mesh gets them together; 0 = off (docs/command_batching.md)
+try:
+    CYNC_CMD_BATCH_MS: int = max(0, int(os.environ.get("CYNC_CMD_BATCH_MS", 30)))
+except ValueError:
+    CYNC_CMD_BATCH_MS = 30
 CYNC_CMD_BROADCASTS: int = os.environ.get("CYNC_CMD_BROADCASTS", 2)
 if not CYNC_CMD_BROADCASTS:
     CYNC_CMD_BROADCASTS = 2

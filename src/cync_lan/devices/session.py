@@ -53,6 +53,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
     writer: Optional[asyncio.StreamWriter]
     mitm_mode: bool = False
     hybrid: bool = False
+    _batch = None
+    _batch_task = None
     hybrid_sent_at: float = 0.0
     _cloud_framer = None
     messages: MessageCache
@@ -586,6 +588,31 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                         f"{lp} reader is None/empty -> {self.reader = } // TYPE: {type(self.reader)}"
                     )
                     return False
+
+    async def write_batched(self, data: bytes, window: float) -> bool:
+        """
+        Queue ``data`` and write everything queued within ``window`` seconds in ONE write (CYNC_CMD_BATCH_MS). Returns at
+        once: the MQTT receiver handles messages one by one, so waiting for the write here would end every batch at one
+        command. A failed write is logged by the flush (the commands' ACK timeouts cover the rest).
+        """
+        if self._batch is None:
+            self._batch = []
+            self._batch_task = asyncio.create_task(self._flush_batch(window), name=f"batch_write-{self.ip_address}")
+        self._batch.append(data)
+        return True
+
+    async def _flush_batch(self, window: float) -> None:
+        try:
+            await asyncio.sleep(window)
+        finally:
+            batch, self._batch = self._batch, None
+        if not batch:
+            return
+        try:
+            await self.write(b"".join(batch))
+            logger.debug(f"{self.lp} batch: wrote {len(batch)} command(s) in one write")
+        except (OSError, TimeoutError, ValueError) as exc:
+            logger.warning(f"{self.lp} batch: writing {len(batch)} command(s) failed: {exc!r}")
 
     async def write(self, data: bytes, broadcast: bool = False) -> Optional[bool]:
         """
