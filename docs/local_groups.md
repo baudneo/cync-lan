@@ -1,5 +1,12 @@
 # Local groups (cync-lan puts the group on the switches)
 
+> **A switch's own button follows its groups.** Found 2026-11-05 with a 9-switch "Master Suite" group across five
+> rooms: after the sync, pressing ANY of those wall switches turned the whole suite on / off. That is why the Cync app
+> keeps rooms small: each room is what its switches control. Only put devices in a local group whose buttons nobody
+> presses, or that should control the whole group: bulbs, plugs, 3-way auxiliary switches, or switches that already
+> share one load. For "one tap turns the whole suite", use an HA light group of the Cync ROOM lights instead (one packet
+> per room).
+
 **Confirmed 2026-11-05** on two type 53 switches in different rooms: after *Sync to switches* each reported the new group
 next to its room (`0x80fe, 0x800a` and `0x80fe, 0x8008`).
 
