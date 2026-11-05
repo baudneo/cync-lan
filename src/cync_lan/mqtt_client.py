@@ -693,6 +693,10 @@ class MQTTClient:
         await asyncio.sleep(delay)
         for node in list(g.ncync_server.node_devices.values()):
             await self.pub_online(node, node.online)
+            if not node.online:
+                # never reported since start: its entity still holds the defaults (power 0), which would show a lit
+                # light as OFF until its next report
+                continue
             for epoint_state in (node.entities or {}).values():
                 await self.parse_entity_state(node, epoint_state, from_pkt=from_pkt)
         for group in self._exposed_groups():

@@ -244,8 +244,10 @@ async def test_states_are_republished_after_discovery(client):
     c.parse_entity_state = AsyncMock(return_value=True)
     for node in nodes.values():
         node._online = True
+    nodes.get_device(HOME, 10)._online = False  # not reported yet: its state is only the defaults
     await c._republish_states(0, "t")
     assert sorted(call.args[0].id for call in c.pub_online.await_args_list) == [3, 4, 8, 9, 10]
-    assert all(call.args[1] is True for call in c.pub_online.await_args_list)
-    assert c.parse_entity_state.await_count == 5
+    assert [call.args[1] for call in c.pub_online.await_args_list].count(False) == 1
+    # a device that has not reported is NOT published as off
+    assert sorted(call.args[0].id for call in c.parse_entity_state.await_args_list) == [3, 4, 8, 9]
     assert any(call.args[0].endswith(f"/status/{HOME}-g{ROOM}") for call in c.publish.await_args_list)
