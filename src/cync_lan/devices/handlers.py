@@ -432,7 +432,9 @@ class PacketHandlersMixin:
                     msg = self.messages.control.pop(ctrl_msg_id, None)
 
                     if success and msg:
-                        if callable(msg.callback):
+                        if msg.callback is None:
+                            pass  # e.g. a group join / leave: nothing to update, the device reports its groups next
+                        elif callable(msg.callback):
                             await msg.callback()
                         else:
                             await msg.callback

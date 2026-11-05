@@ -136,3 +136,20 @@ async def test_group_report_is_stored_on_the_device():
     s.queue_id = b"\x00\x00\x00\x01"
     await s._handle_73_mesh_control(h(REPORT_1B_1A), b"", b"\x00\x98\x00", "t:")
     assert dev.group_slots == [0x801B, 0x801A]
+
+
+async def test_reply_to_a_command_without_callback_is_acked():
+    """set_group_membership has no callback: its F9 8E reply raised "'NoneType' object can't be awaited" (seen on
+    hardware 2026-11-05), so the packet was dropped before it was acked."""
+    from cync_lan.devices.registry import DeviceRegistry
+    from cync_lan.devices.session import CyncTCPSession
+
+    reg = DeviceRegistry()
+    reg.add(CyncDevice(15, dev_type=53, name="x", home_id=1, home_name="H", entities={}))
+    s = CyncTCPSession(None, None, "10.0.0.2", registry=reg)
+    s.write = AsyncMock(return_value=True)
+    s.queue_id = b"\x00\x00\x00\x01"
+    s.messages.control[0x15] = ControlMessageCallback(msg_id=0x15, message=None, sent_at=0.0, callback=None)
+    await s._handle_73_mesh_control(h("7e 15 00 00 00 f9 8e 01 00 00 8f 7e"), b"", b"\x00\x97\x00", "t:")
+    assert 0x15 not in s.messages.control
+    s.write.assert_awaited_once()  # the 0x78 ack went out
