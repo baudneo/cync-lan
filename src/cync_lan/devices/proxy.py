@@ -50,7 +50,7 @@ class ProxyMixin:
             )
             self.tasks.proxy_task = asyncio.create_task(
                 self._cloud_proxy_task(),
-                name=f"proxy_task-{self.ip_address}_ID:{self.node.id}",
+                name=f"proxy_task-{self.ip_address}_ID:{getattr(self.node, 'id', 'app')}",
             )
             self.tasks.proxy_conn_watcher = asyncio.create_task(
                 self.connection_watcher_task(ConnectionType.proxy),
@@ -59,6 +59,35 @@ class ProxyMixin:
         except (OSError, TimeoutError) as e:
             logger.error(f"{lp} Failed to start MITM: {e!r}")
             await self.stop_proxy()
+
+    async def write_to_cloud(self, data: bytes) -> None:
+        """Forward bytes from the device / app to the Cync cloud, logging them to the MITM log when enabled."""
+        should_log = not self.is_app or g.env.app_mitm_logging
+        if should_log and self.mitm_logger:
+            self.mitm_logger.debug(format_socat_style(data, "to_cloud", self.ip_address, self.mitm_bytes_to_cloud))
+        self.cloud_writer.write(data)
+        await self.cloud_writer.drain()
+        self.mitm_bytes_to_cloud += len(data)
+
+    async def start_app_proxy(self, first_chunk: bytes) -> bool:
+        """
+        Relay this Cync app connection to the real Cync cloud (CYNC_APP_PROXY), starting with the bytes already read.
+        A DNS-redirected phone otherwise lands on cync-lan and has its connection closed, so the app shows every device
+        as unavailable. False (and the session is left as it was) when the cloud cannot be reached.
+        """
+        lp = f"{self.lp}app proxy:"
+        self.is_app = True
+        self._setup_mitm_logger()
+        await self.start_proxy()
+        if self.cloud_writer is None:
+            logger.warning(f"{lp} could not reach the Cync cloud, closing the app connection instead")
+            self.is_app = False
+            self.mitm_logger = None
+            return False
+        self.mitm_mode = True
+        logger.info(f"{lp} Cync app connected, relaying it to the Cync cloud ({CYNC_CLOUD_IP})")
+        await self.write_to_cloud(first_chunk)
+        return True
 
     async def start_mitm(self):
         """Connect to Cync Cloud and start proxying."""
@@ -184,7 +213,11 @@ class ProxyMixin:
             while self.cloud_reader:
                 data = await self.cloud_reader.read(STREAM_CHUNK_SIZE)
                 if not data:
-                    pass
+                    # EOF: the cloud closed the connection. read() keeps returning b"" from here on, so looping would
+                    # spin the CPU; close the session and let the device / app reconnect (and re-proxy)
+                    logger.info(f"{lp} the Cync cloud closed the connection, closing this session to reconnect")
+                    asyncio.create_task(self.close(False))
+                    break
                 else:
                     self.proxy_last_packet_ts = time.time()
                     self.mitm_logger.debug(

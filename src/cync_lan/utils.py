@@ -291,7 +291,7 @@ def build_nodes(raw_config) -> "DeviceRegistry":
         if not home_nodes:
             logger.warning(f"{lp} No enabled devices in home '{cync_home_name}' (ID: {home_id}), skipping...")
             continue
-        nodes.add_home(home_id, cync_home_name, bridges)
+        nodes.add_home(home_id, cync_home_name, bridges, _home_cloud_uplink(home_cfg, cync_home_name, lp))
         for node in home_nodes:
             nodes.add(node)
         for group in _home_groups(home_cfg, home_id, cync_home_name, lp):
@@ -314,6 +314,25 @@ def build_nodes(raw_config) -> "DeviceRegistry":
     if skipped:
         logger.warning(f"{lp} {skipped} home(s)/device(s) in the config file were skipped, see errors above")
     return nodes
+
+
+def _home_cloud_uplink(home_cfg: dict, cync_home_name: str, lp: str) -> List[int]:
+    """The home's optional 'cloud_uplink:' device id list; bad entries are logged and dropped."""
+    from cync_lan.devices.registry import CLOUD_UPLINK_KEY
+
+    raw = home_cfg.get(CLOUD_UPLINK_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raw = [raw]
+    out = []
+    for entry in raw:
+        dev_id = _strict_int(entry)
+        if dev_id is None:
+            logger.error(f"{lp} Home '{cync_home_name}': '{CLOUD_UPLINK_KEY}:' entry {entry!r} is not a device id, ignoring it")
+            continue
+        out.append(dev_id)
+    return out
 
 
 def _strict_int(value) -> Optional[int]:
@@ -451,6 +470,7 @@ def _build_node(cync_id, cync_device, home_id, lp: str, home_name: Optional[str]
         entities=endpoints,
         home_name=home_name,
         switch_id=_as_switch_id(cync_device.get("switch_id"), device_name, dev_id, lp),
+        multi_way=_as_bool_enabled(cync_device.get("multi_way", False)),
     )
 
 

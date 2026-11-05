@@ -6,6 +6,7 @@ import time
 from typing import Dict, List, Optional
 
 from cync_lan.const import (
+    CYNC_APP_PROXY,
     CYNC_LOG_NAME,
     CYNC_RAW,
     STREAM_CHUNK_SIZE,
@@ -30,7 +31,7 @@ from cync_lan.structs import (
     MessageCache,
     Tasks,
 )
-from cync_lan.utils import bytes2list, format_socat_style, hello_23_hex_redacted
+from cync_lan.utils import bytes2list, hello_23_hex_redacted
 
 __all__ = ["CyncTCPSession"]
 logger = logging.getLogger(CYNC_LOG_NAME)
@@ -267,23 +268,23 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         if not data:
             logger.debug(f"{lp} No data to parse?")
             return
+        if (
+            CYNC_APP_PROXY and not self.is_app and not self.mitm_mode and self.node is None
+            and self.framer.pending == 0 and PacketBuilder.is_app_request(data[0])
+        ):
+            # first bytes of a connection, from the Cync app (0x13 auth): relay the whole stream to the cloud untouched
+            if await self.start_app_proxy(data):
+                return
         if self.mitm_mode:
-            # Log for devices or log for apps only if global toggle is ON
             if self.cloud_writer:
-                should_log = not self.is_app or g.env.app_mitm_logging
-                if should_log and self.mitm_logger:
-                    self.mitm_logger.debug(
-                        format_socat_style(
-                            data, "to_cloud", self.ip_address, self.mitm_bytes_to_cloud
-                        )
-                    )
-                self.cloud_writer.write(data)
-                await self.cloud_writer.drain()
-                self.mitm_bytes_to_cloud += len(data)
+                await self.write_to_cloud(data)
             else:
                 logger.warning(
                     f"{lp} MITM mode enabled but the cloud writer is: {self.cloud_writer}"
                 )
+            if self.is_app:
+                # a proxied app stream is relayed only: its packets are the app's, not a device's to answer
+                return
         raw_input = data
         before = self.framer.dropped_bytes
         resyncs_before = self.framer.resyncs
@@ -651,6 +652,9 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                 logger.debug(f"{lp} Python object mismatch between the global device and this one, replacing...")
                 g.ncync_server.tcp_connections[self.ip_address] = self
             # no need
+        if self.is_app and self.cloud_writer is not None:
+            # a relayed app connection owns its cloud connection: nothing reconnects through this session
+            await self.stop_proxy()
         if not self.is_app:
             # the pool just shrank: bulbs the other bridges already reported stale may now meet the vote
             await g.ncync_server.revote_offline()

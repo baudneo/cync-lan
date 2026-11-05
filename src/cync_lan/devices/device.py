@@ -83,6 +83,7 @@ class CyncDevice:
         entities: Optional[Dict[int, "EntityState"]] = None,
         home_name: Optional[str] = None,
         switch_id: Optional[int] = None,
+        multi_way: bool = False,
     ):
         self.control_bytes = bytes([0x00, 0x00])
         self.stale_voters: Set[str] = set()
@@ -99,6 +100,9 @@ class CyncDevice:
         self.home_name: Optional[str] = home_name
         # cloud 'switchID' from the export, if any: what this device sends as its 0x23 queue id (docs/protocol.md section 7)
         self.switch_id: Optional[int] = switch_id
+        # the Cync app's multi-way (3-way / 4-way) "auxiliary" setting from the export: this switch's own load stays on and
+        # it only relays presses to the switch that drives the light, so it is a good always-on cloud uplink bridge
+        self.multi_way: bool = bool(multi_way)
         self._mac = mac
         self.wifi_mac = wifi_mac
         self._version: Optional[str] = None

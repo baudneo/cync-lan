@@ -6,6 +6,7 @@ import struct
 from typing import List, NamedTuple, Optional
 
 from cync_lan.const import (
+    CYNC_CLOUD_UPLINK,
     CYNC_LOG_NAME,
     CYNC_MESH_REFRESH_SECS,
     CYNC_RAW,
@@ -31,6 +32,8 @@ from cync_lan.utils import (
 __all__ = ["MeshRecord", "PacketHandlersMixin", "parse_mesh_records"]
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
+# home_id -> the session currently acting as that home's cloud uplink (CYNC_CLOUD_UPLINK): at most one per home
+_UPLINK_BY_HOME: dict = {}
 
 MESH_RECORD_LEN = 24
 # mesh records held back while a session's home is unknown; keyed by the 1-byte dev_id, so 255 is the real ceiling
@@ -649,8 +652,36 @@ class PacketHandlersMixin:
             self._restore_mitm_state(self.node), name=f"mitm_probe-{self.ip_address}"
         )
 
+    def _claim_cloud_uplink(self, node: CyncDevice) -> bool:
+        """
+        With CYNC_CLOUD_UPLINK on: True (and the home is claimed) when this device should be its home's cloud uplink,
+        i.e. it is an uplink candidate (the home's ``cloud_uplink:`` ids, else its multi-way switches) and no other live
+        session of the home holds the uplink. No await in here, so two candidates connecting together cannot both win.
+        """
+        if not CYNC_CLOUD_UPLINK or node.home_id is None:
+            return False
+        if node not in self.registry.uplink_candidates(node.home_id):
+            return False
+        holder = _UPLINK_BY_HOME.get(node.home_id)
+        if holder is not None and holder is not self and not holder.is_closed():
+            return False
+        _UPLINK_BY_HOME[node.home_id] = self
+        return True
+
     async def _restore_mitm_state(self, node: CyncDevice) -> None:
-        """Start MITM mode if the device's retained HA switch state is ON (it was on when cync-lan last ran)."""
+        """Start MITM mode if the device's retained HA switch state is ON (it was on when cync-lan last ran), or if it
+        is its home's cloud uplink bridge (CYNC_CLOUD_UPLINK)."""
+        if self._claim_cloud_uplink(node):
+            if self.node is not node:
+                return
+            logger.info(
+                f"{self.lp} '{node.name}' is the cloud uplink bridge of home "
+                f"{self.registry.describe_home(node.home_id)}: relaying it to the Cync cloud so the app sees live status"
+            )
+            # show it in HA, and keep it across restarts like a switch the user turned on
+            await g.mqtt_client.publish(f"{g.mqtt_client.topic}/status/{node.hass_id}/mitm", b"ON", retain=True)
+            await self.start_mitm()
+            return
         payload = await g.mqtt_client.get_startup_topic_state(f"{g.mqtt_client.topic}/status/{node.hass_id}/mitm")
         if payload is None or payload.upper() != "ON" or self.node is not node:
             return

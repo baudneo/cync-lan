@@ -40,7 +40,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BRIDGES_KEY",
+    "CLOUD_UPLINK_KEY",
     "GROUPS_KEY",
+    "MULTI_WAY_KEY",
     "SWITCH_ID_KEY",
     "DeviceKey",
     "DeviceRegistry",
@@ -62,6 +64,10 @@ __all__ = [
 
 BRIDGES_KEY = "bridges"
 """Optional per-home config key: list of bridge IP strings (manual home override)."""
+CLOUD_UPLINK_KEY = "cloud_uplink"
+"""Optional per-home config key: device ids allowed to be the home's cloud uplink bridge (CYNC_CLOUD_UPLINK)."""
+MULTI_WAY_KEY = "multi_way"
+"""Per-device config key written by the export: the Cync app's multi-way (3-way auxiliary) setting is on."""
 GROUPS_KEY = "groups"
 """Optional per-home config key: Cync rooms, ``{group_id: {name, members: [dev_id, ...], subgroup}}`` (cloud export)."""
 SWITCH_ID_KEY = "switch_id"
@@ -97,6 +103,8 @@ class HomeInfo:
     home_id: int
     name: str
     bridges: FrozenSet[str] = field(default_factory=frozenset)
+    # device ids the user picked as cloud uplink candidates ('cloud_uplink:'); empty = use the multi-way devices
+    cloud_uplink: FrozenSet[int] = field(default_factory=frozenset)
 
 
 class DeviceRegistry(dict):
@@ -114,10 +122,14 @@ class DeviceRegistry(dict):
         self._groups: Dict[Tuple[int, int], "CyncGroup"] = {}
 
     # ---- building
-    def add_home(self, home_id: int, name: str, bridges: Iterable[str] = ()) -> HomeInfo:
+    def add_home(
+            self, home_id: int, name: str, bridges: Iterable[str] = (), cloud_uplink: Iterable[int] = ()
+    ) -> HomeInfo:
         """Register (or replace) a home's metadata. ``bridges`` entries that are not IPs are dropped."""
         ips = frozenset(ip for ip in (normalize_ip(b) for b in bridges) if ip is not None)
-        info = HomeInfo(home_id=int(home_id), name=str(name), bridges=ips)
+        info = HomeInfo(
+            home_id=int(home_id), name=str(name), bridges=ips, cloud_uplink=frozenset(int(i) for i in cloud_uplink)
+        )
         self._homes[info.home_id] = info
         return info
 
@@ -147,6 +159,14 @@ class DeviceRegistry(dict):
         return [gr for gr in self._groups.values() if device in gr.members]
 
     # ---- devices
+    def uplink_candidates(self, home_id: int) -> List["CyncDevice"]:
+        """Devices that may be the home's cloud uplink bridge: the home's ``cloud_uplink:`` ids if set, else its
+        multi-way (3-way auxiliary) switches."""
+        info = self._homes.get(home_id)
+        if info is not None and info.cloud_uplink:
+            return [d for d in self.in_home(home_id) if d.id in info.cloud_uplink]
+        return [d for d in self.in_home(home_id) if getattr(d, "multi_way", False)]
+
     def get_device(self, home_id: Optional[int], dev_id: int) -> Optional["CyncDevice"]:
         return self.get((home_id, dev_id))
 
@@ -497,25 +517,29 @@ def as_home_id(value) -> Optional[int]:
     return as_positive_int(value)
 
 
-def carry_over_bridges(new_cfg: dict, old_cfg) -> int:
+def carry_over_bridges(new_cfg: dict, old_cfg, keys=(BRIDGES_KEY, CLOUD_UPLINK_KEY)) -> int:
     """
-    Copy each old home's ``bridges:`` list into the new export (matched by home id, so a renamed
-    home keeps it). A value already present in the new config wins. Returns how many homes got one.
+    Copy each old home's hand-written ``bridges:`` and ``cloud_uplink:`` lists into the new export (matched by home id,
+    so a renamed home keeps them). A value already present in the new config wins. Returns how many homes got one.
     Pure: mutates ``new_cfg`` in place, tolerates any junk in ``old_cfg``.
     """
-    old_bridges: Dict[int, list] = {}
+    old_vals: Dict[int, dict] = {}
     for home_cfg in _config_homes(old_cfg).values():
-        if not isinstance(home_cfg, dict) or BRIDGES_KEY not in home_cfg:
+        if not isinstance(home_cfg, dict):
             continue
         home_id = as_home_id(home_cfg.get("id"))
-        if home_id is not None:
-            old_bridges[home_id] = home_cfg[BRIDGES_KEY]
+        kept = {k: home_cfg[k] for k in keys if k in home_cfg}
+        if home_id is not None and kept:
+            old_vals[home_id] = kept
     copied = 0
     for home_cfg in _config_homes(new_cfg).values():
-        if not isinstance(home_cfg, dict) or BRIDGES_KEY in home_cfg:
+        if not isinstance(home_cfg, dict):
             continue
         home_id = as_home_id(home_cfg.get("id"))
-        if home_id in old_bridges:
-            home_cfg[BRIDGES_KEY] = old_bridges[home_id]
-            copied += 1
+        added = False
+        for key, value in old_vals.get(home_id, {}).items():
+            if key not in home_cfg:
+                home_cfg[key] = value
+                added = True
+        copied += added
     return copied

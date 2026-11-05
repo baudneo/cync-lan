@@ -29,6 +29,7 @@ from cync_lan.const import (
 )
 from cync_lan.devices.registry import (
     GROUPS_KEY,
+    MULTI_WAY_KEY,
     SWITCH_ID_KEY,
     as_positive_int,
     carry_over_bridges,
@@ -38,6 +39,29 @@ from cync_lan.utils import write_private_file
 
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
+
+
+def cloud_multi_way(raw_device: dict) -> bool:
+    """
+    True when the cloud device record has the Cync app's multi-way (3-way / 4-way auxiliary) setting on.
+
+    The app keeps it as a cloud-only device property (``MultiWayMode``, never sent to the device), but its JSON key name
+    is not confirmed yet, so any key whose name contains "multiway" (case and separators ignored) counts. The export logs
+    every key name it saw so the real one can be confirmed.
+    """
+    for key, value in raw_device.items():
+        if "multiway" not in "".join(ch for ch in str(key).casefold() if ch.isalnum()):
+            continue
+        if isinstance(value, bool):
+            if value:
+                return True
+        elif isinstance(value, (int, float)):
+            if value:
+                return True
+        elif isinstance(value, str):
+            if value.strip().casefold() in ("1", "true", "yes", "on", "enabled"):
+                return True
+    return False
 
 
 def _cloud_group_member(raw) -> Optional[int]:
@@ -467,7 +491,7 @@ class CyncCloudAPI:
             return True
 
     def _keep_user_overrides(self, new_cfg: dict, old_cfg_path: Path) -> None:
-        """Carry each existing home's hand-written 'bridges:' list into a new export (matched by home id)."""
+        """Carry each existing home's hand-written 'bridges:' and 'cloud_uplink:' lists into a new export (by home id)."""
         lp = f"{self.lp}:export:"
         if not old_cfg_path.is_file():
             return
@@ -481,7 +505,7 @@ class CyncCloudAPI:
             return
         copied = carry_over_bridges(new_cfg, old_cfg)
         if copied:
-            logger.info(f"{lp} Kept the 'bridges:' list of {copied} home(s) from the existing config")
+            logger.info(f"{lp} Kept the 'bridges:' / 'cloud_uplink:' lists of {copied} home(s) from the existing config")
 
     def _parse_raw_device(
         self, raw_device: dict, raw_home: dict, new_home: dict, entity_reg: dict
@@ -574,6 +598,11 @@ class CyncCloudAPI:
         if switch_id is not None:
             # the device sends this as its 0x23 queue id (confirmed on type 53, see docs/protocol.md section 7)
             new_device[SWITCH_ID_KEY] = switch_id
+        if cloud_multi_way(raw_device):
+            new_device[MULTI_WAY_KEY] = True
+            logger.info(
+                f"{lp} '{dev_name}' (ID: {dev_id}) in home '{raw_home['name']}' is a multi-way (3-way auxiliary) switch"
+            )
         # give it the default 0, if it has children, we will overwrite the 0
         new_device["endpoints"] = {0: dev_name}
         # del cync_device
@@ -626,6 +655,9 @@ class CyncCloudAPI:
             new_cfg[raw_home["name"]] = new_home
             new_home["devices"] = {}
             entity_reg = {}
+            # key NAMES only (values hold MACs and ids): lets a user report which field carries e.g. the multi-way mode
+            field_names = sorted({str(k) for d in raw_home["properties"]["bulbsArray"] if isinstance(d, dict) for k in d})
+            logger.info(f"{lp} Cloud device fields in home '{raw_home['name']}': {', '.join(field_names)}")
             for raw_device in raw_home["properties"]["bulbsArray"]:
                 try:
                     self._parse_raw_device(raw_device, raw_home, new_home, entity_reg)

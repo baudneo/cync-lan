@@ -9,6 +9,8 @@ import tzlocal
 from cync_lan import __version__
 
 __all__ = [
+    "CYNC_APP_PROXY",
+    "CYNC_CLOUD_UPLINK",
     "CYNC_EXPORT_HOST",
     "CYNC_OVERWRITE_CONFIG_FILE",
     "CYNC_EXPORT_HOST",
@@ -240,6 +242,10 @@ CYNC_APP_MITM_LOGGING = (
     os.environ.get("CYNC_APP_MITM_LOGGING", "0").casefold() in YES_ANSWER
 )
 CYNC_CLOUD_IP = os.environ.get("CYNC_CLOUD_IP", "34.73.130.191")
+# one bridge per home relays to the real Cync cloud (MITM) so the app sees live status; see docs/cloud_uplink.md
+CYNC_CLOUD_UPLINK = os.environ.get("CYNC_CLOUD_UPLINK", "0").casefold() in YES_ANSWER
+# forward Cync app connections (DNS-redirected phones) to the real cloud instead of closing them
+CYNC_APP_PROXY = os.environ.get("CYNC_APP_PROXY", "0").casefold() in YES_ANSWER
 
 FACTORY_EFFECTS_BYTES: Dict[str, Tuple[int, int]] = {
     "candle": (int(0x01), int(0xF1)),

@@ -182,7 +182,9 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_MQTT_PASS`             | Password for MQTT broker                                                                                       |                                       | str  |
 | `CYNC_MQTT_CONN_DELAY`       | Delay between MQTT re-connections (seconds)                                                                    | `10`                                  | int  |
 | `CYNC_MQTT_DEBUG`            | Override MQTT debug logs (set to no for less debug level log spam)                                             | `yes`                                 | str  |
-| `CYNC_APP_MITM_LOGGING`      | Cync mobile apps are always proxied, this controls if the proxied data is logged or not                        | `no`                                  | str  |
+| `CYNC_APP_MITM_LOGGING`      | Whether a proxied Cync app connection (`CYNC_APP_PROXY`) is logged to the MITM log                             | `no`                                  | str  |
+| `CYNC_APP_PROXY`             | Relay Cync app connections (phones the DNS redirect sends here) to the real Cync cloud instead of closing them. See [cloud uplink](docs/cloud_uplink.md) | `no`                                  | str  |
+| `CYNC_CLOUD_UPLINK`          | One bridge per home (its `cloud_uplink:` devices, else its multi-way switches) is relayed to the Cync cloud so the app sees live status. See [cloud uplink](docs/cloud_uplink.md) | `no`                                  | str  |
 | `CYNC_DEBUG`                 | Enable debug logging                                                                                           | `no`                                  | str  |
 | `CYNC_RAW_DEBUG`             | Enable raw binary message debug logging (non-MITM, so strictly between dev and CyncLAN). The dumps include each device's auth code: do not share them unedited | `no`                                  | str  |
 | `CYNC_MITM_DEV_LOGGER`       | Enable MITM console logging for Cync Devices (enabling this will also output to the console)                   | `no`                                  | str  |
