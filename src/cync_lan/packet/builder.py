@@ -184,9 +184,11 @@ class PacketBuilder:
             sub_id: int,
             op_code: int,
             cmd_code: int,
-            command_payload: bytes
+            command_payload: bytes,
+            inner_op: int = None,
     ) -> bytes:
-        """Builds the inner 0x7E bound packet structure."""
+        """Builds the inner 0x7E bound packet structure. ``inner_op``: the byte after the destination when it is not
+        ``op_code`` again (the 0x8E family, e.g. group membership: op 8E, inner op D7; see docs/protocol.md)."""
         PacketBuilder._require_u8("msg_id", msg_id)
         PacketBuilder._require_u8("target_id", target_id)
         PacketBuilder._require_u8("sub_id", sub_id)
@@ -202,7 +204,9 @@ class PacketBuilder:
         # Routing: msg_id (1 byte), 4 null padding bytes, target_id, sub_id
         # Format >BxxxxBB = 1 + 4 + 1 + 1 = 7 bytes total
         routing = struct.pack(">B xxxx B B", msg_id, target_id, sub_id)
-        inner_data = header + routing + struct.pack(">B", op_code) + command_payload
+        if inner_op is not None:
+            PacketBuilder._require_u8("inner_op", inner_op)
+        inner_data = header + routing + struct.pack(">B", op_code if inner_op is None else inner_op) + command_payload
         checksum = sum(inner_data[5:]) % 256
         return (struct.pack(">B",PacketBuilder.DATA_BOUNDARY) + inner_data +
                 struct.pack(">BB", checksum, PacketBuilder.DATA_BOUNDARY))

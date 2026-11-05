@@ -161,6 +161,25 @@ sends; field meanings inferred]
 A command is sent to up to `CYNC_CMD_BROADCASTS` randomly chosen connected devices (any bridge can relay to the BTLE
 mesh). All [inferred]. Fan commands go through brightness/percentage mappings (see `set_fan_*`).
 
+### Group membership (op `8E`, inner op `D7`) [confirmed 2026-11-04 from the app's own packets]
+Captured with the app relayed to the cloud through cync-lan (app proxy + a hybrid bridge), creating / deleting a group
+and a room for one switch. Sent to the device's own address:
+```
+7E <ctrl> 00 00 00 F8 8E <len> 00 <ctrl> 00 00 00 00 <dev lo> <dev hi> D7 11 02 <01 join | 00 leave> <grp lo> <grp hi> [flag] <ck> 7E
+```
+- `<len>` = 8 + the number of bytes after `D7` (also true of `D0` power: 13, `F0` brightness: 16). Same checksum rule.
+- The byte after the destination is `D7`, not the outer op again (`PacketBuilder.build_control_packet(inner_op=0xD7)`).
+- `flag` (joins only): `00` for a plain group or room; `87` when the device re-joins its ROOM because it now also has a
+  group inside that room. Removing the group, the room is joined again with `00`.
+- To move a switch between rooms the app sends leave (old room) + join (new room).
+- The device answers `F9 8E 01` (ok) and then reports its group list:
+  `7E <ctrl> 00 00 00 FA 8E 20 00 <3 bytes> <dev> 00 00 00 D4 11 02 <8 slots> ...` where a slot is the LOW byte of a group
+  id (`FF` = empty): a device is in at most 8 groups, all `0x80xx`.
+- The app allocates new ids upwards from the highest one in the account (a new group got `0x801A` after `0x8019`).
+- A room or group with one member is switched by the app with a command to that device, not to the group address.
+- Other `8E` sub-commands seen: `EA 11 02 10 09` (device info query, reply `EA 11 02 <dev> 89 ...`), `F7 11 02 03 01|02`
+  (while editing, reply `EA ... 81 50 ...`); `F8 AF 02 00 AF 01` to the bridge every 60 s from the app. Meanings unknown.
+
 ### Run modes (light shows, music shows) [confirmed on type 75, fw 1.0.516; other types untested]
 Measured one command at a time (2026-10-25): each command sent, the device's status read back (0x43 record byte 6), and the
 Cync app's highlighted tile and the light itself checked by eye. Code: `cync_lan/effects.py`.
@@ -239,6 +258,7 @@ too (its own TCP connection, port 23779, same DNS name as the devices).
 10. Whether the 0x73 checksum rule excludes the `F8` byte by design or by accident.
 
 ## 9. Changelog
+- 2026-11-04 (groups): group membership command (8E / D7), the group-list report and the room flag, from app captures.
 - 2026-11-04 (0x83 mesh info): `F9 52` on 0x83 confirmed byte-stuffed and parsed (section 4, 0x83).
 - 2026-11-04 (group commands): section 5, the control destination is 16-bit (`target` low, `sub` high) and a Cync room
   is addressed with its cloud `groupID` (inferred from cync_lights and the app; hardware test pending).

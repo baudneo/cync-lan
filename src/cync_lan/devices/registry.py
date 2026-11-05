@@ -42,6 +42,7 @@ __all__ = [
     "BRIDGES_KEY",
     "CLOUD_UPLINK_KEY",
     "GROUPS_KEY",
+    "LOCAL_GROUPS_KEY",
     "MULTI_WAY_KEY",
     "SWITCH_ID_KEY",
     "DeviceKey",
@@ -68,6 +69,9 @@ CLOUD_UPLINK_KEY = "cloud_uplink"
 """Optional per-home config key: device ids allowed to be the home's cloud uplink bridge (CYNC_CLOUD_UPLINK)."""
 MULTI_WAY_KEY = "multi_way"
 """Per-device config key written by the export: the Cync app's multi-way (3-way auxiliary) setting is on."""
+LOCAL_GROUPS_KEY = "local_groups"
+"""Optional per-home config key: groups cync-lan itself puts on the switches (not in the Cync account),
+``{group_id: {name, members: [dev_id, ...]}}`` with ids 0x8001-0x80FE. Kept on re-export."""
 GROUPS_KEY = "groups"
 """Optional per-home config key: Cync rooms, ``{group_id: {name, members: [dev_id, ...], subgroup}}`` (cloud export)."""
 SWITCH_ID_KEY = "switch_id"
@@ -153,6 +157,18 @@ class DeviceRegistry(dict):
 
     def groups(self) -> List["CyncGroup"]:
         return sorted(self._groups.values(), key=lambda gr: gr.key)
+
+    def room_of(self, device: "CyncDevice") -> Optional["CyncGroup"]:
+        """The device's Cync room: an exported group that is neither a sub-room nor a cync-lan local group."""
+        for gr in self.groups_with(device):
+            if not gr.is_subgroup and not gr.is_local:
+                return gr
+        return None
+
+    def next_local_group_id(self, home_id: int) -> Optional[int]:
+        """The highest free group id of the home, counting down from 0x80FE (the Cync app allocates upwards)."""
+        used = {gid for (h, gid) in self._groups if h == home_id}
+        return next((gid for gid in range(0x80FE, 0x8000, -1) if gid not in used), None)
 
     def groups_with(self, device: "CyncDevice") -> List["CyncGroup"]:
         """The groups this device is a member of."""
@@ -517,7 +533,7 @@ def as_home_id(value) -> Optional[int]:
     return as_positive_int(value)
 
 
-def carry_over_bridges(new_cfg: dict, old_cfg, keys=(BRIDGES_KEY, CLOUD_UPLINK_KEY)) -> int:
+def carry_over_bridges(new_cfg: dict, old_cfg, keys=(BRIDGES_KEY, CLOUD_UPLINK_KEY, LOCAL_GROUPS_KEY)) -> int:
     """
     Copy each old home's hand-written ``bridges:`` and ``cloud_uplink:`` lists into the new export (matched by home id,
     so a renamed home keeps them). A value already present in the new config wins. Returns how many homes got one.

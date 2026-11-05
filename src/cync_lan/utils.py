@@ -294,7 +294,15 @@ def build_nodes(raw_config) -> "DeviceRegistry":
         nodes.add_home(home_id, cync_home_name, bridges, _home_cloud_uplink(home_cfg, cync_home_name, lp))
         for node in home_nodes:
             nodes.add(node)
-        for group in _home_groups(home_cfg, home_id, cync_home_name, lp):
+        for group in _home_groups(home_cfg, home_id, cync_home_name, lp) + _home_local_groups(
+            home_cfg, home_id, cync_home_name, lp
+        ):
+            if nodes.get_group(home_id, group.id) is not None:
+                logger.error(
+                    f"{lp} Home '{cync_home_name}': local group '{group.name}' uses id {group.id}, which the Cync account "
+                    f"already uses, ignoring it (pick another id)"
+                )
+                continue
             nodes.add_group(group)
             if not group.members:
                 logger.warning(
@@ -383,6 +391,35 @@ def _home_groups(home_cfg: dict, home_id: int, cync_home_name: str, lp: str) -> 
                 is_subgroup=_as_bool_enabled(raw_group.get("subgroup", False)),
             )
         )
+    return out
+
+
+def _home_local_groups(home_cfg: dict, home_id: int, cync_home_name: str, lp: str) -> list:
+    """The home's optional 'local_groups:' (groups cync-lan puts on the switches); bad entries are logged and dropped."""
+    from cync_lan.devices.group import LOCAL_GROUP_MAX, LOCAL_GROUP_MIN, CyncGroup
+    from cync_lan.devices.registry import LOCAL_GROUPS_KEY
+
+    raw = home_cfg.get(LOCAL_GROUPS_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, dict):
+        logger.error(f"{lp} Home '{cync_home_name}': '{LOCAL_GROUPS_KEY}:' must be a mapping of group id -> group, ignoring it")
+        return []
+    out = []
+    for raw_id, raw_group in raw.items():
+        group_id = _strict_int(raw_id)
+        if group_id is None or not LOCAL_GROUP_MIN <= group_id <= LOCAL_GROUP_MAX:
+            logger.error(
+                f"{lp} Home '{cync_home_name}': local group id {raw_id!r} must be {LOCAL_GROUP_MIN}-{LOCAL_GROUP_MAX} "
+                f"(0x8001-0x80FE: a switch stores only the low byte of a 0x80xx id), ignoring it"
+            )
+            continue
+        if not isinstance(raw_group, dict) or not isinstance(raw_group.get("members"), list):
+            logger.error(f"{lp} Home '{cync_home_name}': local group {group_id} needs 'name' and a 'members' list, ignoring it")
+            continue
+        members = [m for m in (_strict_int(x) for x in raw_group["members"]) if m is not None]
+        out.append(CyncGroup(home_id=home_id, group_id=group_id, name=str(raw_group.get("name") or f"Group {group_id}"),
+                             member_ids=members, home_name=cync_home_name, is_local=True))
     return out
 
 

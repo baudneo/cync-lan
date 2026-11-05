@@ -1,4 +1,6 @@
 ### Unreleased (branch `multi-home`)
+- **Local groups (experimental)**: `local_groups:` in `cync_mesh.yaml` defines groups cync-lan puts on the switches itself (the group-membership command, confirmed from the Cync app's own packets), e.g. one group for a whole suite across rooms. Each gets an HA light that switches every member with one packet, and *Sync to switches* / *Remove from switches* buttons. See [docs/local_groups.md](docs/local_groups.md)
+- Each switch's group list (its own report after a join / leave) is logged
 - Fixed: with `CYNC_APP_MITM_LOGGING` on, every proxied Cync app connection crashed while setting up its log (`'NoneType' object has no attribute 'id'`), so the app never reached the cloud. Reconnects from the same IP also no longer stack MITM log handlers (repeated log lines)
 - The post-discovery republish skips the state of devices that have not reported yet (it published their defaults, so lit lights showed OFF for a moment after a restart)
 - **Fixed: devices that came online before Home Assistant discovery stayed unavailable.** Discovery recreates every entity and HA forgets its (non-retained) availability; cync-lan only re-sent it on a change. Availability and state are now published again right after every discovery (MQTT connect), as they already were after an HA restart

@@ -103,6 +103,8 @@ class CyncDevice:
         # the Cync app's multi-way (3-way / 4-way) "auxiliary" setting from the export: this switch's own load stays on and
         # it only relays presses to the switch that drives the light, so it is a good always-on cloud uplink bridge
         self.multi_way: bool = bool(multi_way)
+        # the groups the device last reported it is in (after a join / leave), None = not reported since start
+        self.group_slots: Optional[List[int]] = None
         self._mac = mac
         self.wifi_mac = wifi_mac
         self._version: Optional[str] = None
@@ -551,7 +553,7 @@ class CyncDevice:
 
     async def send_command(
             self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str,
-            target_id: Optional[int] = None,
+            target_id: Optional[int] = None, inner_op: Optional[int] = None,
     ):
         """Send one control packet to the mesh. ``target_id`` (default: this device's id) and ``sub_id`` are the low and
         high byte of the 16-bit mesh destination address; a Cync group sends its group address here (see devices/group.py)."""
@@ -591,7 +593,8 @@ class CyncDevice:
                     sub_id=sub_id,
                     op_code=op,
                     cmd_code=cmd_,
-                    command_payload=payload
+                    command_payload=payload,
+                    inner_op=inner_op,
                 )
 
                 full_packet = PacketBuilder.build_outer_packet(
@@ -613,6 +616,7 @@ class CyncDevice:
                     if getattr(bridge_device, "hybrid", False) and bridge_device.mitm_mode:
                         # its replies to this command must not reach the cloud (see CyncTCPSession.is_own_reply)
                         bridge_device.hybrid_sent_at = time.time()
+                        bridge_device.hybrid_last_ctrl = cmsg_id
                     tasks.append(bridge_device.write(full_packet))
                     str_appnd = "..."
                     if CYNC_RAW:
@@ -786,6 +790,24 @@ class CyncDevice:
             callback=cb,
         )
         await self.send_command(op, cmd_, _sub_id, payload, m_cb, lp)
+
+    async def set_group_membership(self, group_id: int, join: bool, flag: int = 0x00, callback=None):
+        """
+        Make this device join or leave a mesh group (a Cync room or group). Confirmed 2026-11-04 from the app's own
+        packets: op 8E, inner op D7, payload ``11 02 <01 join | 00 leave> <group lo> <group hi> [flag]`` (the flag only
+        on a join: 00, or 87 for a room the device also has a group inside of). The device answers with its group list
+        (see handlers, ``FA 8E ... D4``). Group ids are 0x80xx: the device stores only their low byte, 8 at most.
+        """
+        lp = f"{self.lp}set_group_membership:"
+        if not 0x8000 <= group_id <= 0x80FF:
+            logger.error(f"{lp} group id {group_id:#06x} is outside 0x8000-0x80FF, not sent")
+            return
+        payload = bytes([0x11, 0x02, 0x01 if join else 0x00, group_id & 0xFF, group_id >> 8])
+        if join:
+            payload += bytes([flag & 0xFF])
+        m_cb = ControlMessageCallback(msg_id=0x00, message=None, sent_at=0.0, callback=callback)
+        logger.info(f"{lp} {'join' if join else 'leave'} group {group_id:#06x}{f' (flag {flag:#04x})' if join else ''}")
+        await self.send_command(0x8E, 8 + len(payload), 0x00, payload, m_cb, lp, inner_op=0xD7)
 
     async def set_lightshow(self, show: str, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_lightshow:"

@@ -30,7 +30,7 @@ from cync_lan.utils import (
     hello_23_hex_redacted,
 )
 
-__all__ = ["MeshRecord", "PacketHandlersMixin", "parse_mesh_records", "unstuff_7d"]
+__all__ = ["MeshRecord", "PacketHandlersMixin", "parse_group_list", "parse_mesh_records", "unstuff_7d"]
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
 # home_id -> the session currently acting as that home's cloud uplink (CYNC_CLOUD_UPLINK): at most one per home
@@ -52,6 +52,17 @@ class MeshRecord(NamedTuple):
     red: int
     green: int
     blue: int
+
+
+def parse_group_list(packet_data: bytes):
+    """
+    (device id, [group ids]) from a device's group-list report, else None. Sent after a group join/leave (0x8E / D7):
+    ``7E <ctrl> 00 00 00 FA 8E 20 00 <3 bytes> <dev> 00 00 00 D4 11 02 <8 slots> ...``; a slot is a group id's low byte
+    (``FF`` = empty), the high byte is 0x80 [confirmed 2026-11-04, docs/protocol.md].
+    """
+    if len(packet_data) < 27 or packet_data[16:19] != b"\xd4\x11\x02":
+        return None
+    return packet_data[12], [0x8000 | b for b in packet_data[19:27] if b != 0xFF]
 
 
 def unstuff_7d(data: bytes) -> bytes:
@@ -414,7 +425,7 @@ class PacketHandlersMixin:
                 if ctrl_bytes == b"\xf9\x52":
                     await self._process_73_mesh_info(inner_struct, queue_id, lp)
 
-                elif ctrl_bytes[0] == 0xF9 and ctrl_bytes[1] in (0xD0, 0xF0, 0xE2):
+                elif ctrl_bytes[0] == 0xF9 and ctrl_bytes[1] in (0xD0, 0xF0, 0xE2, 0x8E):
                     # Handle Callbacks for control messages
                     ctrl_msg_id = packet_data[1]
                     success = packet_data[7] == 1
@@ -431,6 +442,14 @@ class PacketHandlersMixin:
                             f"{lp} CONTROL packet ACK callback NOT found for msg ID: {ctrl_msg_id}"
                         )
 
+                elif ctrl_bytes == b"\xfa\x8e" and parse_group_list(packet_data) is not None:
+                    dev_id, slots = parse_group_list(packet_data)
+                    device = await self._session_device(dev_id, lp)
+                    if device is not None:
+                        device.group_slots = slots
+                    logger.info(
+                        f"{lp} device {dev_id} groups: {', '.join(f'{g:#06x}' for g in slots) or 'none'}"
+                    )
                 elif ctrl_bytes == b"\xfa\x8e":
                     if packet_data[1] == 0x00:
                         try:

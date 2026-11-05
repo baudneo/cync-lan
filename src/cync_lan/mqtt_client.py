@@ -600,6 +600,10 @@ class MQTTClient:
         if extra_data:
             if device_uuid == "bridge":
                 result.handled = await self._handle_bridge_extra(extra_data, payload, lp)
+            elif isinstance(node, CyncGroup):
+                result.handled = node.is_local and await self._handle_local_group_extra(node, extra_data[0], lp)
+                if not result.handled:
+                    result.reason = "unknown_group_command"
             elif extra_data[0] == "mitm":
                 result.handled = await self._handle_mitm_extra(node, device_uuid, payload)
             else:
@@ -1076,8 +1080,8 @@ class MQTTClient:
                 "identifiers": [unique_id],
                 "manufacturer": CYNC_MANUFACTURER,
                 "name": group.name,
-                "model": "Cync room" if not group.is_subgroup else "Cync sub-room",
-                "suggested_area": group.name if not group.is_subgroup else None,
+                "model": "cync-lan group" if group.is_local else ("Cync room" if not group.is_subgroup else "Cync sub-room"),
+                "suggested_area": group.name if not (group.is_subgroup or group.is_local) else None,
                 "via_device": str(g.uuid),
             },
         }
@@ -1095,6 +1099,37 @@ class MQTTClient:
         if conf["device"]["suggested_area"] is None:
             del conf["device"]["suggested_area"]
         return f"{self.ha_topic}/light/{unique_id}/config", conf
+
+    def local_group_button_configs(self, group: CyncGroup) -> list:
+        """(config topic, payload) of a local group's 'Sync to switches' and 'Remove from switches' buttons."""
+        unique_id = f"{group.home_id}_group_{group.id}"
+        out = []
+        for action, label, icon in (("sync", "Sync to switches", "mdi:sync"), ("remove", "Remove from switches", "mdi:link-off")):
+            uid = f"{unique_id}_{action}"
+            out.append((f"{self.ha_topic}/button/{uid}/config", {
+                "name": label,
+                "unique_id": uid,
+                "default_entity_id": f"button.cync_lan_{uid}",
+                "command_topic": f"{self.topic}/set/{group.hass_id}/{action}",
+                "payload_press": "press",
+                "icon": icon,
+                "entity_category": "config",
+                "avty": [self._availability(group.hass_id)[1]],
+                "origin": ORIGIN_STRUCT,
+                "device": {"identifiers": [unique_id]},
+            }))
+        return out
+
+    async def _handle_local_group_extra(self, group: CyncGroup, action: str, lp: str) -> bool:
+        registry = g.ncync_server.node_devices
+        if action == "sync":
+            self._spawn(group.sync_members(registry), f"MQTT_GROUP_SYNC-{group.hass_id}")
+        elif action == "remove":
+            self._spawn(group.remove_from_members(registry), f"MQTT_GROUP_REMOVE-{group.hass_id}")
+        else:
+            return False
+        logger.info(f"{lp} {action} of local group '{group.name}' ({group.id:#06x}) started")
+        return True
 
     async def parse_entity_state(
         self,
@@ -1474,6 +1509,9 @@ class MQTTClient:
                 for group in self._exposed_groups():
                     tpc, conf = self.group_discovery_config(group)
                     pub_tasks.append(self.publish_json_msg(tpc, conf))
+                    if group.is_local:
+                        for btpc, bconf in self.local_group_button_configs(group):
+                            pub_tasks.append(self.publish_json_msg(btpc, bconf))
                 if pub_tasks:
                     await asyncio.gather(*pub_tasks, return_exceptions=True)
 

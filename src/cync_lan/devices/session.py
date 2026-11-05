@@ -369,6 +369,9 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         """
         if len(pkt) >= 19 and pkt[0] == 0x73 and pkt[12] == 0x7E and pkt[17] == 0xF9:
             return pkt[13] in self.messages.control
+        if len(pkt) >= 19 and pkt[0] == 0x73 and pkt[12] == 0x7E and pkt[17:19] == b"\xfa\x8e":
+            # a group-list report follows a group join/leave, after its F9 reply (which already cleared the pending id)
+            return pkt[13] == getattr(self, "hybrid_last_ctrl", -1) and time.time() - self.hybrid_sent_at < 10
         if len(pkt) >= 12 and pkt[0] == 0x7B and pkt[9:12] == b"\x00\x00\x00":
             return time.time() - self.hybrid_sent_at < 10
         return False
