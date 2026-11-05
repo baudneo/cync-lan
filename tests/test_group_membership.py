@@ -153,3 +153,13 @@ async def test_reply_to_a_command_without_callback_is_acked():
     await s._handle_73_mesh_control(h("7e 15 00 00 00 f9 8e 01 00 00 8f 7e"), b"", b"\x00\x97\x00", "t:")
     assert 0x15 not in s.messages.control
     s.write.assert_awaited_once()  # the 0x78 ack went out
+
+
+async def test_membership_goes_through_one_bridge(monkeypatch):
+    """Two bridges relaying a leave and a join over the mesh delivered them out of order (hardware, 2026-11-05)."""
+    bridges = [bridge(1), bridge(1), bridge(1)]
+    monkeypatch.setattr(device_mod, "CYNC_CMD_BROADCASTS", 2)
+    monkeypatch.setattr(device_mod.g, "ncync_server", SimpleNamespace(get_dev_tcp_pool=AsyncMock(return_value=bridges)))
+    dev = CyncDevice(15, dev_type=53, name="x", home_id=1, home_name="H", entities={})
+    await dev.set_group_membership(0x8008, True)
+    assert sum(b.write.await_count for b in bridges) == 1

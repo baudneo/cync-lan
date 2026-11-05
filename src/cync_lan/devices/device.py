@@ -553,7 +553,7 @@ class CyncDevice:
 
     async def send_command(
             self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str,
-            target_id: Optional[int] = None, inner_op: Optional[int] = None,
+            target_id: Optional[int] = None, inner_op: Optional[int] = None, broadcasts: Optional[int] = None,
     ):
         """Send one control packet to the mesh. ``target_id`` (default: this device's id) and ``sub_id`` are the low and
         high byte of the 16-bit mesh destination address; a Cync group sends its group address here (see devices/group.py)."""
@@ -578,7 +578,9 @@ class CyncDevice:
         # a device with its own live TCP session always gets the command directly through it: a show command relayed over
         # the BLE mesh by another bridge was ACKed but never run by a deviceType 171 bulb. The other slots stay random.
         own = next((d for d in tcp_pool if d is getattr(self, "tcp_session", None)), None)
-        k = min(CYNC_CMD_BROADCASTS, len(tcp_pool))
+        # ``broadcasts``: how many bridges carry it (default CYNC_CMD_BROADCASTS). Order-sensitive commands (group
+        # membership) use 1: copies relayed over the mesh by two bridges can arrive out of order
+        k = min(CYNC_CMD_BROADCASTS if broadcasts is None else broadcasts, len(tcp_pool))
         tcp_connections: List["CyncTCPSession"] = ([own] if own else []) + random.sample(
             [d for d in tcp_pool if d is not own],
             k=max(0, k - (1 if own else 0)),
@@ -807,7 +809,9 @@ class CyncDevice:
             payload += bytes([flag & 0xFF])
         m_cb = ControlMessageCallback(msg_id=0x00, message=None, sent_at=0.0, callback=callback)
         logger.info(f"{lp} {'join' if join else 'leave'} group {group_id:#06x}{f' (flag {flag:#04x})' if join else ''}")
-        await self.send_command(0x8E, 8 + len(payload), 0x00, payload, m_cb, lp, inner_op=0xD7)
+        # ONE bridge: two copies of a leave and a join, relayed by two bridges, arrived out of order on hardware and
+        # left a switch out of its room
+        await self.send_command(0x8E, 8 + len(payload), 0x00, payload, m_cb, lp, inner_op=0xD7, broadcasts=1)
 
     async def set_lightshow(self, show: str, sub_id: Optional[int] = None):
         lp = f"{self.lp}set_lightshow:"

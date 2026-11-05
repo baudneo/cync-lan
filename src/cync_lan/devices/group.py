@@ -194,8 +194,12 @@ class CyncGroup:
     # ---- local groups: put the group on / take it off the member switches (mimics the Cync app, docs/protocol.md)
     async def sync_members(self, registry, pause: float = PACING_SECS) -> int:
         """
-        Make every member join this group. Like the app: a member that is in a room leaves it and joins it again with
-        flag 0x87 (a room with a group inside), then joins this group with flag 0x00. Returns the members sent to.
+        Make every member join this group: a member that is in a room joins it again with flag 0x87 (a room with a group
+        inside; a join of a group the device is already in updates the flag in place, as when the app removed a group),
+        then joins this group with flag 0x00. Returns the members sent to.
+
+        The app also LEFT the room before re-joining it. That step is skipped on purpose: when a copy of the leave
+        arrived after the re-join (seen on hardware), the switch was left out of its room.
         """
         lp = f"{self.lp}sync:"
         if not self.is_local:
@@ -204,8 +208,6 @@ class CyncGroup:
         for member in self.members:
             room = registry.room_of(member)
             if room is not None and room is not self:
-                await member.set_group_membership(room.id, False)
-                await asyncio.sleep(pause)
                 await member.set_group_membership(room.id, True, ROOM_WITH_GROUP_FLAG)
                 await asyncio.sleep(pause)
             await member.set_group_membership(self.id, True, 0x00)

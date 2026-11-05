@@ -70,8 +70,9 @@ async def test_sync_mimics_the_app():
     nodes = build_nodes(cfg({0x80FE: {"name": "Suite", "members": [15, 20]}}))
     calls = recorded(nodes)
     await nodes.get_group(HOME, 0x80FE).sync_members(nodes, pause=0)
+    # no "leave room" first (unlike the app): a late copy of it left a switch out of its room on hardware
     assert calls == [
-        (15, "leave", ROOM_TOILET, None), (15, "join", ROOM_TOILET, 0x87), (15, "join", 0x80FE, 0x00),
+        (15, "join", ROOM_TOILET, 0x87), (15, "join", 0x80FE, 0x00),
         (20, "join", 0x80FE, 0x00),  # no room: only the group
     ]
 
