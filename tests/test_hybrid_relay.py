@@ -123,3 +123,54 @@ async def test_commands_go_to_hybrid_bridges_but_not_plain_mitm(monkeypatch):
     await device_mod.CyncDevice.send_command(target, 0xD0, 0x0D, 0, bytes([0x11, 0x02, 1, 0, 0]), cb, "t:")
     assert hyb.write.await_count == 1 and plain.write.await_count == 0
     assert hyb.hybrid_sent_at > 0 and 0x05 in hyb.messages.control
+
+
+# ---- admission: a hybrid device always gets its own connection
+async def test_hybrid_device_is_admitted_past_a_full_home(monkeypatch):
+    from cync_lan import server as server_mod
+    from cync_lan.devices import proxy as proxy_mod
+    from cync_lan.devices.device import CyncDevice
+    from cync_lan.devices.registry import DeviceRegistry
+    from cync_lan.structs import GlobalObject
+
+    g = GlobalObject()
+    monkeypatch.setattr(proxy_mod, "TCP_BLACKHOLE_DELAY", 0)
+    monkeypatch.setattr(proxy_mod, "CYNC_MAX_TCP_CONN", 1)
+    monkeypatch.setattr(proxy_mod, "CYNC_HYBRID_RELAY", frozenset({"1754061898-12"}))
+    reg = DeviceRegistry()
+    reg.add_home(1754061898, "Casita 2")
+    reg.add(CyncDevice(12, dev_type=53, name="Master Shower Lights", home_id=1754061898, home_name="Casita 2",
+                       entities={}, switch_id=655942622))
+    reg.add(CyncDevice(13, dev_type=53, name="Other", home_id=1754061898, home_name="Casita 2", entities={},
+                       switch_id=111))
+    server_mod.nCyncServer._instance = None
+    srv = server_mod.nCyncServer(reg, home_grace_secs=0)
+    g.ncync_server = srv
+    g.mqtt_client = None
+    full = SimpleNamespace(ip_address="10.0.0.1", is_app=False, allowed_to_connect=True, is_closed=lambda: False,
+                           home_id=1754061898, hybrid=False)
+    srv.tcp_connections = {"10.0.0.1": full}
+
+    def hello(switch_id):
+        return bytes([0x23, 0, 0, 0, 0x1A, 0]) + switch_id.to_bytes(4, "big") + bytes(21)
+
+    class W:
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    def sess(ip):
+        s = CyncTCPSession(SimpleNamespace(feed_eof=lambda: None), W(), ip, registry=reg)
+        srv.tcp_connections[ip] = s
+        srv.tcp_conn_attempts[ip] = 1
+        return s
+
+    assert await sess("10.0.0.9").can_connect(hello(111)) is False  # the home is full
+    shower = sess("10.1.2.174")
+    assert await shower.can_connect(hello(655942622)) is True  # listed in hybrid relay: admitted anyway
+    # and a hybrid session does not take a slot from the others
+    shower.hybrid = True
+    full.allowed_to_connect = False
+    assert await sess("10.0.0.8").can_connect(hello(111)) is True

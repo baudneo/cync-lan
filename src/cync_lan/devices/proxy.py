@@ -11,6 +11,7 @@ from typing import Optional
 
 from cync_lan.const import (
     CYNC_CLOUD_IP,
+    CYNC_HYBRID_RELAY,
     CYNC_LOG_NAME,
     CYNC_MAX_TCP_CONN,
     CYNC_MITM_APP_LOGGER,
@@ -334,6 +335,17 @@ class ProxyMixin:
                 return next(iter(found))
         return None
 
+    def _hybrid_hello(self, hello: Optional[bytes]) -> bool:
+        """Is this 0x23 hello from a device listed in CYNC_HYBRID_RELAY (its queue id is the device's switch_id)?"""
+        if not CYNC_HYBRID_RELAY or hello is None or len(hello) < 10 or hello[0] != 0x23:
+            return False
+        queue_id = parse_queue_id(hello[6:10])
+        for home_id in homes_for_queue_id(self.registry, queue_id):
+            device = self.registry.home_switch_ids(home_id).get(queue_id)
+            if device is not None and ("all" in CYNC_HYBRID_RELAY or device.hass_id.casefold() in CYNC_HYBRID_RELAY):
+                return True
+        return False
+
     async def can_connect(self, hello: Optional[bytes] = None) -> bool:
         """
         Based on TCP_WHITELIST and MAX_TCP_CONN, should only be used on Cync device connections. ``hello``: the first
@@ -351,7 +363,8 @@ class ProxyMixin:
         lp = f"{self.lp}:can connect:"
         # only admitted, live bridges take a slot: closed sessions stay in tcp_connections, and counting this session
         # or other not-yet-admitted ones made a full pool reject everyone, including a bridge reconnecting
-        others = [d for d in g.ncync_server.get_dev_tcp_pool_sync() if d is not self]
+        # hybrid relay devices have their own connection by design: they never take one of the home's bridge slots
+        others = [d for d in g.ncync_server.get_dev_tcp_pool_sync() if d is not self and not getattr(d, "hybrid", False)]
         limit = CYNC_MAX_TCP_CONN
         pool_name = ""
         n_homes = len(self.registry.home_ids())
@@ -367,6 +380,11 @@ class ProxyMixin:
         num_attempts = g.ncync_server.tcp_conn_attempts[self.ip_address]
         if self.mitm_mode:
             logger.debug(f"{lp} MITM active, skipping connection check...")
+            self.allowed_to_connect = True
+
+        elif g.ncync_server.shutting_down is not True and self._hybrid_hello(hello):
+            # the device must keep its own connection for the cloud to show it online: always admit it
+            logger.info(f"{lp} hybrid relay device, admitted outside the {CYNC_MAX_TCP_CONN} bridge limit{pool_name}")
             self.allowed_to_connect = True
 
         elif (

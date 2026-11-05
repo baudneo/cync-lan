@@ -15,6 +15,8 @@ which passes it on to the real cloud like MITM mode does, but cync-lan also keep
 - The cloud acks everything else (cync-lan's own acks stay off, as in MITM mode).
 - Cloud unreachable when the device (re)connects: that connection runs local-only; hybrid resumes the next time the device
   reconnects. A cloud that closes the connection closes the device session, so it reconnects.
+- Listed devices are always admitted, outside the home's `CYNC_MAX_TCP_CONN` bridge limit, and do not take a slot:
+  the cloud only shows a device whose own connection is up.
 - Turning the device's "MITM mode" switch off in HA also ends hybrid relay for it until cync-lan restarts.
 
 Unconfirmed (first hardware test pending): whether the device acks cync-lan's 0x73 with a 0x7B that echoes msg id 0, and
