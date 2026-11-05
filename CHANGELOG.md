@@ -1,4 +1,5 @@
 ### Unreleased (branch `multi-home`)
+- **Fixed: devices that came online before Home Assistant discovery stayed unavailable.** Discovery recreates every entity and HA forgets its (non-retained) availability; cync-lan only re-sent it on a change. Availability and state are now published again right after every discovery (MQTT connect), as they already were after an HA restart
 - **Hybrid relay (experimental, `CYNC_HYBRID_RELAY`)**: listed devices are relayed to the Cync cloud (so the app sees them online) while cync-lan keeps controlling them locally on the same connection. See [docs/hybrid_relay.md](docs/hybrid_relay.md)
 - MITM / hybrid: if the cloud cannot be reached when a device reconnects, that connection now runs local-only instead of leaving the device unanswered
 - **Fixed: whole homes stayed unavailable after a restart.** Some bridges answer the mesh-info request on 0x83, byte-stuffed (`7E` sent as `7D 5E`); cync-lan logged those as "UNKNOWN packet" and never marked the home's devices online until each changed state by itself. They are now un-stuffed and parsed (checked against real replies: checksum and record count match)

@@ -349,6 +349,9 @@ class MQTTClient:
             await self.send_birth_msg()
             await asyncio.sleep(1)
             await self.homeassistant_discovery()
+            # discovery (re)creates every entity and HA forgets its availability: devices that came online before this
+            # (a bridge's mesh info can arrive within a second of start) would stay unavailable until they next change
+            self._spawn(self._republish_states(2.0, "'mqtt_connect'"), "MQTT_REPUBLISH_STATES")
             return True
         return False
 
@@ -677,19 +680,23 @@ class MQTTClient:
         try:
             await asyncio.sleep(delay)
             await self.homeassistant_discovery()
-            await asyncio.sleep(2)
-            for node in list(g.ncync_server.node_devices.values()):
-                await self.pub_online(node, node.online)
-                for epoint_state in node.entities.values():
-                    await self.parse_entity_state(node, epoint_state, from_pkt="'hass_birth'")
-            for group in self._exposed_groups():
-                await self.publish_group_state(group)
+            await self._republish_states(2.0, "'hass_birth'")
         except asyncio.CancelledError:
             raise
         except aiomqtt.MqttError as exc:
             logger.warning(f"{lp} re-announce aborted, MQTT publish failed: {exc!r}")
         except Exception as exc:
             logger.error(f"{lp} re-announce failed: {exc!r}", exc_info=True)
+
+    async def _republish_states(self, delay: float, from_pkt: str) -> None:
+        """After discovery: publish every device's availability and state again (non-retained, so HA lost them)."""
+        await asyncio.sleep(delay)
+        for node in list(g.ncync_server.node_devices.values()):
+            await self.pub_online(node, node.online)
+            for epoint_state in (node.entities or {}).values():
+                await self.parse_entity_state(node, epoint_state, from_pkt=from_pkt)
+        for group in self._exposed_groups():
+            await self.publish_group_state(group)
 
     async def async_parse_mqtt_msg(self, message: aiomqtt.message.Message) -> bool:
         lp = f"{self.lp}parse msg:"

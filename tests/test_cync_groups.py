@@ -233,3 +233,19 @@ async def test_member_update_publishes_the_room_once(client):
     room_pubs = [call for call in c.publish.await_args_list if call.args[0].endswith(f"/status/{HOME}-g{ROOM}")]
     assert len(room_pubs) == 1
     assert json.loads(room_pubs[0].args[1]) == {"state": "ON", "brightness": 60}
+
+
+async def test_states_are_republished_after_discovery(client):
+    """Devices marked online before discovery (0x83 mesh info arrives within a second of start) must not stay
+    unavailable in HA: discovery recreates the entities, so availability and state are published again after it."""
+    c, nodes = client
+    c._connected = True
+    c.pub_online = AsyncMock(return_value=True)
+    c.parse_entity_state = AsyncMock(return_value=True)
+    for node in nodes.values():
+        node._online = True
+    await c._republish_states(0, "t")
+    assert sorted(call.args[0].id for call in c.pub_online.await_args_list) == [3, 4, 8, 9, 10]
+    assert all(call.args[1] is True for call in c.pub_online.await_args_list)
+    assert c.parse_entity_state.await_count == 5
+    assert any(call.args[0].endswith(f"/status/{HOME}-g{ROOM}") for call in c.publish.await_args_list)
