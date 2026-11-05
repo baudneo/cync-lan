@@ -1,5 +1,8 @@
 # Local groups (cync-lan puts the group on the switches)
 
+**Confirmed 2026-11-05** on two type 53 switches in different rooms: after *Sync to switches* each reported the new group
+next to its room (`0x80fe, 0x800a` and `0x80fe, 0x8008`).
+
 A Cync room or group is a group address (`0x80xx`) stored on each member switch; one command to that address switches
 every member at once. The Cync app creates them; cync-lan can now do it too, for groups the app cannot make (e.g. one
 group across several rooms, like a whole master suite). See docs/protocol.md, "Group membership".
