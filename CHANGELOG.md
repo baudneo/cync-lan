@@ -1,4 +1,5 @@
 ### Unreleased (branch `multi-home`)
+- Fixed: with `CYNC_APP_MITM_LOGGING` on, every proxied Cync app connection crashed while setting up its log (`'NoneType' object has no attribute 'id'`), so the app never reached the cloud. Reconnects from the same IP also no longer stack MITM log handlers (repeated log lines)
 - **Fixed: devices that came online before Home Assistant discovery stayed unavailable.** Discovery recreates every entity and HA forgets its (non-retained) availability; cync-lan only re-sent it on a change. Availability and state are now published again right after every discovery (MQTT connect), as they already were after an HA restart
 - Hybrid relay devices are always admitted and never take one of the home's `CYNC_MAX_TCP_CONN` bridge slots: after a restart a full home rejected the test device, so it had no cloud connection
 - **Hybrid relay (experimental, `CYNC_HYBRID_RELAY`)**: listed devices are relayed to the Cync cloud (so the app sees them online) while cync-lan keeps controlling them locally on the same connection. See [docs/hybrid_relay.md](docs/hybrid_relay.md)

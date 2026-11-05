@@ -256,7 +256,7 @@ class ProxyMixin:
         lp = f"{self.lp}mitm logger:"
         if self.mitm_logger:
             logger.debug(
-                f"{lp} Already setup for Node: '{self.name}' (ID: {self.node.id})"
+                f"{lp} Already setup for '{self.name}' (ID: {getattr(self.node, 'id', 'app')})"
             )
             return
         # Differentiate between App (by IP) and Device (by ID)
@@ -288,6 +288,11 @@ class ProxyMixin:
 
         self.mitm_logger.setLevel(logging.DEBUG)
         self.mitm_logger.propagate = False
+        # the logger is shared by every connection from this IP (getLogger by name): drop the last one's handlers, or
+        # each reconnect would add another and every line would be written once more
+        for old in list(self.mitm_logger.handlers):
+            self.mitm_logger.removeHandler(old)
+            old.close()
 
         file_handler = logging.handlers.TimedRotatingFileHandler(log_file, when="midnight")
         file_handler.setFormatter(formatter)
@@ -299,7 +304,7 @@ class ProxyMixin:
             self.mitm_logger.addHandler(stdout_handler)
         os.chmod(log_file, 0o777)
         logger.debug(
-            f"Created a MITM logger for node: '{self.name}' (ID: {self.node.id}) -> {log_file}"
+            f"Created a MITM logger for '{self.name}' (ID: {getattr(self.node, 'id', 'app')}) -> {log_file}"
         )
 
     async def blackhole(self, reason: str, should_sleep: bool):

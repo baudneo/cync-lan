@@ -186,3 +186,21 @@ async def test_cloud_eof_closes_instead_of_spinning(monkeypatch):
     await asyncio.sleep(0)
     assert reader.read.await_count == 1
     s.close.assert_awaited_once_with(False)
+
+
+def test_app_mitm_logger_setup_without_a_device(tmp_path, monkeypatch):
+    """With app_mitm_log on, the logger setup read self.node.id: an app has no device, so every proxied app
+    connection crashed ("'NoneType' object has no attribute 'id'") and the app never reached the cloud."""
+    from cync_lan.devices import proxy as proxy_mod
+
+    monkeypatch.setattr(proxy_mod, "CYNC_MITM_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(proxy_mod.g, "env", SimpleNamespace(app_mitm_logging=True))
+    for _ in range(2):  # a reconnect from the same IP must not stack handlers
+        s = CyncTCPSession.__new__(CyncTCPSession)
+        s.lp, s.ip_address, s.name, s.node, s.is_app, s.mitm_logger = "t:", "10.1.1.233", None, None, True, None
+        s._setup_mitm_logger()
+    assert len(s.mitm_logger.handlers) == (2 if proxy_mod.CYNC_MITM_APP_LOGGER else 1)
+    assert list(tmp_path.glob("mitm_app_10-1-1-233-*.log"))
+    for h in list(s.mitm_logger.handlers):
+        s.mitm_logger.removeHandler(h)
+        h.close()
