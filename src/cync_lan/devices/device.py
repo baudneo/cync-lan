@@ -545,8 +545,15 @@ class CyncDevice:
         # logger.debug(f"{lp} new data: ctrl_byte={id_byte} rollover_byte={rollover_byte} // {self.control_bytes=}")
         return self.control_bytes
 
-    async def send_command(self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str):
+    async def send_command(
+            self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str,
+            target_id: Optional[int] = None,
+    ):
+        """Send one control packet to the mesh. ``target_id`` (default: this device's id) and ``sub_id`` are the low and
+        high byte of the 16-bit mesh destination address; a Cync group sends its group address here (see devices/group.py)."""
         tasks = []
+        if target_id is None:
+            target_id = self.id
         # a bridge relays only its own home's mesh, and target_id (self.id) is only unique within that home
         tcp_pool = await g.ncync_server.get_dev_tcp_pool(self.home_id)
         if not tcp_pool:
@@ -576,7 +583,7 @@ class CyncDevice:
 
                 inner_pkt = PacketBuilder.build_control_packet(
                     msg_id=cmsg_id,
-                    target_id=self.id,
+                    target_id=target_id,
                     sub_id=sub_id,
                     op_code=op,
                     cmd_code=cmd_,

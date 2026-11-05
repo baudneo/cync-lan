@@ -140,6 +140,14 @@ sends; field meanings inferred]
   so replies can be matched to commands.
 - `F8` marks a request; replies use `F9`. `FA` appears on unsolicited device status.
 - `target` = mesh node id of the device to control; `sub` = endpoint on multi-outlet devices (0 = whole device).
+- `target` and `sub` together look like one **16-bit little-endian mesh destination** (`target` = low byte, `sub` = high
+  byte) [inferred]. Devices are below `0x8000`; a **group (Cync room)** is its cloud `groupID` (`0x8000-0xFFFF`,
+  `groupsArray` in the home properties), sent in the same two bytes. The cloud integration cync_lights sends its room
+  commands exactly this way (`groupID.to_bytes(2, "little")` in this field, through the cloud's TCP server), and the
+  decompiled app's `MeshAddress` puts group addresses at 32768-65535 (Proxy-alt/cync-lan `docs/mesh_opcodes.md`). Seen
+  2026-11-04: a room toggled from the app made all 4 members report their new power in ONE 0x83 burst, while 9
+  per-device commands from HA spread over 100 ms - 1 s. Sending to the group address from cync-lan: **not yet confirmed
+  on hardware** (`devices/group.py`, test in progress).
 - **checksum = sum(all bytes from `op` (the byte after `F8`) up to the byte before the checksum) mod 256.** [confirmed]
   The same rule validates incoming 0x83 inner packets (the code logs mismatches but does not reject).
 
@@ -220,10 +228,13 @@ User guide: `docs/multi_home.md`. Code: `devices/registry.py` (`DeviceRegistry`,
 6. Meaning of every `FA xx`, `F9 xx`, `F8 xx` control pair, and the full op/cmd table (we only know the ones above).
 7. The bytes in 0x43 records after index 10, and why records include "incorrect devices".
 8. Why the control inner packet contains `ctrl_id` twice and `op` twice.
-9. Provisioning flow for factory-reset devices; group/room/scene commands; timers; firmware-update flow.
+9. Provisioning flow for factory-reset devices; scene commands; timers; firmware-update flow. Group control: see section 5
+   (addressing inferred, hardware test pending).
 10. Whether the 0x73 checksum rule excludes the `F8` byte by design or by accident.
 
 ## 9. Changelog
+- 2026-11-04 (group commands): section 5, the control destination is 16-bit (`target` low, `sub` high) and a Cync room
+  is addressed with its cloud `groupID` (inferred from cync_lights and the app; hardware test pending).
 - 2026-11-04 (later): `F9 52` mesh info replies seen on 0x83 (section 4, 0x83), with probable `7D 5E` byte stuffing.
 - 2026-11-04: confirmed on hardware that the 0x23 queue id is the device's cloud `switchID` (type 53 switches fw
   1.0.110, type 137 bulbs fw 1.0.380, stable over reconnects), not the home id. Section 7 and open question 2 updated.

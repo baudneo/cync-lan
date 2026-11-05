@@ -294,6 +294,13 @@ def build_nodes(raw_config) -> "DeviceRegistry":
         nodes.add_home(home_id, cync_home_name, bridges)
         for node in home_nodes:
             nodes.add(node)
+        for group in _home_groups(home_cfg, home_id, cync_home_name, lp):
+            nodes.add_group(group)
+            if not group.members:
+                logger.warning(
+                    f"{lp} Group '{group.name}' ({group.id}) in home '{cync_home_name}' has no enabled member devices, "
+                    f"it is not exposed"
+                )
         for ip in nodes.home(home_id).bridges:
             if ip in bridge_owner:
                 logger.error(
@@ -307,6 +314,57 @@ def build_nodes(raw_config) -> "DeviceRegistry":
     if skipped:
         logger.warning(f"{lp} {skipped} home(s)/device(s) in the config file were skipped, see errors above")
     return nodes
+
+
+def _strict_int(value) -> Optional[int]:
+    """An int or a decimal-digit string as int, anything else (bool, float, text) None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _home_groups(home_cfg: dict, home_id: int, cync_home_name: str, lp: str) -> list:
+    """The home's optional 'groups:' (Cync rooms) as CyncGroup objects; bad entries are logged and dropped."""
+    from cync_lan.devices.group import CyncGroup, is_group_address
+    from cync_lan.devices.registry import GROUPS_KEY
+
+    raw = home_cfg.get(GROUPS_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, dict):
+        logger.error(
+            f"{lp} Home '{cync_home_name}': '{GROUPS_KEY}:' must be a mapping of group id -> group, "
+            f"got {type(raw).__name__}, ignoring it"
+        )
+        return []
+    out = []
+    for raw_id, raw_group in raw.items():
+        group_id = _strict_int(raw_id)
+        if not is_group_address(group_id):
+            logger.error(
+                f"{lp} Home '{cync_home_name}': group id {raw_id!r} is not a mesh group address (32768-65535), "
+                f"ignoring it so a command can never reach a single device by mistake"
+            )
+            continue
+        if not isinstance(raw_group, dict) or not isinstance(raw_group.get("members"), list):
+            logger.error(f"{lp} Home '{cync_home_name}': group {group_id} needs 'name' and a 'members' list, ignoring it")
+            continue
+        members = [m for m in (_strict_int(x) for x in raw_group["members"]) if m is not None]
+        out.append(
+            CyncGroup(
+                home_id=home_id,
+                group_id=group_id,
+                name=str(raw_group.get("name") or f"Group {group_id}"),
+                member_ids=members,
+                home_name=cync_home_name,
+                is_subgroup=_as_bool_enabled(raw_group.get("subgroup", False)),
+            )
+        )
+    return out
 
 
 def _home_bridges(home_cfg: dict, cync_home_name: str, lp: str) -> List[str]:

@@ -35,6 +35,7 @@ from cync_lan.const import (
     ORIGIN_STRUCT,
 )
 from cync_lan.devices import CyncDevice
+from cync_lan.devices.group import CyncGroup, parse_group_uuid
 from cync_lan.effects import effect_from_status, effect_names
 from cync_lan.metadata.model_info import DeviceClassification, device_type_map
 from cync_lan.stats import stats
@@ -113,6 +114,8 @@ class MQTTClient:
         # nodes that currently show a MITM switch in HA, re-announced after every discovery. Keyed by
         # (home_id, dev_id): the bridges of two homes are often the same mesh id (ids restart at 1 per home)
         self._mitm_nodes: dict = {}
+        # pending debounced group (Cync room) state publishes, keyed by (home_id, group_id)
+        self._group_refresh: Dict[tuple, asyncio.Task] = {}
         self.tasks: Optional[List[Union[asyncio.Task, Coroutine]]] = []
         lp = f"{self.lp}init:"
         if not CYNC_TOPIC:
@@ -352,6 +355,15 @@ class MQTTClient:
     def _parse_device_target(self, device_uuid: str, lp: str) -> tuple[Optional[CyncDevice], Optional[int]]:
         if device_uuid == "bridge":
             return None, None
+
+        group_key = parse_group_uuid(device_uuid)
+        if group_key is not None:
+            get_group = getattr(g.ncync_server.node_devices, "get_group", None)
+            group = get_group(*group_key) if get_group is not None else None
+            if group is None or not group.members:
+                logger.warning(f"{lp} Cync group {group_key[1]} in home {group_key[0]} not found in the config")
+                return None, None
+            return group, None
 
         ids = device_uuid.split("-")
         if len(ids) < 2:
@@ -670,6 +682,8 @@ class MQTTClient:
                 await self.pub_online(node, node.online)
                 for epoint_state in node.entities.values():
                     await self.parse_entity_state(node, epoint_state, from_pkt="'hass_birth'")
+            for group in self._exposed_groups():
+                await self.publish_group_state(group)
         except asyncio.CancelledError:
             raise
         except aiomqtt.MqttError as exc:
@@ -971,6 +985,9 @@ class MQTTClient:
         lp = f"{self.lp}device_status:"
         if from_pkt:
             lp = f"{lp}{from_pkt}:"
+        if tpc is None:
+            # a member's power / brightness changed: its rooms' aggregate state may have too
+            self._schedule_group_states(node)
         if self._connected:
             tgt_id = f"{node.hass_id}" if not sub_id else f"{node.hass_id}-{sub_id}"
             logger.debug(
@@ -994,6 +1011,79 @@ class MQTTClient:
             else:
                 return True
         return False
+
+    # ---- Cync groups (rooms): one HA light per group, driven by one mesh packet (see devices/group.py)
+    @staticmethod
+    def _exposed_groups() -> List[CyncGroup]:
+        groups = getattr(g.ncync_server.node_devices, "groups", None)
+        return [gr for gr in groups() if gr.members] if callable(groups) else []
+
+    def _schedule_group_states(self, node) -> None:
+        """Publish the state of every group ``node`` belongs to, once, shortly after a burst of member updates."""
+        groups_with = getattr(getattr(g.ncync_server, "node_devices", None), "groups_with", None)
+        if not callable(groups_with) or not isinstance(node, CyncDevice):
+            return
+        for group in groups_with(node):
+            pending = self._group_refresh.get(group.key)
+            if pending is not None and not pending.done():
+                continue
+            self._group_refresh[group.key] = self._spawn(
+                self._publish_group_state_later(group), f"MQTT_GROUP_STATE-{group.hass_id}"
+            )
+
+    async def _publish_group_state_later(self, group: CyncGroup, delay: float = 0.3) -> None:
+        # one packet to a room makes every member report within a few hundred ms: publish the room once, after them
+        await asyncio.sleep(delay)
+        self._group_refresh.pop(group.key, None)
+        await self.publish_group_state(group)
+
+    async def publish_group_state(self, group: CyncGroup) -> bool:
+        if not self._connected:
+            return False
+        return await self.publish(
+            f"{self.topic}/status/{group.hass_id}", json.dumps(group.state()).encode()
+        )
+
+    def group_discovery_config(self, group: CyncGroup) -> tuple:
+        """(config topic, HA MQTT light discovery payload) for one Cync group."""
+        unique_id = f"{group.home_id}_group_{group.id}"
+        obj_id = f"cync_lan_{unique_id}"
+        device_uuid = group.hass_id
+        conf = {
+            "object_id": obj_id,
+            "default_entity_id": f"light.{obj_id}",
+            "name": None,
+            "command_topic": f"{self.topic}/set/{device_uuid}",
+            "state_topic": f"{self.topic}/status/{device_uuid}",
+            # a group has no availability of its own: it works whenever the bridge (and a home bridge) is up
+            "avty": [self._availability(device_uuid)[1]],
+            "unique_id": unique_id,
+            "schema": "json",
+            "origin": ORIGIN_STRUCT,
+            "optimistic": False,
+            "device": {
+                "identifiers": [unique_id],
+                "manufacturer": CYNC_MANUFACTURER,
+                "name": group.name,
+                "model": "Cync room" if not group.is_subgroup else "Cync sub-room",
+                "suggested_area": group.name if not group.is_subgroup else None,
+                "via_device": str(g.uuid),
+            },
+        }
+        modes = []
+        if group.supports_temperature:
+            modes.append("color_temp")
+            conf.update({"color_temp_kelvin": True, "min_kelvin": CYNC_MINK, "max_kelvin": CYNC_MAXK})
+        if group.supports_rgb:
+            modes.append("rgb")
+        if not modes:
+            modes.append("brightness" if group.supports_brightness else "onoff")
+        conf["supported_color_modes"] = modes
+        if group.supports_brightness:
+            conf.update({"brightness": True, "brightness_scale": 100})
+        if conf["device"]["suggested_area"] is None:
+            del conf["device"]["suggested_area"]
+        return f"{self.ha_topic}/light/{unique_id}/config", conf
 
     async def parse_entity_state(
         self,
@@ -1370,6 +1460,9 @@ class MQTTClient:
                                 motion_registry_struct
                             )
                         )
+                for group in self._exposed_groups():
+                    tpc, conf = self.group_discovery_config(group)
+                    pub_tasks.append(self.publish_json_msg(tpc, conf))
                 if pub_tasks:
                     await asyncio.gather(*pub_tasks, return_exceptions=True)
 

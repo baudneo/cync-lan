@@ -368,7 +368,9 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
 
             if not self.is_app:
                 logger.info(
-                    f"{lp} Device has been identified as the Cync mobile app, enabling proxying to the Cync cloud for all App connections..."
+                    f"{lp} Device has been identified as the Cync mobile app. App connections are NOT proxied to the "
+                    f"Cync cloud (closing it): on a network with the DNS redirect the app cannot reach the cloud, "
+                    f"use it over Bluetooth or mobile data"
                 )
                 self.is_app = True
                 await self.blackhole("is app", True)

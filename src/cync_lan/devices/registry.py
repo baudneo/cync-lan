@@ -36,9 +36,11 @@ from typing import TYPE_CHECKING, Dict, FrozenSet, Iterable, List, Optional, Set
 
 if TYPE_CHECKING:
     from cync_lan.devices.device import CyncDevice
+    from cync_lan.devices.group import CyncGroup
 
 __all__ = [
     "BRIDGES_KEY",
+    "GROUPS_KEY",
     "SWITCH_ID_KEY",
     "DeviceKey",
     "DeviceRegistry",
@@ -60,6 +62,8 @@ __all__ = [
 
 BRIDGES_KEY = "bridges"
 """Optional per-home config key: list of bridge IP strings (manual home override)."""
+GROUPS_KEY = "groups"
+"""Optional per-home config key: Cync rooms, ``{group_id: {name, members: [dev_id, ...], subgroup}}`` (cloud export)."""
 SWITCH_ID_KEY = "switch_id"
 """Optional per-device config key: the cloud ``switchID`` of the device (int, non-zero)."""
 CONFIG_MAIN_KEYS = ("account data", "exported_homes")
@@ -106,6 +110,8 @@ class DeviceRegistry(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._homes: Dict[int, HomeInfo] = {}
+        # Cync rooms / sub-rooms, keyed by (home_id, group_id); kept apart so .values() stays "every device"
+        self._groups: Dict[Tuple[int, int], "CyncGroup"] = {}
 
     # ---- building
     def add_home(self, home_id: int, name: str, bridges: Iterable[str] = ()) -> HomeInfo:
@@ -122,6 +128,23 @@ class DeviceRegistry(dict):
         if device.home_id not in self._homes:
             self.add_home(device.home_id, device.home_name or str(device.home_id))
         self[device.key] = device
+
+    def add_group(self, group: "CyncGroup") -> "CyncGroup":
+        """Add a group after its home's devices: resolves ``group.members`` to the devices that exist (others dropped)."""
+        group.members = [d for d in (self.get_device(group.home_id, m) for m in group.member_ids) if d is not None]
+        self._groups[group.key] = group
+        return group
+
+    # ---- groups
+    def get_group(self, home_id: Optional[int], group_id: int) -> Optional["CyncGroup"]:
+        return self._groups.get((home_id, group_id))
+
+    def groups(self) -> List["CyncGroup"]:
+        return sorted(self._groups.values(), key=lambda gr: gr.key)
+
+    def groups_with(self, device: "CyncDevice") -> List["CyncGroup"]:
+        """The groups this device is a member of."""
+        return [gr for gr in self._groups.values() if device in gr.members]
 
     # ---- devices
     def get_device(self, home_id: Optional[int], dev_id: int) -> Optional["CyncDevice"]:

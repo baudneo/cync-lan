@@ -27,12 +27,68 @@ from cync_lan.const import (
     CYNC_OVERWRITE_CONFIG_FILE,
     CYNC_SECRET_KEY,
 )
-from cync_lan.devices.registry import SWITCH_ID_KEY, as_positive_int, carry_over_bridges
+from cync_lan.devices.registry import (
+    GROUPS_KEY,
+    SWITCH_ID_KEY,
+    as_positive_int,
+    carry_over_bridges,
+)
 from cync_lan.structs import ComputedTokenStruct, EntityState, GlobalObject
 from cync_lan.utils import write_private_file
 
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
+
+
+def _cloud_group_member(raw) -> Optional[int]:
+    """A 'deviceIDArray' entry as the mesh id cync-lan uses for the device (last 3 digits, like the 'deviceID' parse)."""
+    if isinstance(raw, bool):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value % 1000 if value > 0 else None
+
+
+def parse_raw_groups(raw_groups, device_ids: set, lp: str = "") -> dict:
+    """
+    Convert a home's cloud 'groupsArray' into the config's 'groups:' mapping
+    ``{groupID: {"name": str, "members": [dev_id, ...], "subgroup": bool}}``.
+
+    A room's members include those of its sub-rooms (``subgroupIDArray``): the room is what the user turns off.
+    Groups whose id is not a mesh group address, or with no member in ``device_ids``, are left out.
+    """
+    from cync_lan.devices.group import is_group_address
+
+    if not isinstance(raw_groups, list):
+        return {}
+    by_id = {}
+    for raw in raw_groups:
+        if not isinstance(raw, dict):
+            continue
+        gid = raw.get("groupID")
+        if isinstance(gid, str) and gid.isdigit():
+            gid = int(gid)
+        if not is_group_address(gid):
+            logger.warning(f"{lp} Cync group {raw.get('displayName')!r} has id {gid!r}, not a mesh group address, skipped")
+            continue
+        by_id[gid] = raw
+    out = {}
+    for gid, raw in by_id.items():
+        members = {m for m in (_cloud_group_member(x) for x in raw.get("deviceIDArray") or []) if m is not None}
+        for sub_gid in raw.get("subgroupIDArray") or []:
+            sub = by_id.get(sub_gid)
+            if sub is not None and sub is not raw:
+                members |= {m for m in (_cloud_group_member(x) for x in sub.get("deviceIDArray") or []) if m is not None}
+        members &= device_ids
+        if not members:
+            continue
+        entry = {"name": str(raw.get("displayName") or f"Group {gid}"), "members": sorted(members)}
+        if raw.get("isSubgroup"):
+            entry["subgroup"] = True
+        out[gid] = entry
+    return out
 
 
 def _cloud_switch_id(raw) -> Optional[int]:
@@ -587,6 +643,10 @@ class CyncCloudAPI:
                     if node_id in new_home["devices"]:
                         # overwrite the default 0 endpoint with the children
                         new_home["devices"][node_id]["endpoints"] = endpoint_data
+            groups = parse_raw_groups(raw_home["properties"].get("groupsArray"), set(new_home["devices"]), lp)
+            if groups:
+                new_home[GROUPS_KEY] = groups
+                logger.info(f"{lp} Exported {len(groups)} group(s) (rooms) for home '{raw_home['name']}'")
 
         # END OF HOME PARSING LOOP
         if skipped_devices:
