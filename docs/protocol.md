@@ -103,14 +103,14 @@ Payload (after 12-byte prefix) is one of:
    - `FA 54`: motion sensor; device id at payload[9], flag at payload[15]. [inferred]
    - `FA D9`: bulk status, seen during firmware updates (per-device update percentage). 4 bytes per device:
      node id, sub id, status type, value. [inferred]
-   - `F9 52`: a **mesh info reply**, the same reply the 0x73 section describes, but sent on 0x83. Seen 2026-11-04 from
-     3 bridges of one home (51 devices in the config) answering our 0x73 mesh info request, while bridges of the
-     account's other homes answered on 0x73. cync-lan does not parse it here yet: it logs "UNKNOWN packet data
-     (ctrl_bytes: f9 52 ...)" and only acks. [confirmed that it happens; why some bridges use 0x83 is unknown]
-     The captured payload has `7D 5E` at inner offset 6 where a single byte is expected, and its checksum does not
-     match: most likely HDLC-style byte stuffing (`7E` sent as `7D 5E`, `7D` as `7D 5D`) that no parser here undoes.
-     After un-stuffing, the 24-byte records start at inner[14]; inner[12] was 37 in all three captures and inner[8]
-     was 37, 37 and 45, so inner[8] may not be "records in this page" here. [inferred]
+   - `F9 52`: a **mesh info reply**, the same records as the 0x73 one, sent on 0x83 by some bridges (on one 3-home
+     account every bridge of the two biggest homes, 35 and 51 devices). **Byte-stuffed** [confirmed 2026-11-04]:
+     `7D xx` stands for `xx ^ 0x20` (`7D 5E` = `7E`, `7D 5D` = `7D`). After un-stuffing, the checksum (last byte before
+     the closing `7E`, = sum of inner bytes from index 5) matches and the page holds exactly inner[12] 24-byte records
+     from inner[14], the bridge's own record first; without un-stuffing the checksum fails. One page held the whole
+     home (35 and 37 records). inner[8] is NOT the record count here (47 on a page of 37). Parsed since 2026-11-04
+     (`_process_83_mesh_info`); before that it was logged as UNKNOWN, so after a restart such a home's devices stayed
+     offline. Acked as a normal 0x83 (no extra 0x73 mesh ack). Why some bridges use 0x83: unknown.
 - Ack: `88 00 00 00 03 <msg id>`.
 - The `FA D9` branch used to return before sending the ack; it now logs and falls through to the ack. Whether the device needs that ack is **unknown** (no capture proves it either way).
 
@@ -233,6 +233,7 @@ User guide: `docs/multi_home.md`. Code: `devices/registry.py` (`DeviceRegistry`,
 10. Whether the 0x73 checksum rule excludes the `F8` byte by design or by accident.
 
 ## 9. Changelog
+- 2026-11-04 (0x83 mesh info): `F9 52` on 0x83 confirmed byte-stuffed and parsed (section 4, 0x83).
 - 2026-11-04 (group commands): section 5, the control destination is 16-bit (`target` low, `sub` high) and a Cync room
   is addressed with its cloud `groupID` (inferred from cync_lights and the app; hardware test pending).
 - 2026-11-04 (later): `F9 52` mesh info replies seen on 0x83 (section 4, 0x83), with probable `7D 5E` byte stuffing.

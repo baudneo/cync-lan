@@ -29,7 +29,7 @@ from cync_lan.utils import (
     hello_23_hex_redacted,
 )
 
-__all__ = ["MeshRecord", "PacketHandlersMixin", "parse_mesh_records"]
+__all__ = ["MeshRecord", "PacketHandlersMixin", "parse_mesh_records", "unstuff_7d"]
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
 # home_id -> the session currently acting as that home's cloud uplink (CYNC_CLOUD_UPLINK): at most one per home
@@ -51,6 +51,26 @@ class MeshRecord(NamedTuple):
     red: int
     green: int
     blue: int
+
+
+def unstuff_7d(data: bytes) -> bytes:
+    """
+    Undo the HDLC-style byte stuffing seen in 0x83 mesh-info replies: ``7D xx`` stands for ``xx ^ 0x20`` (so ``7D 5E``
+    is a literal ``7E`` and ``7D 5D`` a literal ``7D``). Confirmed 2026-11-04 on real replies: only after this do their
+    checksums match and their length come out at exactly 24 bytes per device of the home (docs/protocol.md 0x83).
+    """
+    if 0x7D not in data:
+        return data
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        if data[i] == 0x7D and i + 1 < len(data):
+            out.append(data[i + 1] ^ 0x20)
+            i += 2
+        else:
+            out.append(data[i])
+            i += 1
+    return bytes(out)
 
 
 def parse_mesh_records(inner_struct: bytes, start_idx: int) -> List[MeshRecord]:
@@ -250,6 +270,9 @@ class PacketHandlersMixin:
                     )
                 elif ctrl_bytes == b"\xfa\x54":
                     await self._parse_83_motion_state(packet_data, lp)
+                elif ctrl_bytes == b"\xf9\x52":
+                    # the mesh-info reply some bridges send here instead of on 0x73 (docs/protocol.md, 0x83)
+                    await self._process_83_mesh_info(packet_data, lp)
                 elif ctrl_bytes == b"\xfa\xd9":
                     # seems to be some sort of bulk status msg. seen when updating devices firmware,
                     # it seemed to broadcast each devices percentage complete status
@@ -535,8 +558,17 @@ class PacketHandlersMixin:
                 f"{self.registry.describe_home(self.home.home_id)} -> You need to export a new config file from the cloud!"
             )
 
+    async def _process_83_mesh_info(self, packet_data: bytes, lp: str) -> None:
+        """A mesh-info reply received on 0x83: byte-stuffed, one page holding the whole home, acked as a 0x83."""
+        inner = unstuff_7d(packet_data[1:-1])
+        body, checksum = inner[:-1], inner[-1]
+        if sum(body[5:]) % 256 != checksum:
+            logger.warning(f"{lp} mesh info reply with a bad checksum, ignoring it: {packet_data.hex(' ')}")
+            return
+        await self._process_73_mesh_info(body, b"", lp, ack=False)
+
     async def _process_73_mesh_info(
-        self, inner_struct: bytes, queue_id: bytes, lp: str
+        self, inner_struct: bytes, queue_id: bytes, lp: str, ack: bool = True
     ):
         """Handles the 24-byte paginated mesh info loop."""
         if len(inner_struct) < 15:
@@ -551,8 +583,10 @@ class PacketHandlersMixin:
             )
             return
 
-        packet_devices = inner_struct[8]
         total_devices = inner_struct[12]
+        records = parse_mesh_records(inner_struct, minfo_start_idx)
+        # inner[8] is the page's record count on 0x73 replies, but not on the 0x83 ones (47 for a page of 37): count them
+        packet_devices = inner_struct[8] if ack else len(records)
         new_sequence = False
         if getattr(self, "_mesh_expected", 0) == 0 or getattr(
             self, "_mesh_received", 0
@@ -566,14 +600,13 @@ class PacketHandlersMixin:
             )
         self._mesh_received += packet_devices
 
-        records = parse_mesh_records(inner_struct, minfo_start_idx)
         if records:
             await self._resolve_home_from_mesh(records, new_sequence)
             for n, rec in enumerate(records):
                 # the bridge's own record is the first one of a reply, not the first one of every page
                 await self._handle_mesh_record(rec, new_sequence and n == 0, lp)
 
-        if not self.mitm_mode:
+        if ack and not self.mitm_mode:
             mesh_ack = PacketBuilder.build_mesh_status_ack(self.queue_id)
             await self.write(mesh_ack)
 
