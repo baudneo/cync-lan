@@ -27,6 +27,7 @@ from cync_lan.const import (
     CYNC_SECRET_KEY,
     CYNC_STATIC_DIR,
 )
+from cync_lan.manage_api import router as manage_router
 from cync_lan.structs import GlobalObject
 
 g = GlobalObject()
@@ -38,6 +39,7 @@ class OTPRequest(BaseModel):
 
 
 app = FastAPI()
+app.include_router(manage_router)
 
 # what talking to the Cync cloud / reading or writing the export can raise; anything else is a bug and
 # becomes a logged 500 instead of being reported to the user as a bad request

@@ -1120,6 +1120,21 @@ class MQTTClient:
             }))
         return out
 
+    async def publish_group_discovery(self, group: CyncGroup) -> None:
+        """(Re)announce one group's HA light (and a local group's buttons), e.g. after the web UI created it."""
+        tpc, conf = self.group_discovery_config(group)
+        await self.publish_json_msg(tpc, conf)
+        if group.is_local:
+            for btpc, bconf in self.local_group_button_configs(group):
+                await self.publish_json_msg(btpc, bconf)
+        await self.publish_group_state(group)
+
+    async def remove_group_discovery(self, group: CyncGroup) -> None:
+        """Delete a group's HA entities (empty retained config, as HA's MQTT discovery expects)."""
+        topics = [self.group_discovery_config(group)[0]] + [t for t, _ in self.local_group_button_configs(group)]
+        for tpc in topics:
+            await self.publish(tpc, b"", retain=True)
+
     async def _handle_local_group_extra(self, group: CyncGroup, action: str, lp: str) -> bool:
         registry = g.ncync_server.node_devices
         if action == "sync":

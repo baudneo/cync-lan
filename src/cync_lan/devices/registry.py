@@ -151,6 +151,9 @@ class DeviceRegistry(dict):
         self._groups[group.key] = group
         return group
 
+    def remove_group(self, home_id: int, group_id: int) -> Optional["CyncGroup"]:
+        return self._groups.pop((home_id, group_id), None)
+
     # ---- groups
     def get_group(self, home_id: Optional[int], group_id: int) -> Optional["CyncGroup"]:
         return self._groups.get((home_id, group_id))
