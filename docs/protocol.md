@@ -215,6 +215,12 @@ User guide: `docs/multi_home.md`. Code: `devices/registry.py` (`DeviceRegistry`,
   (user config); queue id match; fingerprint of the reported node ids (an id not reported is never evidence). This is
   implementation, not protocol.
 
+## 7b. What the cloud needs to show a device online [confirmed 2026-11-04]
+The Cync app shows a Wi-Fi device as online only while that device has its own TCP connection to the cloud: a bridge
+relaying every mesh device's 0x83 status was not enough. A connection relayed by cync-lan (MITM / hybrid relay) counts,
+and cync-lan can keep writing its own 0x73 commands into it (docs/hybrid_relay.md). The app itself must reach the cloud
+too (its own TCP connection, port 23779, same DNS name as the devices).
+
 ## 8. Open questions (to answer from the APK / more captures)
 1. Header bytes 1-2: always 0? Any flags?
 2. ~~What exactly is the queue id?~~ Answered for the 0x23 hello (section 7): it is the device's cloud `switchID`,

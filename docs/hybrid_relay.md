@@ -19,6 +19,9 @@ which passes it on to the real cloud like MITM mode does, but cync-lan also keep
   the cloud only shows a device whose own connection is up.
 - Turning the device's "MITM mode" switch off in HA also ends hybrid relay for it until cync-lan restarts.
 
-Unconfirmed (first hardware test pending): whether the device acks cync-lan's 0x73 with a 0x7B that echoes msg id 0, and
+**Confirmed 2026-11-04** on one type 53 switch (Casita 2, Master Shower Lights), with the app proxy on: the app showed it
+online and controlled it, HA controlled it locally and followed the app's changes, on the same connection.
+
+Still unconfirmed: whether the device acks cync-lan's 0x73 with a 0x7B that echoes msg id 0, and
 whether the cloud's control ids can collide with cync-lan's (a collision would make cync-lan keep one of the cloud's
 replies). Watch the MITM log (`mitm_logs/`) and the debug line "hybrid: kept a reply to a cync-lan command".
