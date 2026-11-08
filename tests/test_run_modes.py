@@ -13,6 +13,7 @@ import pytest_asyncio
 from cync_lan import effects as fx
 from cync_lan import mqtt_client as m
 from cync_lan.const import FACTORY_EFFECTS_BYTES
+from cync_lan.devices.registry import DeviceRegistry
 from cync_lan.metadata.model_info import device_type_map
 
 
@@ -106,7 +107,7 @@ def test_effect_lists():
 # ---- parse_entity_state
 class _Server:
     def __init__(self):
-        self.node_devices = {}
+        self.node_devices = DeviceRegistry()
 
 
 def _node(metadata, rgb=True):
@@ -129,9 +130,9 @@ async def client():
 
 async def test_state_reports_the_running_effect(client):
     node, entity = _node(metadata=device_type_map[75])
-    m.g.ncync_server.node_devices[1] = node
+    m.g.ncync_server.node_devices[(123, 1)] = node
     entity.dev_id, entity.sub_id = 1, 0
-    await client.parse_entity_state(entity)
+    await client.parse_entity_state(node, entity)
     payload = client.pub_entity_state.await_args.args[1]
     assert b'"effect": "music_supernova"' in payload
 
@@ -139,8 +140,8 @@ async def test_state_reports_the_running_effect(client):
 async def test_rgb_state_clears_the_effect(client):
     node, entity = _node(metadata=device_type_map[75])
     entity.temperature = 0xFE
-    m.g.ncync_server.node_devices[1] = node
+    m.g.ncync_server.node_devices[(123, 1)] = node
     entity.dev_id, entity.sub_id = 1, 0
-    await client.parse_entity_state(entity)
+    await client.parse_entity_state(node, entity)
     payload = client.pub_entity_state.await_args.args[1]
     assert b'"effect": null' in payload and b'"color_mode": "rgb"' in payload

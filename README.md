@@ -119,7 +119,7 @@ The idea is to mimic the socat hex dump format for easy readability and parsing.
 ```
 
 ### Log files
-The log files are stored by default in the config dir under `mitm_logs` with the filename format of `{(dev|app)}_{device_(ip|id)}_{date:Ymd}.log`. 
+The log files are stored by default in the config dir under `mitm_logs` with the filename format of `mitm_{(dev|app)}_{(home_id-device_id|ip)}-{date:Ymd}.log`. 
 The log files are rotated at local midnight and are not deleted by the app at any point, so it is up to the user to manage the log files.
 
 ### Workflow
@@ -150,6 +150,13 @@ Also, let me set some expectations:
 ## Config file
 See the example [config file](./cync_mesh_example.yaml)
 
+### More than one Cync home
+Each Cync home is its own Bluetooth mesh and device ids restart at 1 in every home. cync-lan keeps the homes apart
+and matches every connected Wi-Fi device (bridge) to its home from the first packet it sends (its cloud
+`switchID`). With more than one home, re-export the config once with this version so every device has a
+`switch_id:`. A per-home `bridges:` IP list is available as a manual override. See
+[multiple homes](docs/multi_home.md) for how it works and the log lines to look for.
+
 ### Export config from Cync cloud API
 By default, the export webserver is started when cync-lan is. Navigate to http://localhost:23778 to access the export web app.
 
@@ -177,7 +184,7 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_MQTT_DEBUG`            | Override MQTT debug logs (set to no for less debug level log spam)                                             | `yes`                                 | str  |
 | `CYNC_APP_MITM_LOGGING`      | Cync mobile apps are always proxied, this controls if the proxied data is logged or not                        | `no`                                  | str  |
 | `CYNC_DEBUG`                 | Enable debug logging                                                                                           | `no`                                  | str  |
-| `CYNC_RAW_DEBUG`             | Enable raw binary message debug logging (non-MITM, so strictly between dev and CyncLAN)                        | `no`                                  | str  |
+| `CYNC_RAW_DEBUG`             | Enable raw binary message debug logging (non-MITM, so strictly between dev and CyncLAN). The dumps include each device's auth code: do not share them unedited | `no`                                  | str  |
 | `CYNC_MITM_DEV_LOGGER`       | Enable MITM console logging for Cync Devices (enabling this will also output to the console)                   | `no`                                  | str  |
 | `CYNC_MITM_APP_LOGGER`       | Enable MITM console logging for mobile APPS (enabling this will also output to the console)                    | `no`                                  | str  |
 | `CYNC_DEVICE_CERT`           | Path to cert file                                                                                              | `certs/server.pem`                    | str  |
@@ -193,8 +200,9 @@ For the `yes` / `no` value, the user input is cast to a lower case string stripp
 | `CYNC_HASS_BIRTH_MSG`        | HASS birth message                                                                                             | `online`                              | str  |
 | `CYNC_HASS_WILL_MSG`         | HASS will message                                                                                              | `offline`                             | str  |
 | `CYNC_CMD_BROADCASTS`        | Number of WiFi devices to send state *change* commands to (2+ offers noticeable command response improvements) | `2`                                   | int  |
-| `CYNC_MAX_TCP_CONN`          | Maximum WiFi devices allowed to connect at a time (keep down log spam, unneccesary load)  more != better       | `8`                                   | int  |
+| `CYNC_MAX_TCP_CONN`          | Maximum WiFi devices allowed to connect at a time (keep down log spam, unneccesary load)  more != better. With more than one Cync home the limit counts per home ([multiple homes](docs/multi_home.md#connection-limit)) | `8`                                   | int  |
 | `CYNC_MESH_REFRESH_SECS`     | Re-ask each connected WiFi device for mesh info this often so devices cut off at the wall go offline. `0` = only on connect | `90`                                  | int  |
+| `CYNC_HOME_NO_BRIDGE_GRACE_SECS` | Seconds a Cync home may have no connected WiFi device (bridge) before a WARNING and its devices are marked offline. `0` = off. Unset: on (30) with more than one home, off with one home. See [multiple homes](docs/multi_home.md#no-bridge-in-a-home-grace-period) | `30` (several homes)                  | int  |
 | `CYNC_TCP_WHITELIST`         | Comma separated string of allowed IPs (keep down log spam, unneccesary load, restrict to 'always-on' devices)  | Allow ALL IPs                         | str  |
 | `CYNC_BASE_DIR`              | Base directory for **ALL** files.                                                                              | `/root/cync-lan`                      | str  |
 | `CYNC_CFGAPPEND_DIR`         | Directory for persistent files (config, uuid, etc.) This is **appended** to `CYNC_BASE_DIR`                    | `/config`                             | str  |

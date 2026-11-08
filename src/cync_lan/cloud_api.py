@@ -27,11 +27,21 @@ from cync_lan.const import (
     CYNC_OVERWRITE_CONFIG_FILE,
     CYNC_SECRET_KEY,
 )
+from cync_lan.devices.registry import SWITCH_ID_KEY, as_positive_int, carry_over_bridges
 from cync_lan.structs import ComputedTokenStruct, EntityState, GlobalObject
 from cync_lan.utils import write_private_file
 
 logger = logging.getLogger(CYNC_LOG_NAME)
 g = GlobalObject()
+
+
+def _cloud_switch_id(raw) -> Optional[int]:
+    """The cloud 'switchID' of a device (what it sends as its 0x23 queue id), None when absent, zero or not a number.
+    Same rule as the config reader (``as_positive_int``), so an exported value always loads back."""
+    switch_id = as_positive_int(raw)
+    if switch_id is None and raw not in (None, 0, "0"):
+        logger.debug(f"CyncCloudAPI: ignoring an unusable switchID: {raw!r}")
+    return switch_id
 
 
 class CyncCloudAPI:
@@ -380,6 +390,7 @@ class CyncCloudAPI:
         cync_lan_cfg = await self._parse_raw_export(exported_data)
         # write config to file in YAML format
         base_cfg_path = Path(CYNC_CONFIG_FILE_PATH)
+        self._keep_user_overrides(cync_lan_cfg, base_cfg_path)
         raw_cfg_file_out = base_cfg_path
         if CYNC_OVERWRITE_CONFIG_FILE is False:
             counter = 1
@@ -398,6 +409,23 @@ class CyncCloudAPI:
             return False
         else:
             return True
+
+    def _keep_user_overrides(self, new_cfg: dict, old_cfg_path: Path) -> None:
+        """Carry each existing home's hand-written 'bridges:' list into a new export (matched by home id)."""
+        lp = f"{self.lp}:export:"
+        if not old_cfg_path.is_file():
+            return
+        try:
+            old_cfg = yaml.safe_load(old_cfg_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError, UnicodeDecodeError) as exc:
+            logger.warning(
+                f"{lp} Could not read the existing config {old_cfg_path} to keep its 'bridges:' lists ({exc!r}); "
+                f"re-add them by hand if you had any"
+            )
+            return
+        copied = carry_over_bridges(new_cfg, old_cfg)
+        if copied:
+            logger.info(f"{lp} Kept the 'bridges:' list of {copied} home(s) from the existing config")
 
     def _parse_raw_device(
         self, raw_device: dict, raw_home: dict, new_home: dict, entity_reg: dict
@@ -424,7 +452,7 @@ class CyncCloudAPI:
         dev_name = str(raw_device["displayName"])
         dev_type = int(raw_device["deviceType"])
         fw_ver = str(raw_device["firmwareVersion"])
-        # switchID ? maybe links them in their logic?
+        # switchID: exported as 'switch_id', see docs/multi_home.md
         raw_id = str(raw_device["deviceID"])
         home_id = raw_id[:9]
         raw_dev = raw_id.split(home_id)[1]
@@ -486,6 +514,10 @@ class CyncCloudAPI:
         new_device["fw"] = fw_ver
         new_device["mac"] = bt_mac
         new_device["wifi_mac"] = wifi_mac
+        switch_id = _cloud_switch_id(raw_device.get("switchID"))
+        if switch_id is not None:
+            # the device sends this as its 0x23 queue id (confirmed on type 53, see docs/protocol.md section 7)
+            new_device[SWITCH_ID_KEY] = switch_id
         # give it the default 0, if it has children, we will overwrite the 0
         new_device["endpoints"] = {0: dev_name}
         # del cync_device

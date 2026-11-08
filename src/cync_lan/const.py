@@ -45,6 +45,8 @@ __all__ = [
     "CYNC_CMD_BROADCASTS",
     "CYNC_MAX_TCP_CONN",
     "CYNC_MESH_REFRESH_SECS",
+    "CYNC_HOME_NO_BRIDGE_GRACE_SECS",
+    "CYNC_HOME_NO_BRIDGE_GRACE_EXPLICIT",
     "CYNC_TCP_WHITELIST",
     "CYNC_API_BASE",
     "CYNC_MQTT_HOST",
@@ -120,6 +122,8 @@ else:
         CYNC_CMD_BROADCASTS = int(CYNC_CMD_BROADCASTS)
     except ValueError:
         CYNC_CMD_BROADCASTS = 2
+# Wi-Fi devices allowed to hold a TCP connection. With several Cync homes this counts per home (devices/proxy.py
+# can_connect): one shared limit let one home take every slot (docs/multi_home.md#connection-limit)
 CYNC_MAX_TCP_CONN: int = os.environ.get("CYNC_MAX_TCP_CONN", 8)
 if not CYNC_MAX_TCP_CONN:
     CYNC_MAX_TCP_CONN = 8
@@ -147,6 +151,31 @@ def parse_mesh_refresh_secs(raw: Union[str, int, float, None]) -> float:
 
 
 CYNC_MESH_REFRESH_SECS: float = parse_mesh_refresh_secs(os.environ.get("CYNC_MESH_REFRESH_SECS"))
+# multi-home: when a Cync home has no TCP bridge for this long (at start, or after its last bridge closed), log a WARNING
+# naming the home and mark its devices offline; commands to them are dropped until a bridge connects. 0 turns it off.
+# Without the env var it only runs when several homes are configured (single-home installs keep their old behaviour);
+# setting it turns it on for them too. See docs/multi_home.md.
+DEFAULT_HOME_NO_BRIDGE_GRACE_SECS: float = 30.0
+
+
+def parse_home_no_bridge_grace_secs(raw: Union[str, int, float, None]) -> float:
+    """Unset, empty, "null" or unusable values mean the default; 0 (or less) turns the check off."""
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        return DEFAULT_HOME_NO_BRIDGE_GRACE_SECS
+    if not math.isfinite(value):
+        return DEFAULT_HOME_NO_BRIDGE_GRACE_SECS
+    return max(0.0, value)
+
+
+CYNC_HOME_NO_BRIDGE_GRACE_SECS: float = parse_home_no_bridge_grace_secs(
+    os.environ.get("CYNC_HOME_NO_BRIDGE_GRACE_SECS")
+)
+CYNC_HOME_NO_BRIDGE_GRACE_EXPLICIT: bool = bool(
+    (os.environ.get("CYNC_HOME_NO_BRIDGE_GRACE_SECS") or "").strip()
+    and os.environ.get("CYNC_HOME_NO_BRIDGE_GRACE_SECS", "").strip().lower() != "null"
+)
 CYNC_TCP_WHITELIST: Optional[Union[str, List[Optional[str]]]] = os.environ.get(
     "CYNC_TCP_WHITELIST"
 )

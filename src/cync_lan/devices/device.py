@@ -5,7 +5,7 @@ import random
 import struct
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Collection, Dict, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Collection, Dict, List, Optional, Set, Tuple, Union
 
 from cync_lan.const import (
     CYNC_CMD_BROADCASTS,
@@ -81,6 +81,8 @@ class CyncDevice:
         home_id: Optional[int] = None,
         hvac: Optional[dict] = None,
         entities: Optional[Dict[int, "EntityState"]] = None,
+        home_name: Optional[str] = None,
+        switch_id: Optional[int] = None,
     ):
         self.control_bytes = bytes([0x00, 0x00])
         self.stale_voters: Set[str] = set()
@@ -93,6 +95,10 @@ class CyncDevice:
             device_type_map[self.type] if dev_type in device_type_map else None
         )
         self.home_id: Optional[int] = home_id
+        # name of the Cync home (config key) this device is in, for logs and warnings
+        self.home_name: Optional[str] = home_name
+        # cloud 'switchID' from the export, if any: what this device sends as its 0x23 queue id (docs/protocol.md section 7)
+        self.switch_id: Optional[int] = switch_id
         self._mac = mac
         self.wifi_mac = wifi_mac
         self._version: Optional[str] = None
@@ -108,6 +114,11 @@ class CyncDevice:
     @property
     def hass_id(self):
         return f"{self.home_id}-{self.id}"
+
+    @property
+    def key(self) -> Tuple[Optional[int], int]:
+        """(home_id, id): unique across homes. ``id`` alone is only unique within one home's mesh."""
+        return self.home_id, self.id
 
     @property
     def is_sol_lamp(self) -> bool:
@@ -301,7 +312,7 @@ class CyncDevice:
             self._online = value
             g.tasks.append(
                 asyncio.get_running_loop().create_task(
-                    g.mqtt_client.pub_online(self.id, value)
+                    g.mqtt_client.pub_online(self, value)
                 )
             )
 
@@ -481,7 +492,8 @@ class CyncDevice:
             logger.debug(f"{self.lp}{sub_fmt_str} seems to have STALE data (no BT mesh activity)")
             self.stale_voters.add(bridge_ip or "unknown")
             self.num_late_states = len(self.stale_voters)
-            tcp_pool = await g.ncync_server.get_dev_tcp_pool()
+            # only this device's home's bridges can see it: they are the electorate
+            tcp_pool = await g.ncync_server.get_dev_tcp_pool(self.home_id)
             live_ips = [d.ip_address for d in tcp_pool]
             votes = len(self.stale_voters & set(live_ips))
             quorum = max(1, self.stale_quorum(len(live_ips)))
@@ -515,8 +527,7 @@ class CyncDevice:
         self.stale_voters.clear()
         self.num_late_states = 0
         self.entities[e_state.sub_id] = e_state
-        g.ncync_server.node_devices[self.id] = self
-        return await g.mqtt_client.parse_entity_state(e_state, from_pkt=from_pkt)
+        return await g.mqtt_client.parse_entity_state(self, e_state, from_pkt=from_pkt)
 
     def get_ctrl_msg_id_bytes(self):
         """
@@ -536,9 +547,19 @@ class CyncDevice:
 
     async def send_command(self, op: int, cmd_: int, sub_id: int, payload: bytes, m_cb: ControlMessageCallback, lp: str):
         tasks = []
-        tcp_pool = await g.ncync_server.get_dev_tcp_pool()
+        # a bridge relays only its own home's mesh, and target_id (self.id) is only unique within that home
+        tcp_pool = await g.ncync_server.get_dev_tcp_pool(self.home_id)
         if not tcp_pool:
-            logger.debug(f"{lp} no eligible TCP connections available for command broadcast")
+            msg = (
+                f"{lp} no TCP bridge connected for Cync home '{self.home_name}' ({self.home_id}), command for "
+                f"'{self.name}' dropped (see docs/multi_home.md)"
+            )
+            # one WARNING per outage, the repeats at DEBUG (see nCyncServer.first_drop_in_outage)
+            first = getattr(g.ncync_server, "first_drop_in_outage", None)
+            if first is None or first(self.home_id):
+                logger.warning(f"{msg}; further dropped commands for this home are logged at DEBUG until a bridge connects")
+            else:
+                logger.debug(msg)
             return
 
         # a device with its own live TCP session always gets the command directly through it: a show command relayed over
@@ -570,7 +591,8 @@ class CyncDevice:
 
                 if bridge_device.mitm_mode is True:
                     logger.debug(
-                        f"{lp} MITM mode active for this device: {bridge_device.ip_address} (ID: {bridge_device.node.id})"
+                        f"{lp} MITM mode active for this device: {bridge_device.ip_address} "
+                        f"(ID: {getattr(bridge_device.node, 'hass_id', None)})"
                         f" not writing data >>> \n\n{full_packet.hex(" ")}")
                 else:
                     m_cb.id = cmsg_id
@@ -580,7 +602,7 @@ class CyncDevice:
                     tasks.append(bridge_device.write(full_packet))
                     str_appnd = "..."
                     if CYNC_RAW:
-                        str_appnd = (f' state to device ({bridge_device.ip_address}[{bridge_device.node.id}|queue_id: {bridge_device.queue_id.hex(" ")}):\n'
+                        str_appnd = (f' state to device ({bridge_device.ip_address}[{getattr(bridge_device.node, 'hass_id', None)}|queue_id: {bridge_device.queue_id.hex(" ")}):\n'
                                      f'HEX: {full_packet.hex(" ")}\n'
                                      f'INT: {bytes2list(full_packet)}\n')
                         logger.debug(f"{lp} Sending{str_appnd}")

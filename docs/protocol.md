@@ -42,7 +42,7 @@ total size = len_hi * 256 + len_lo + 5
 After the 5-byte header, most packets continue with:
 | offset | size | field |
 |---|---|---|
-| 5 | 4 | **queue id** (aka "endpoint"): identifies the device's session, assigned by the cloud/device; we echo it back [inferred] |
+| 5 | 4 | **queue id** (aka "endpoint"): identifies the device; in the 0x23 hello it is the device's cloud `switchID` (big-endian), see section 7 [confirmed for 0x23]; we echo it back |
 | 9 | 3 | **msg id**: per-message id; acks echo it. 0x73 control uses its own 1-byte counter inside the inner packet (see section 5) [inferred] |
 | 12 | ... | data |
 
@@ -103,6 +103,14 @@ Payload (after 12-byte prefix) is one of:
    - `FA 54`: motion sensor; device id at payload[9], flag at payload[15]. [inferred]
    - `FA D9`: bulk status, seen during firmware updates (per-device update percentage). 4 bytes per device:
      node id, sub id, status type, value. [inferred]
+   - `F9 52`: a **mesh info reply**, the same reply the 0x73 section describes, but sent on 0x83. Seen 2026-11-04 from
+     3 bridges of one home (51 devices in the config) answering our 0x73 mesh info request, while bridges of the
+     account's other homes answered on 0x73. cync-lan does not parse it here yet: it logs "UNKNOWN packet data
+     (ctrl_bytes: f9 52 ...)" and only acks. [confirmed that it happens; why some bridges use 0x83 is unknown]
+     The captured payload has `7D 5E` at inner offset 6 where a single byte is expected, and its checksum does not
+     match: most likely HDLC-style byte stuffing (`7E` sent as `7D 5E`, `7D` as `7D 5D`) that no parser here undoes.
+     After un-stuffing, the 24-byte records start at inner[14]; inner[12] was 37 in all three captures and inner[8]
+     was 37, 37 and 45, so inner[8] may not be "records in this page" here. [inferred]
 - Ack: `88 00 00 00 03 <msg id>`.
 - The `FA D9` branch used to return before sending the ack; it now logs and falls through to the ack. Whether the device needs that ack is **unknown** (no capture proves it either way).
 
@@ -171,9 +179,40 @@ Cync app's highlighted tile and the light itself checked by eye. Code: `cync_lan
 record equals this number. Types with special handling in the parser: 96 (motion: recently_seen byte = motion),
 67 (multi-endpoint, brightness byte = endpoint bitmask). See `docs/known_devices.md`.
 
-## 7. Open questions (to answer from the APK / more captures)
+## 7. Homes (multiple meshes per account)
+User guide: `docs/multi_home.md`. Code: `devices/registry.py` (`DeviceRegistry`, `HomeResolver`).
+- A Cync account can hold several homes. Each home is a separate BLE mesh with its own `access_key` (cloud export,
+  per home). [inferred from the export layout]
+- Mesh node ids are assigned per home and restart at 1 in every home, so the same id exists in several homes.
+  [confirmed: seen in a 4-home account export, ids 1..N in every home]
+- The exporter takes the first 9 digits of the cloud `deviceID` as the home id and the last 3 as the node id. [inferred]
+- A device added in the app after the last export gets an id its home does not have in the config (most likely the
+  next free id of that home). With nested ids that id usually exists in a bigger home, so reported ids are no proof
+  of a bridge's home and cync-lan does not use them for that. [inferred: next-free-id assignment not confirmed]
+- A bridge (device with a TCP session) reports and relays only its own home's mesh: the mesh-info pages and 0x83 status
+  it sends carry bare node ids with no home field. [inferred]
+- Control packets carry no home field either: `target` is the bare node id, so a command sent through a bridge of the
+  wrong home would most likely reach the device with the same id in that bridge's home. [inferred, not tested]
+- No packet carries a home field, but the 0x23 **queue id** (4 bytes at offsets 6-9) identifies the device: read
+  big-endian, it equals that device's cloud `switchID` (`bulbsArray[].switchID`, exported as `switch_id`), and the
+  export tells which home that device is in. [confirmed 2026-11-04 in a 4-home account: 5 type 53 switches (fw 1.0.110) and 4 type 137
+  bulbs (fw 1.0.380); each sent its own switchID, the same value on every reconnect; all 4 homes resolved by it] It is not the home id.
+  Only Wi-Fi devices have a switchID in the export (103 of 105 devices; the 2 without are BT-only), which fits: only
+  Wi-Fi devices open a TCP session. Other device types and firmware versions are untested. The code logs every queue
+  id at INFO with what it matched and uses a match to pick the bridge's home.
+- The mesh-info header byte inner[12] ("total devices") is not used to identify the home: it may differ from the
+  configured count (offline devices, paging). [inferred]
+- How cync-lan picks a bridge's home, in order: only one home configured; the IP is in the home's `bridges:` list
+  (user config); queue id match. A bridge none of these places stays unresolved and is not used. This is
+  implementation, not protocol.
+
+## 8. Open questions (to answer from the APK / more captures)
 1. Header bytes 1-2: always 0? Any flags?
-2. What exactly is the queue id / endpoint, who assigns it, is it per device or per session?
+2. ~~What exactly is the queue id?~~ Answered for the 0x23 hello (section 7): it is the device's cloud `switchID`,
+   per device and stable across reconnects [confirmed on type 53 fw 1.0.110 and type 137 fw 1.0.380]. Still open: is it the same on every
+   device type and firmware (users: report the `0x23 queue id ...` INFO line, see `docs/multi_home.md`); do the
+   queue ids in other packet types (0x43 example `16 b0 56 fc`) always equal the session's 0x23 value; where the APK
+   assigns it.
 3. Auth in 0x23: format of the auth code; is it validated by the cloud; does a device ever reject a bad one?
 4. 0xC8 reply: how is it built? what do the date/time-looking bytes mean?
 5. 0x78 vs 0x7B for acking 0x73.
@@ -183,7 +222,14 @@ record equals this number. Types with special handling in the parser: 96 (motion
 9. Provisioning flow for factory-reset devices; group/room/scene commands; timers; firmware-update flow.
 10. Whether the 0x73 checksum rule excludes the `F8` byte by design or by accident.
 
-## 8. Changelog
+## 9. Changelog
+- 2026-11-04 (later): `F9 52` mesh info replies seen on 0x83 (section 4, 0x83), with probable `7D 5E` byte stuffing.
+- 2026-11-04: confirmed on hardware that the 0x23 queue id is the device's cloud `switchID` (type 53 switches fw
+  1.0.110, type 137 bulbs fw 1.0.380, stable over reconnects), not the home id. Section 7 and open question 2 updated.
+- 2026-11-03: multi-home. New section 7 (homes: one BLE mesh and `access_key` per home, node ids restart at 1, no home
+  field in mesh-info / status / control packets). Devices are keyed by (home id, mesh id) and each bridge session is
+  matched to its home; the 0x23 queue id is logged at INFO to test the hypothesis in open question 2. No new confirmed
+  packet facts.
 - 2026-10-26: run modes (light / music shows, custom slots, exit) and status byte 6 as the running-show code, measured on a
   type 75 (nathandlawrence-bot). Fireworks is index 3 on type 75 (`3A` elsewhere).
 - 2026-10-22 (later): code pointers updated after the `devices.py` split; `FA D9` ack note; session-behaviour notes. No new protocol facts yet, the next real additions should come from hardware logs (look for "dropping packet that failed to parse" lines, each carries the packet hex) and the APK pass.

@@ -24,11 +24,13 @@ async def test_command_always_goes_through_the_targets_own_session(monkeypatch):
     own = bridge("own")
     pool = others[:2] + [own] + others[2:]
     monkeypatch.setattr(device_mod.g, "ncync_server", SimpleNamespace(get_dev_tcp_pool=AsyncMock(return_value=pool)))
-    target = SimpleNamespace(id=4, tcp_session=own)
+    target = SimpleNamespace(id=4, tcp_session=own, home_id=1, home_name="Home", name="bulb")
     for _ in range(20):
         cb = ControlMessageCallback(msg_id=0, message=None, sent_at=0.0, callback=None)
         await device_mod.CyncDevice.send_command(target, 0xE2, 0x0E, 0, bytes([0x11, 0x02, 0x07, 1, 2, 0x7A]), cb, "t:")
     assert own.write.await_count == 20
+    # only the target's own home's bridges are asked for (a bridge relays only its own home's mesh)
+    device_mod.g.ncync_server.get_dev_tcp_pool.assert_awaited_with(1)
     # still a broadcast: the other slot(s) went to the other bridges
     assert sum(b.write.await_count for b in others) == 20 * (device_mod.CYNC_CMD_BROADCASTS - 1)
 
@@ -36,7 +38,7 @@ async def test_command_always_goes_through_the_targets_own_session(monkeypatch):
 async def test_device_without_own_session_still_uses_random_bridges(monkeypatch):
     pool = [bridge(f"b{i}") for i in range(4)]
     monkeypatch.setattr(device_mod.g, "ncync_server", SimpleNamespace(get_dev_tcp_pool=AsyncMock(return_value=pool)))
-    target = SimpleNamespace(id=7, tcp_session=None)
+    target = SimpleNamespace(id=7, tcp_session=None, home_id=1, home_name="Home", name="bulb")
     cb = ControlMessageCallback(msg_id=0, message=None, sent_at=0.0, callback=None)
     await device_mod.CyncDevice.send_command(target, 0xD0, 0x0D, 0, bytes([0x11, 0x02, 0x01, 0, 0]), cb, "t:")
     assert sum(b.write.await_count for b in pool) == min(device_mod.CYNC_CMD_BROADCASTS, len(pool))

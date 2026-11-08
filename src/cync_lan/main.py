@@ -110,6 +110,13 @@ class CyncLAN:
                     f"will not start; visit the export page to create a new config file."
                 )
         if nodes is not None:
+            homes = nodes.home_ids()
+            if len(homes) > 1:
+                # each home is its own BLE mesh: every bridge is matched to its home (docs/multi_home.md)
+                logger.info(
+                    f"{lp} {len(nodes)} devices in {len(homes)} Cync homes: "
+                    + ", ".join(f"{nodes.describe_home(h)}: {len(nodes.in_home(h))}" for h in homes)
+                )
             g.ncync_server = nCyncServer(nodes)
             g.mqtt_client = MQTTClient()
             g.mqtt_client.start_task = m_start = asyncio.Task(

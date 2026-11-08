@@ -1,3 +1,16 @@
+### Unreleased (branch `multi-home`)
+- **Multiple Cync homes are supported.** Device ids restart at 1 in every home, so devices are now keyed by home and id; before this, homes overwrote each other and only one device per id showed up. HA entity ids and MQTT topics are unchanged; devices that were hidden appear as new entities. See [docs/multi_home.md](docs/multi_home.md)
+- Each bridge (Wi-Fi device connected to cync-lan) is matched to its home, and commands for a device only go through bridges of its home. A device's first packet (0x23) carries its cloud `switchID` (confirmed on hardware), so with a config exported by this version the home is known at once: **with more than one home, re-export once**. A per-home `bridges: ["192.168.1.50"]` IP list overrides it by hand; otherwise the bridge stays unplaced, is not used for commands and logs one WARNING at its first packet saying how to fix it. Device ids are not used to guess a home: they are nested across homes (1..N in each), so a guess could send commands to the wrong home. Re-export the config after adding devices
+- New `CYNC_HOME_NO_BRIDGE_GRACE_SECS` (default 30 with more than one home, off with one home unless set; `0` = off): a home with no bridge for that long logs a WARNING and its devices are marked offline
+- Every device connection logs its 0x23 queue id and what it matched (INFO with several homes, DEBUG with one). Confirmed on type 53 switches and type 137 bulbs; reports for other device types are welcome, see [docs/multi_home.md](docs/multi_home.md#please-report-other-device-types)
+- The cloud export writes a device's `switch_id` and keeps each home's `bridges:` list when it rewrites `cync_mesh.yaml`
+- A home with a non-numeric or duplicate `id` is skipped with an error instead of loading wrongly
+- With more than one home, `CYNC_MAX_TCP_CONN` counts per home (default 8 per home). One shared limit let the first devices to reconnect take every slot and leave another home without a bridge. The home is read from the device's `switch_id` when it connects, so re-export once; with an older config, bridges whose home is unknown are limited to the per-home value x homes in total. Single home: unchanged
+- The device a bridge is, is known from its first packet (its `switch_id`), so bridges get their MITM switch even when their mesh info is not parsed; a device that reconnects from an IP another device used before no longer keeps that device
+- Logs no longer print a device's auth code (debug dump of the hello, error dump of a packet that failed to parse); `CYNC_RAW_DEBUG` dumps still do, the README says so
+- MITM log files include the home id: `mitm_dev_<home_id>-<device_id>-<date>.log`
+- Single home: no config change needed. A command dropped because no bridge is connected is now one WARNING per outage (it was a debug line), then debug lines until a bridge connects
+
 ### 0.0.8b1 (pre-release)
 - **CyncLAN is now maintained and deployed with Claude (AI).** A human wrote it from raw hex, by hand. The AI now does the upkeep: it refactors, writes the tests and keeps it reliable, and a human reviews every change.
 - Big reliability refactor, back up first and report problems at https://github.com/baudneo/cync-lan/issues
