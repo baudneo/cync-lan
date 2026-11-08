@@ -228,7 +228,7 @@ async def _build_world(monkeypatch, registry) -> World:
     monkeypatch.setattr(g, "uuid", uuid.UUID(int=1))
     monkeypatch.setattr(g, "tasks", [])
     server_mod.nCyncServer._instance = None
-    srv = server_mod.nCyncServer(registry)
+    srv = server_mod.nCyncServer(registry, home_grace_secs=0)
     mqtt_mod.MQTTClient._instance = None
     monkeypatch.setattr(g, "ncync_server", srv)
     c = mqtt_mod.MQTTClient()
@@ -242,6 +242,7 @@ async def _build_world(monkeypatch, registry) -> World:
 async def _teardown(w: World):
     for s in list(w.srv.tcp_connections.values()):
         await s.tasks.cancel_all()
+    await w.srv._stop_home_grace()
     pending = [t for t in g.tasks if t is not None and not t.done()]
     for t in pending:
         t.cancel()
@@ -556,6 +557,30 @@ async def test_unplaced_bridge_applies_nothing_warns_once_and_gets_no_commands(w
 
 # =====================================================================================================================
 # 6. a home without a bridge
+async def test_home_without_a_bridge_warns_and_goes_offline_after_the_grace(world, caplog):
+    for d in world.reg.values():
+        d._online = True
+    world.srv.home_grace_secs = 0.3
+    # what server.start() does once it is listening
+    tasks = {h: world.srv.start_home_grace(h) for h in world.reg.home_ids()}
+    with caplog.at_level(logging.WARNING):
+        house = await world.connect("10.0.2.1", HOUSE)  # a House bridge resolves in time
+        await asyncio.wait(list(tasks.values()))
+    assert house.home_id == HOUSE
+    assert tasks[HOUSE].cancelled()
+    assert not tasks[CABIN].cancelled() and not tasks[BARN].cancelled()
+    grace = [r.getMessage() for r in caplog.records if "No TCP bridge for Cync home" in r.getMessage()]
+    assert len(grace) == 2
+    assert any("'Cabin' (100000001)" in m and "6 device(s)" in m for m in grace)
+    assert any("'Barn' (100000003)" in m and "20 device(s)" in m for m in grace)
+    assert all(not d.online for h in (CABIN, BARN) for d in world.reg.in_home(h))
+    assert all(d.online for d in world.reg.in_home(HOUSE))
+    await asyncio.gather(*g.tasks)  # the availability publishes the online setter queued
+    offline = [t for t, p in world.broker.published if p == b"offline"]
+    assert f"{world.mqtt.topic}/availability/{CABIN}-1" in offline
+    assert not any(f"/availability/{HOUSE}-" in t for t in offline)
+
+
 # =====================================================================================================================
 # 7. stale quorum per home
 async def test_stale_quorum_is_counted_among_the_devices_home_bridges_only(world):

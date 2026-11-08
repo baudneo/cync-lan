@@ -16,6 +16,10 @@ import pytest_asyncio
 
 from cync_lan import mqtt_client as mqtt_mod
 from cync_lan import server as server_mod
+from cync_lan.const import (
+    DEFAULT_HOME_NO_BRIDGE_GRACE_SECS,
+    parse_home_no_bridge_grace_secs,
+)
 from cync_lan.devices import device as device_mod
 from cync_lan.devices import proxy as proxy_mod
 from cync_lan.devices.device import CyncDevice
@@ -75,7 +79,7 @@ async def env():
     """A real server holding a two-home registry, with fake MQTT."""
     server_mod.nCyncServer._instance = None
     reg = make_registry()
-    srv = server_mod.nCyncServer(reg)
+    srv = server_mod.nCyncServer(reg, home_grace_secs=0)
     g.ncync_server = srv
     g.tasks = []
     g.mqtt_client = SimpleNamespace(
@@ -84,6 +88,7 @@ async def env():
         get_startup_topic_state=AsyncMock(return_value=None), topic="cync_lan",
     )
     yield srv, reg
+    await srv._stop_home_grace()
     for t in g.tasks:
         t.cancel()
     g.mqtt_client = None
@@ -131,6 +136,17 @@ def updates(monkeypatch):
 
 
 # ---- config
+def test_grace_secs_parsing():
+    assert DEFAULT_HOME_NO_BRIDGE_GRACE_SECS == 30.0
+    assert parse_home_no_bridge_grace_secs(None) == 30.0
+    assert parse_home_no_bridge_grace_secs("null") == 30.0
+    assert parse_home_no_bridge_grace_secs("nan") == 30.0
+    assert parse_home_no_bridge_grace_secs("0") == 0.0
+    assert parse_home_no_bridge_grace_secs(-3) == 0.0
+    assert parse_home_no_bridge_grace_secs(" 12.5 ") == 12.5
+
+
+# ---- server pools
 async def test_pool_is_per_home_and_unresolved_bridges_are_in_none(env):
     srv, _ = env
     cabin = session(srv, "10.0.0.1")
@@ -315,6 +331,80 @@ async def test_83_status_of_an_unplaced_bridge_is_dropped(env, updates):
     for i in (1, 2, 3, 4, 5, 6):  # all of House, some only House has
         await s._parse_83_device_state(status_83(i), 0, 0, "t:")
     assert updates == [] and not s.home.resolved
+
+
+# ---- no bridge in a home
+async def test_grace_expiry_warns_and_marks_the_homes_devices_offline(env, caplog):
+    srv, reg = env
+    srv.home_grace_secs = 0.01
+    for d in reg.values():
+        d._online = True
+    with caplog.at_level(logging.WARNING):
+        task = srv.start_home_grace(CABIN)
+        await task
+    assert all(not d.online for d in reg.in_home(CABIN))
+    assert all(d.online for d in reg.in_home(HOUSE))
+    assert "No TCP bridge for Cync home 'Cabin' (1001)" in caplog.text
+
+
+async def test_grace_does_not_run_for_a_single_home_unless_the_user_set_it():
+    """Single-home installs keep their old behaviour: no offline marking when the bridge is away a moment."""
+    server_mod.nCyncServer._instance = None
+    reg = make_registry(homes=(HOUSE,))
+    srv = server_mod.nCyncServer(reg, home_grace_secs=30, home_grace_explicit=False)
+    assert srv.start_home_grace(HOUSE) is None
+    explicit = server_mod.nCyncServer(reg, home_grace_secs=30, home_grace_explicit=True)
+    task = explicit.start_home_grace(HOUSE)
+    assert task is not None
+    await explicit._stop_home_grace()
+
+
+async def test_grace_runs_by_default_with_several_homes():
+    server_mod.nCyncServer._instance = None
+    srv = server_mod.nCyncServer(make_registry(), home_grace_secs=30, home_grace_explicit=False)
+    task = srv.start_home_grace(CABIN)
+    assert task is not None
+    await srv._stop_home_grace()
+
+
+async def test_a_bridge_resolving_into_the_home_cancels_its_grace(env):
+    srv, _ = env
+    srv.home_grace_secs = 30
+    task = srv.start_home_grace(HOUSE)
+    assert srv.start_home_grace(HOUSE) is task  # not stacked
+    s = session(srv, "10.0.0.5")
+    await s._home_resolved(s.home.pin(HOUSE, "unique_id", "test"))
+    await asyncio.sleep(0)
+    assert task.cancelled()
+
+
+async def test_last_bridge_closing_arms_the_grace_and_stop_awaits_it(env):
+    srv, _ = env
+    srv.home_grace_secs = 30
+    s = session(srv, "10.0.0.5")
+    s.home.pin(CABIN, "unique_id", "test")
+    await s.close()
+    task = srv.home_grace_tasks[CABIN]
+    assert not task.done()
+    await srv._stop_home_grace()
+    assert task.cancelled() and srv.home_grace_tasks == {}
+
+
+async def test_same_ip_reconnect_does_not_leave_a_single_home_grace_armed(env, monkeypatch):
+    async def no_tasks(self):
+        return None
+
+    monkeypatch.setattr(CyncTCPSession, "start_tasks", no_tasks)
+    srv, _ = env
+    reg = make_registry(homes=(HOUSE,))
+    srv.node_devices = reg
+    srv.home_grace_secs = 30
+    existing = session(srv, "10.0.0.9", registry=reg)
+    await srv._register_new_connection(FakeReader(), FakeWriter("10.0.0.9"))
+    await asyncio.sleep(0)
+    assert srv.tcp_connections["10.0.0.9"] is existing
+    task = srv.home_grace_tasks.get(HOUSE)
+    assert task is None or task.cancelled()
 
 
 # ---- MQTT

@@ -636,6 +636,8 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
         if not self.is_app:
             # the pool just shrank: bulbs the other bridges already reported stale may now meet the vote
             await g.ncync_server.revote_offline()
+            # last bridge of its home gone: arm that home's no-bridge timer
+            await g.ncync_server.bridge_closed(self)
 
     @property
     def reader(self):

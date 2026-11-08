@@ -6,6 +6,8 @@ from typing import Dict, List, Mapping, Optional, Set, Union
 import uvloop
 
 from cync_lan.const import (
+    CYNC_HOME_NO_BRIDGE_GRACE_EXPLICIT,
+    CYNC_HOME_NO_BRIDGE_GRACE_SECS,
     CYNC_LOG_NAME,
     CYNC_SRV_HOST,
     CYNC_SRV_PORT,
@@ -80,7 +82,27 @@ class nCyncServer:
             marked += dev.revote_stale(live_ips[dev.home_id])
         return marked
 
-    # ---- per-home bridge availability (multi-home, see docs/multi_home.md)
+    # ---- per-home "no bridge" grace (multi-home, see docs/multi_home.md)
+    def start_home_grace(self, home_id: int) -> Optional[asyncio.Task]:
+        """
+        Arm the no-bridge timer for a home (at start, and when the home's last bridge closed). On expiry, if the home
+        still has no bridge, a WARNING names it and its devices are marked offline. Already armed: left alone.
+        With one home it only runs when the user set CYNC_HOME_NO_BRIDGE_GRACE_SECS (single-home installs keep their
+        old behaviour: no offline marking just because the bridge is away for a moment).
+        """
+        if self.home_grace_secs <= 0 or self.shutting_down:
+            return None
+        if len(self.node_devices.home_ids()) < 2 and not self.home_grace_explicit:
+            return None
+        task = self.home_grace_tasks.get(home_id)
+        if task is not None and not task.done():
+            return task
+        task = asyncio.create_task(
+            self._home_no_bridge_grace(home_id, self.home_grace_secs), name=f"home_no_bridge_grace-{home_id}"
+        )
+        self.home_grace_tasks[home_id] = task
+        return task
+
     def cancel_home_grace(self, home_id: Optional[int]) -> bool:
         """A bridge is up in this home: disarm its no-bridge timer. The task stays referenced until it finished."""
         # the next time this home has no bridge is a new outage: its first dropped command warns again
@@ -101,7 +123,48 @@ class nCyncServer:
         self._drop_warned_homes.add(home_id)
         return True
 
-    def __init__(self, node_map: Mapping):
+    async def _home_no_bridge_grace(self, home_id: int, delay: float):
+        lp = f"{self.lp}home_grace:"
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            logger.debug(f"{lp} home {self.node_devices.describe_home(home_id)} has a bridge again, timer cancelled")
+            raise
+        if self.get_dev_tcp_pool_sync(home_id):
+            # a bridge resolved into the home and nothing cancelled us (race): nothing to report
+            return
+        devices = self.node_devices.in_home(home_id)
+        logger.warning(
+            f"{lp} No TCP bridge for Cync home {self.node_devices.describe_home(home_id)} after {delay:g} seconds: "
+            f"its {len(devices)} device(s) are marked offline and commands to them are dropped until one of its "
+            f"Wi-Fi devices connects. Check that this home's devices are DNS-redirected to this server; if a bridge "
+            f"is connected but its home could not be worked out, there is a WARNING about it (see docs/multi_home.md)."
+        )
+        for dev in devices:
+            dev.online = False
+
+    async def bridge_closed(self, session: CyncTCPSession) -> None:
+        """A device session closed: arm the grace timer if it was the last bridge of its home."""
+        home_id = getattr(session, "home_id", None)
+        if home_id is None or session.is_app:
+            return
+        if not self.get_dev_tcp_pool_sync(home_id):
+            self.start_home_grace(home_id)
+
+    async def _stop_home_grace(self):
+        tasks = [t for t in self.home_grace_tasks.values() if not t.done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.wait(tasks)
+        self.home_grace_tasks.clear()
+
+    def __init__(
+        self,
+        node_map: Mapping,
+        home_grace_secs: float = CYNC_HOME_NO_BRIDGE_GRACE_SECS,
+        home_grace_explicit: bool = CYNC_HOME_NO_BRIDGE_GRACE_EXPLICIT,
+    ):
         if not isinstance(node_map, DeviceRegistry):
             # a plain {id: device} mapping (older callers): every device must carry its home_id
             registry = DeviceRegistry()
@@ -109,6 +172,8 @@ class nCyncServer:
                 registry.add(dev)
             node_map = registry
         self.node_devices: DeviceRegistry = node_map
+        self.home_grace_secs: float = home_grace_secs
+        self.home_grace_explicit: bool = home_grace_explicit
         self.home_grace_tasks: Dict[int, asyncio.Task] = {}
         # homes whose "command dropped, no bridge" WARNING was already logged in the current outage
         self._drop_warned_homes: Set[Optional[int]] = set()
@@ -244,6 +309,8 @@ class nCyncServer:
                 f" see any, check your DNS redirection, VLAN and firewall settings."
             )
             self.running = True
+            for home_id in self.node_devices.home_ids():
+                self.start_home_grace(home_id)
             try:
                 if g.mqtt_client:
                     await g.mqtt_client.publish(
@@ -288,6 +355,7 @@ class nCyncServer:
                         logger.debug(f"{lp} Cync Wi-Fi device connection closed")
             else:
                 logger.debug(f"{lp} No Cync Wi-Fi devices connected!")
+            await self._stop_home_grace()
 
             if self._server:
                 if self._server.is_serving():
