@@ -1,0 +1,28 @@
+# The Dockerfile does `COPY ./ .`: anything not excluded here ends up in an image layer, and deleting it in a
+# later RUN step does not remove it from that layer. Keep local secrets and state out of the build context.
+
+# secrets and local state
+config/
+certs/
+.env
+**/.env
+docker-compose.yaml
+docker/docker-compose.local.yaml
+**/cync_mesh.yaml
+**/raw_mesh.cync
+**/uuid.txt
+dump.txt
+*.apk
+
+# dev clutter
+.git
+.github
+.venv
+venv
+.idea
+.pytest_cache
+.ruff_cache
+**/__pycache__
+*.egg-info
+build
+*.mp4

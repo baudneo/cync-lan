@@ -425,3 +425,18 @@ def format_socat_style(
 
     lines.append("--")
     return "\n".join(lines)
+
+
+def hello_23_hex_redacted(raw: bytes) -> str:
+    """
+    Hex dump of a device hello (0x23) for logs, without the device's auth code.
+
+    Layout (docs/protocol.md section 3): 5-byte header, 0x03, 4-byte queue id, 0x00, a length byte, then the auth code
+    (a per-device secret from the cloud account) and a short trailer. That layout is only inferred, so the length byte
+    is not trusted: every byte after it is shown as ``xx``. The queue id (the device's switchID) stays readable.
+    """
+    raw = bytes(raw)
+    keep = 12  # header, 0x03, queue id, 0x00, length byte
+    if len(raw) <= keep:
+        return raw.hex(" ")
+    return " ".join([raw[:keep].hex(" ")] + ["xx"] * (len(raw) - keep))

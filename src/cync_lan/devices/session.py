@@ -22,7 +22,7 @@ from cync_lan.structs import (
     MessageCache,
     Tasks,
 )
-from cync_lan.utils import bytes2list, format_socat_style
+from cync_lan.utils import bytes2list, format_socat_style, hello_23_hex_redacted
 
 __all__ = ["CyncTCPSession"]
 logger = logging.getLogger(CYNC_LOG_NAME)
@@ -240,9 +240,14 @@ class CyncTCPSession(ProxyMixin, PacketHandlersMixin):
                 # a handler bug / odd packet must cost one packet, not the device connection
                 self.bad_packets += 1
                 stats.inc("packets_failed")
+                # a 0x23 hello carries the device's auth code: never dump it
+                dump = (
+                    hello_23_hex_redacted(extracted_packet) if extracted_packet[:1] == b"\x23"
+                    else extracted_packet.hex(" ")
+                )
                 logger.error(
                     f"{lp} dropping packet that failed to parse ({self.bad_packets} in a row): "
-                    f"{exc!r}\nPACKET: {extracted_packet.hex(' ')}",
+                    f"{exc!r}\nPACKET: {dump}",
                     exc_info=True,
                 )
                 if self.bad_packets >= MAX_CONSECUTIVE_BAD_PACKETS:

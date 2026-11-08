@@ -21,7 +21,11 @@ from cync_lan.structs import (
     EntityState,
     GlobalObject,
 )
-from cync_lan.utils import bytes2list, extract_firmware_dynamically
+from cync_lan.utils import (
+    bytes2list,
+    extract_firmware_dynamically,
+    hello_23_hex_redacted,
+)
 
 __all__ = ["PacketHandlersMixin"]
 logger = logging.getLogger(CYNC_LOG_NAME)
@@ -51,8 +55,9 @@ class PacketHandlersMixin:
             self.tasks.dev_conn_watcher = asyncio.create_task(
                 self.connection_watcher_task(ConnectionType.device), name=f"connection_watcher-{self.ip_address}"
             )
+            # the hello carries the device's auth code (a per-device secret): never log it
             logger.debug(
-                f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {raw_data.hex(' ')}"
+                f"{lp} Device IDENTIFICATION KEY: '{self.queue_id.hex(' ')}'\nRAW HEX: {hello_23_hex_redacted(raw_data)}"
             )
             if not self.mitm_mode:
                 await self.write(PacketBuilder.build_23_ack())

@@ -3,6 +3,15 @@ If you followed the [DNS docs](./DNS.md) and the [Install docs](./install) and d
 you may need to check your network configuration (firewall, etc.). If the Cync devices are on a separate subnet, 
 make sure that all Cync devices can talk to the local IP of the machine running `cync-lan`.
 
+The devices open the connection, so the rule must allow traffic **from** the Cync devices' network **to**
+cync-lan (TCP 23779). A rule in the other direction is not enough.
+
+## Devices connect, but keep replacing each other
+cync-lan tells connections apart by the device's IP address. If the log shows every device with the same IP (for
+example `172.x.0.1`) and `Existing TCP session found, gracefully closing and replacing...` every few seconds,
+something rewrites the devices' source address. Docker Desktop on Windows and macOS does this for published ports.
+Run cync-lan on Linux with `network_mode: host` (or another setup where the devices' own IPs reach it).
+
 ## OPNSense Firewall Example
 ![OPNSense Firewall Rules Example](./assets/opnsense_firewall_rules_example.png)
 
