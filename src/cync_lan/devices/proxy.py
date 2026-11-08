@@ -7,6 +7,7 @@ import ssl
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 from cync_lan.const import (
     CYNC_CLOUD_IP,
@@ -19,6 +20,7 @@ from cync_lan.const import (
     STREAM_CHUNK_SIZE,
     TCP_BLACKHOLE_DELAY,
 )
+from cync_lan.devices.registry import homes_for_queue_id, parse_queue_id
 from cync_lan.structs import (
     ConnectionType,
     GlobalObject,
@@ -215,7 +217,11 @@ class ProxyMixin:
             conn_type = "app"
             identifier = f"{conn_type}_{self.ip_address.replace('.', '-')}"
         elif self.node:
-            identifier = f"{conn_type}_{self.node.id}"
+            # hass_id is "<home_id>-<dev_id>": a bare mesh id is reused in every home, so two homes' bridges would share
+            # (and interleave) one log file
+            identifier = f"{conn_type}_{self.node.hass_id}"
+        else:
+            identifier = f"{conn_type}_{self.ip_address.replace('.', '-')}"
         logger_name = f"MITM {conn_type}:{self.ip_address}"
         mitm_logger = logging.getLogger(logger_name)
         self.mitm_logger = mitm_logger
@@ -267,12 +273,50 @@ class ProxyMixin:
             self.writer = None
         return False
 
-    async def can_connect(self) -> bool:
-        """Based on TCP_WHITELIST and MAX_TCP_CONN, should only be used on Cync device connections"""
+    def _admission_home(self, hello: Optional[bytes]) -> Optional[int]:
+        """
+        The home this connection will count against for CYNC_MAX_TCP_CONN, worked out before the packet is handled:
+        the session's home if it is already known (single home, 'bridges:'), else the home whose device switch_id
+        equals the 0x23 queue id. None: not known yet (the not-yet-placed bridges share one pool).
+        """
+        if self.home.resolved:
+            return self.home.home_id
+        if hello is not None and len(hello) >= 10 and hello[0] == 0x23:
+            found = homes_for_queue_id(self.registry, parse_queue_id(hello[6:10]))
+            if len(found) == 1:
+                return next(iter(found))
+        return None
+
+    async def can_connect(self, hello: Optional[bytes] = None) -> bool:
+        """
+        Based on TCP_WHITELIST and MAX_TCP_CONN, should only be used on Cync device connections. ``hello``: the first
+        packet when it is a 0x23, so a multi-home setup can count the connection against its own home.
+
+        With several homes, CYNC_MAX_TCP_CONN is a limit per home: with one shared limit the first devices to
+        reconnect (often all from one home) took every slot and left another home without any bridge
+        (seen on hardware, 4 homes / ~100 Wi-Fi devices). With one home it is the total, as it always was.
+
+        A bridge whose home is not known at admission (no switch_id match: a config exported before switch_id existed)
+        is admitted while ALL bridges together are fewer than CYNC_MAX_TCP_CONN x homes; the total keeps the old overall
+        bound. Such a bridge stays unplaced (never used for commands) until the config is re-exported. Only the
+        switch_id path guarantees every home a share.
+        """
         lp = f"{self.lp}:can connect:"
         # only admitted, live bridges take a slot: closed sessions stay in tcp_connections, and counting this session
         # or other not-yet-admitted ones made a full pool reject everyone, including a bridge reconnecting
-        tcp_dev_len = len([d for d in g.ncync_server.get_dev_tcp_pool_sync() if d is not self])
+        others = [d for d in g.ncync_server.get_dev_tcp_pool_sync() if d is not self]
+        limit = CYNC_MAX_TCP_CONN
+        pool_name = ""
+        n_homes = len(self.registry.home_ids())
+        if n_homes > 1:
+            home_id = self._admission_home(hello)
+            if home_id is not None:
+                others = [d for d in others if getattr(d, "home_id", None) == home_id]
+                pool_name = f" for Cync home {self.registry.describe_home(home_id)}"
+            else:
+                limit = CYNC_MAX_TCP_CONN * n_homes
+                pool_name = f" in total ({CYNC_MAX_TCP_CONN} x {n_homes} homes; this bridge's home is not known yet)"
+        tcp_dev_len = len(others)
         num_attempts = g.ncync_server.tcp_conn_attempts[self.ip_address]
         if self.mitm_mode:
             logger.debug(f"{lp} MITM active, skipping connection check...")
@@ -280,15 +324,15 @@ class ProxyMixin:
 
         elif (
             (g.ncync_server.shutting_down is True)
-            or (tcp_dev_len >= CYNC_MAX_TCP_CONN)
+            or (tcp_dev_len >= limit)
             or (CYNC_TCP_WHITELIST and self.ip_address not in CYNC_TCP_WHITELIST)
         ):
             reason = ""
             if g.ncync_server.shutting_down is True:
                 reason = "CyncLAN server is shutting down, "
             _sleep = False
-            if tcp_dev_len >= CYNC_MAX_TCP_CONN:
-                reason = f"CyncLAN server max ({tcp_dev_len}/{CYNC_MAX_TCP_CONN}) TCP connections reached, "
+            if tcp_dev_len >= limit:
+                reason = f"CyncLAN server max ({tcp_dev_len}/{limit}) TCP connections{pool_name} reached, "
                 _sleep = True
             elif CYNC_TCP_WHITELIST and self.ip_address not in CYNC_TCP_WHITELIST:
                 reason = f"IP not in CyncLAN server whitelist -> {CYNC_TCP_WHITELIST}, "
@@ -308,4 +352,6 @@ class ProxyMixin:
             # add_tcp_device() published the bridge's TCP device count before this session was admitted, so without it;
             # publish it again now that it counts
             await g.ncync_server._update_app_stats()
+            # admitted with its home already known (single home / 'bridges:'): that home has a bridge now
+            self._announce_home_bridge()
         return self.allowed_to_connect

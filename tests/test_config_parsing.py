@@ -24,15 +24,32 @@ def good_cfg():
     }
 
 
+HOME = 169573386
+
+
+def keys(*ids):
+    """Devices are keyed by (home_id, dev_id): mesh ids restart at 1 in every home."""
+    return [(HOME, i) for i in ids]
+
+
 def test_good_config():
     nodes = build_nodes(good_cfg())
-    assert sorted(nodes) == [7, 12]  # disabled ones skipped, quoted id normalized to int
-    assert nodes[7].name == "Lamp" and nodes[12].id == 12
+    assert sorted(nodes) == keys(7, 12)  # disabled ones skipped, quoted id normalized to int
+    assert nodes.get_device(HOME, 7).name == "Lamp" and nodes.get_device(HOME, 12).id == 12
+    assert nodes.get_device(HOME, 7).home_name == "Home"
+
+
+def test_quoted_home_id_is_coerced_to_int():
+    cfg = good_cfg()
+    cfg["exported_homes"]["Home"]["id"] = str(HOME)
+    nodes = build_nodes(cfg)
+    assert sorted(nodes) == keys(7, 12)
+    assert nodes.get_device(HOME, 7).hass_id == f"{HOME}-7"
 
 
 def test_legacy_account_data_key_still_works():
     cfg = {"account data": good_cfg()["exported_homes"]}
-    assert sorted(build_nodes(cfg)) == [7, 12]
+    assert sorted(build_nodes(cfg)) == keys(7, 12)
 
 
 @pytest.mark.parametrize(
@@ -44,7 +61,7 @@ def test_one_bad_device_is_skipped_others_survive(bad_device):
     cfg = good_cfg()
     cfg["exported_homes"]["Home"]["devices"]["bad"] = bad_device
     cfg["exported_homes"]["Home"]["devices"]["notanint"] = {"name": "x"}
-    assert sorted(build_nodes(cfg)) == [7, 12]
+    assert sorted(build_nodes(cfg)) == keys(7, 12)
 
 
 def test_bad_homes_are_skipped():
@@ -52,7 +69,7 @@ def test_bad_homes_are_skipped():
     cfg["exported_homes"]["NoId"] = {"devices": {1: {"name": "a"}}}
     cfg["exported_homes"]["NullDevices"] = {"id": 5, "devices": None}
     cfg["exported_homes"]["NotAMapping"] = "oops"
-    assert sorted(build_nodes(cfg)) == [7, 12]
+    assert sorted(build_nodes(cfg)) == keys(7, 12)
 
 
 @pytest.mark.parametrize(
@@ -66,7 +83,7 @@ def test_unusable_file_raises_config_error(raw):
 async def test_parse_config_reads_file_and_reports_bad_yaml(tmp_path):
     ok = tmp_path / "ok.yaml"
     ok.write_text(yaml.dump(good_cfg()))
-    assert sorted(await parse_config(ok)) == [7, 12]
+    assert sorted(await parse_config(ok)) == keys(7, 12)
     bad = tmp_path / "bad.yaml"
     bad.write_text("a: [unclosed")
     with pytest.raises(ConfigError):

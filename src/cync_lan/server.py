@@ -1,12 +1,17 @@
 import asyncio
 import logging
 import ssl
-from typing import Dict, Optional, Union
+from typing import Dict, List, Mapping, Optional, Set, Union
 
 import uvloop
 
-from cync_lan.const import CYNC_LOG_NAME, CYNC_SRV_HOST, CYNC_SRV_PORT
-from cync_lan.devices import CyncDevice, CyncTCPSession
+from cync_lan.const import (
+    CYNC_LOG_NAME,
+    CYNC_SRV_HOST,
+    CYNC_SRV_PORT,
+)
+from cync_lan.devices import CyncTCPSession
+from cync_lan.devices.registry import DeviceRegistry
 from cync_lan.stats import stats
 from cync_lan.structs import GlobalObject
 
@@ -23,7 +28,7 @@ class nCyncServer:
     The Wi-Fi devices translate messages, status updates and commands to/from the Cync BTLE mesh.
     """
 
-    node_devices: Dict[int, CyncDevice]
+    node_devices: DeviceRegistry
     tcp_connections: Dict[str, Optional[CyncTCPSession]]
     app_tcp_connections: Dict[str, Optional[CyncTCPSession]]
     shutting_down: bool = False
@@ -49,21 +54,64 @@ class nCyncServer:
         # blackhole()) it is not a bridge: it must not take a max_clients slot, a stale-vote seat or a command
         return not d.is_closed() and not d.is_app and d.allowed_to_connect
 
-    async def get_dev_tcp_pool(self):
-        return [d for d in self.tcp_connections.values() if self._is_bridge(d)]
+    def get_dev_tcp_pool_sync(self, home_id: Optional[int] = None) -> List[CyncTCPSession]:
+        """
+        Admitted, live bridges. With ``home_id``: only the bridges whose session home was resolved to that home (a
+        bridge relays only its own home's mesh; a session whose home is not known yet is in no home's pool, so it
+        never gets a command). Without it: every bridge (connection limits, counters).
+        """
+        return [
+            d for d in self.tcp_connections.values()
+            if self._is_bridge(d) and (home_id is None or getattr(d, "home_id", None) == home_id)
+        ]
+
+    async def get_dev_tcp_pool(self, home_id: Optional[int] = None) -> List[CyncTCPSession]:
+        return self.get_dev_tcp_pool_sync(home_id)
 
     async def revote_offline(self) -> int:
-        """Re-run every device's stale vote against the current TCP pool (called when a device session closes)."""
+        """Re-run every device's stale vote against its own home's TCP pool (called when a device session closes)."""
         if g.mqtt_client is None:
             return 0
-        live_ips = [d.ip_address for d in await self.get_dev_tcp_pool()]
-        return sum(dev.revote_stale(live_ips) for dev in self.node_devices.values())
+        live_ips: Dict[Optional[int], List[str]] = {}
+        marked = 0
+        for dev in self.node_devices.values():
+            if dev.home_id not in live_ips:
+                live_ips[dev.home_id] = [d.ip_address for d in self.get_dev_tcp_pool_sync(dev.home_id)]
+            marked += dev.revote_stale(live_ips[dev.home_id])
+        return marked
 
-    def get_dev_tcp_pool_sync(self):
-        return [d for d in self.tcp_connections.values() if self._is_bridge(d)]
+    # ---- per-home bridge availability (multi-home, see docs/multi_home.md)
+    def cancel_home_grace(self, home_id: Optional[int]) -> bool:
+        """A bridge is up in this home: disarm its no-bridge timer. The task stays referenced until it finished."""
+        # the next time this home has no bridge is a new outage: its first dropped command warns again
+        self._drop_warned_homes.discard(home_id)
+        task = self.home_grace_tasks.get(home_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
-    def __init__(self, node_map: Dict[int, "CyncDevice"]):
-        self.node_devices: Dict[int, "CyncDevice"] = node_map
+    def first_drop_in_outage(self, home_id: Optional[int]) -> bool:
+        """
+        A command for this home was dropped because it has no bridge. True for the first drop since the home last had a
+        bridge (log it as a WARNING), False for the repeats (a dimmer slider or an automation would flood the log).
+        """
+        if home_id in self._drop_warned_homes:
+            return False
+        self._drop_warned_homes.add(home_id)
+        return True
+
+    def __init__(self, node_map: Mapping):
+        if not isinstance(node_map, DeviceRegistry):
+            # a plain {id: device} mapping (older callers): every device must carry its home_id
+            registry = DeviceRegistry()
+            for dev in node_map.values():
+                registry.add(dev)
+            node_map = registry
+        self.node_devices: DeviceRegistry = node_map
+        self.home_grace_tasks: Dict[int, asyncio.Task] = {}
+        # homes whose "command dropped, no bridge" WARNING was already logged in the current outage
+        self._drop_warned_homes: Set[Optional[int]] = set()
         self.tcp_connections = {}
         self.app_tcp_connections = {}
         self.tcp_conn_attempts: dict = {}
@@ -300,7 +348,7 @@ class nCyncServer:
                 await existing_device.existing_init()
                 dev2add = existing_device
             else:
-                dev2add = CyncTCPSession(reader, writer, client_addr)
+                dev2add = CyncTCPSession(reader, writer, client_addr, registry=self.node_devices)
             await self.add_tcp_device(dev2add)
         except asyncio.CancelledError as ce:
             logger.debug(f"{lp} Connection cancelled: {ce}")

@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 
 from cync_lan import mqtt_client as m
+from cync_lan.devices.registry import DeviceRegistry
 
 
 class _Topic:
@@ -46,7 +47,7 @@ class _Node:
 
 class _Server:
     def __init__(self):
-        self.node_devices = {}
+        self.node_devices = DeviceRegistry()
 
     async def get_dev_tcp_pool(self):
         return []
@@ -107,14 +108,14 @@ def test_reconnect_delay_backs_off_and_caps():
     ],
 )
 async def test_bad_payloads_do_not_raise(client, payload):
-    m.g.ncync_server.node_devices[46] = _Node()
+    m.g.ncync_server.node_devices[(123, 46)] = _Node()
     result = await client.async_parse_mqtt_msg(_Msg(_topic(client), payload))
     assert isinstance(result, bool)
 
 
 async def test_values_are_clamped(client):
     node = _Node()
-    m.g.ncync_server.node_devices[46] = node
+    m.g.ncync_server.node_devices[(123, 46)] = node
     await client.async_parse_mqtt_msg(_Msg(_topic(client), b'{"brightness": 500}'))
     await client.async_parse_mqtt_msg(
         _Msg(_topic(client), b'{"color": {"r": 999, "g": -4, "b": "12.0"}}')
@@ -125,7 +126,7 @@ async def test_values_are_clamped(client):
 
 async def test_commands_run_in_order(client):
     node = _Node()
-    m.g.ncync_server.node_devices[46] = node
+    m.g.ncync_server.node_devices[(123, 46)] = node
     await client.async_parse_mqtt_msg(
         _Msg(_topic(client), b'{"state": "ON", "color": {"r": 1, "g": 2, "b": 3}}')
     )
@@ -139,7 +140,7 @@ async def test_failing_command_does_not_raise_or_block_next(client):
         raise RuntimeError("device exploded")
 
     node.set_power = boom
-    m.g.ncync_server.node_devices[46] = node
+    m.g.ncync_server.node_devices[(123, 46)] = node
     await client.async_parse_mqtt_msg(
         _Msg(_topic(client), b'{"state": "ON", "color": {"r": 1, "g": 2, "b": 3}}')
     )
@@ -152,7 +153,7 @@ async def test_failing_command_does_not_raise_or_block_next(client):
 )
 async def test_fan_percentage_validation(client, payload, expected_handled):
     node = _Node(fan=True)
-    m.g.ncync_server.node_devices[46] = node
+    m.g.ncync_server.node_devices[(123, 46)] = node
     topic = f"{_topic(client)}/percentage"
     assert await client.async_parse_mqtt_msg(_Msg(topic, payload)) is expected_handled
 
@@ -161,7 +162,7 @@ async def test_commands_work_when_topic_env_is_empty(client, monkeypatch):
     # self.topic falls back to a default when CYNC_TOPIC is empty; dispatch must use it
     monkeypatch.setattr(m, "CYNC_TOPIC", "")
     node = _Node()
-    m.g.ncync_server.node_devices[46] = node
+    m.g.ncync_server.node_devices[(123, 46)] = node
     assert await client.async_parse_mqtt_msg(_Msg(_topic(client), b"ON")) is True
 
 
@@ -309,7 +310,7 @@ def test_entities_depend_on_device_and_bridge_availability(client):
 async def test_stop_marks_bridge_and_every_device_offline(client):
     node = _Node(46)
     node.online = True
-    m.g.ncync_server.node_devices[46] = node
+    m.g.ncync_server.node_devices[(123, 46)] = node
     client._connected = True
     client.send_will_msg = AsyncMock(return_value=True)
     client.client = SimpleNamespace(__aexit__=AsyncMock())
@@ -317,7 +318,7 @@ async def test_stop_marks_bridge_and_every_device_offline(client):
     await client.stop()
     published = {(c.args[0], c.args[1]) for c in client.publish.await_args_list}
     assert (f"{client.topic}/availability/bridge", b"offline") in published
-    client.pub_online.assert_any_await(46, False)
+    client.pub_online.assert_any_await(node, False)
     retained = [c for c in client.publish.await_args_list if c.args[0].endswith("availability/bridge")]
     assert retained and retained[0].kwargs.get("retain") is True
 

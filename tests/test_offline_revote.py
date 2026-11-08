@@ -19,11 +19,13 @@ from cync_lan.stats import stats
 from cync_lan.structs import GlobalObject
 
 g = GlobalObject()
+HOME = 1  # every device and bridge here is in one home; cross-home pools: test_multi_home_runtime.py
 
 
 class FakeSession:
     def __init__(self, ip):
         self.ip_address = ip
+        self.home_id = HOME
         self.is_app = False
         self.allowed_to_connect = True
         self._closed = False
@@ -43,7 +45,7 @@ async def env():
     g.mqtt_client = SimpleNamespace(pub_online=pub_online, publish=None)
     g.tasks = []
     stats.reset()
-    devices = {i: CyncDevice(i) for i in (1, 2, 3)}
+    devices = {i: CyncDevice(i, home_id=HOME) for i in (1, 2, 3)}
     for d in devices.values():
         d._online = True
     srv = server_mod.nCyncServer(devices)
@@ -165,6 +167,7 @@ async def test_closing_a_device_session_triggers_the_revote(env):
     dead.writer = dead.reader = dead.node = None
     dead._closed = dead._closing = False
     dead.tasks = SimpleNamespace(cancel_all=cancel_all)
+    dead.home = SimpleNamespace(home_id=HOME, resolved=True)
     dead.is_closed = lambda: dead._closed
     # 6 live bridges + the dead one + 2 more dead-but-unreaped: pool 9, quorum 5, only 4 votes
     srv.tcp_connections = {f"10.0.0.{i}": FakeSession(f"10.0.0.{i}") for i in range(1, 9)}

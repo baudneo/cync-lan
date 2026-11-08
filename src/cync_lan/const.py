@@ -120,6 +120,8 @@ else:
         CYNC_CMD_BROADCASTS = int(CYNC_CMD_BROADCASTS)
     except ValueError:
         CYNC_CMD_BROADCASTS = 2
+# Wi-Fi devices allowed to hold a TCP connection. With several Cync homes this counts per home (devices/proxy.py
+# can_connect): one shared limit let one home take every slot (docs/multi_home.md#connection-limit)
 CYNC_MAX_TCP_CONN: int = os.environ.get("CYNC_MAX_TCP_CONN", 8)
 if not CYNC_MAX_TCP_CONN:
     CYNC_MAX_TCP_CONN = 8

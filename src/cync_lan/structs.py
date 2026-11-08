@@ -166,6 +166,8 @@ class Tasks:
     dev_conn_watcher: Optional[asyncio.Task] = None
     proxy_conn_watcher: Optional[asyncio.Task] = None
     mesh_refresh: Optional[asyncio.Task] = None
+    # one-off: restores a bridge device's retained MITM switch state (a broker round trip, kept off the packet loop)
+    mitm_probe: Optional[asyncio.Task] = None
 
     def _all(self) -> List[asyncio.Task]:
         tasks = [
@@ -176,6 +178,7 @@ class Tasks:
             self.proxy_task,
             self.proxy_conn_watcher,
             self.mesh_refresh,
+            self.mitm_probe,
         ]
         return [task for task in tasks if task is not None]
 
